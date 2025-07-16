@@ -45,5 +45,18 @@ group :development do
   # gem "spring"
 end
 
+# Auth
+gem 'devise'
+gem 'devise-jwt'
+
+# Role management (optional)
+gem 'rolify'
+gem 'cancancan'
+
+# Image uploads
+gem 'active_storage_validations'
+
+# CORS
+gem 'rack-cors'
 
 gem "dotenv-rails", "~> 3.1"
