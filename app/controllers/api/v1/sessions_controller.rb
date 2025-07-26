@@ -6,20 +6,19 @@ module Api
 
       private
 
-        def respond_with(resource, _opts = {})
-   def respond_with(resource, _opts = {})
-  token = request.env['warden-jwt_auth.token']
-  response.set_header('Authorization', "Bearer #{token}") if token
+      def respond_with(resource, _opts = {})
+        token = request.env['warden-jwt_auth.token']
+        response.set_header('Authorization', "Bearer #{token}") if token
 
-  render json: {
-    message: "Logged in.",
-    user: {
-      id: resource.id,
-      email: resource.email,
-      roles: resource.roles.pluck(:name)
-    }
-  }, status: :ok
-end
+        render json: {
+          message: "Logged in.",
+          user: {
+            id: resource.id,
+            email: resource.email,
+            roles: resource.roles.pluck(:name)
+          }
+        }, status: :ok
+      end
 
       def respond_to_on_destroy
         render json: { message: "Logged out." }, status: :ok
