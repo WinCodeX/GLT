@@ -1,3 +1,4 @@
+Dotenv::Railtie.load
 require_relative "boot"
 
 require "rails"
