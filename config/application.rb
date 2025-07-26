@@ -1,4 +1,4 @@
-Dotenv::Railtie.load
+require 'dotenv/rails-now' if defined?(Dotenv)
 require_relative "boot"
 
 require "rails"
