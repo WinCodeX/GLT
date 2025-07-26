@@ -1,4 +1,6 @@
-require 'dotenv/rails-now' if defined?(Dotenv)
+if defined?(Dotenv)
+  require 'dotenv/rails-now'
+end
 require_relative "boot"
 
 require "rails"
