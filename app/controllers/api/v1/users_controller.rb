@@ -5,7 +5,7 @@ module Api
       before_action :authenticate_user!
       before_action :ensure_admin, only: [:index, :assign_role]
 
-      # GET /api/v1/me
+      # GET /api/v1/users/me
       def me
         render json: {
           id: current_user.id,
@@ -39,22 +39,20 @@ module Api
         end
       end
 
-# app/controllers/api/v1/users_controller.rb
-def update
-  if current_user.update(user_params)
-    render json: current_user, status: :ok
-  else
-    render json: { errors: current_user.errors.full_messages }, status: :unprocessable_entity
-  end
-end
-
+      # PATCH /api/v1/users/update (or /me)
+      def update
+        if current_user.update(user_params)
+          render json: current_user, status: :ok
+        else
+          render json: { errors: current_user.errors.full_messages }, status: :unprocessable_entity
+        end
+      end
 
       private
 
- def user_params
-  params.require(:user).permit(:email, :password, :avatar)
- end
-
+      def user_params
+        params.require(:user).permit(:email, :password, :avatar)
+      end
 
       def ensure_admin
         unless current_user.has_role?(:admin)
