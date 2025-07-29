@@ -8,6 +8,8 @@ devise :database_authenticatable, :registerable,
 
 
 
+has_one_attached :avatar
+
   rolify
   after_create :assign_default_role
 
