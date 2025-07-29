@@ -7,6 +7,12 @@ class User < ApplicationRecord
   # ActiveStorage for avatar
   has_one_attached :avatar
 
+
+  has_many :businesses          # These are the businesses the user owns
+  has_many :business_memberships
+  has_many :joined_businesses, through: :business_memberships, source: :business
+
+
   # Rolify for roles
   rolify
 
