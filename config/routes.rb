@@ -15,6 +15,12 @@ Rails.application.routes.draw do
       # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
+      get 'me', to: 'me#show', defaults: { format: :json }
+      put 'me/avatar', to: 'me#update_avatar'
+      get 'ping', to: 'status#ping', defaults: { format: :json }
+      get 'users/search', to: 'users#search'
+      post 'typing_status', to: 'typing_status#create'
+
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
     end
