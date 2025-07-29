@@ -1,5 +1,5 @@
 class Business < ApplicationRecord
-  belongs_to :user   # the owner
-  has_many :business_memberships
-  has_many :members, through: :business_memberships, source: :user
+  belongs_to :owner, class_name: "User"
+  has_many :user_businesses
+  has_many :users, through: :user_businesses
 end
