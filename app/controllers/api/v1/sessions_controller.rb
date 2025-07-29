@@ -6,15 +6,16 @@ module Api
 
       private
 
-        def respond_with(resource, _opts = {})
-   token = request.env['warden-jwt_auth.token']
-  puts "JWT token dispatched: #{token.inspect}"
-  puts "🔍 Path: #{request.path}"
-puts "🧪 Token: #{request.env['warden-jwt_auth.token'].inspect}"
+      def respond_with(resource, _opts = {})
+        token = request.env['warden-jwt_auth.token']
+
+        Rails.logger.info "✅ JWT token dispatched: #{token.inspect}"
+        Rails.logger.info "🔍 Request Path: #{request.path}"
+        Rails.logger.info "🧪 Token (raw): #{token}"
 
         render json: {
           message: "Logged in.",
-        token: token,
+          token: token,
           user: {
             id: resource.id,
             email: resource.email,
