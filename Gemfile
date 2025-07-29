@@ -60,3 +60,7 @@ gem 'active_storage_validations'
 gem 'rack-cors'
 
 gem "dotenv-rails", "~> 3.1"
+
+gem 'active_model_serializers'
+
+
