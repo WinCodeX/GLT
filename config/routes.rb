@@ -23,6 +23,27 @@ Rails.application.routes.draw do
 
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
+
+      # ✅ Business Invites
+      resources :invites, only: [:create], defaults: { format: :json } do
+        collection do
+          post :accept
+        end
+      end
+
+      # ✅ Businesses
+      resources :businesses, only: [:create, :index, :show], defaults: { format: :json }
+    
+      # ✅ Resources
+      resources :packages, only: [:index, :create, :show]
+      # ✅ locations
+    resources :locations, only: [:index, :create]
+      # ✅ Areas
+    resources :areas, only: [:index, :create]
+      # ✅ Agents
+    resources :agents, only: [:index, :create]
+      # ✅ Prices
+    resources :prices, only: [:index, :create]
     end
   end
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_07_29_135856) do
+ActiveRecord::Schema[7.1].define(version: 2025_07_29_204506) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -42,13 +42,75 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_135856) do
     t.index ["blob_id", "variation_digest"], name: "index_active_storage_variant_records_uniqueness", unique: true
   end
 
-  create_table "businesses", force: :cascade do |t|
+  create_table "agents", force: :cascade do |t|
     t.string "name"
-    t.text "description"
+    t.string "phone"
+    t.bigint "area_id", null: false
     t.bigint "user_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["user_id"], name: "index_businesses_on_user_id"
+    t.index ["area_id"], name: "index_agents_on_area_id"
+    t.index ["user_id"], name: "index_agents_on_user_id"
+  end
+
+  create_table "areas", force: :cascade do |t|
+    t.string "name"
+    t.bigint "location_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["location_id"], name: "index_areas_on_location_id"
+  end
+
+  create_table "businesses", force: :cascade do |t|
+    t.string "name"
+    t.text "description"
+    t.bigint "owner_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["owner_id"], name: "index_businesses_on_owner_id"
+  end
+
+  create_table "locations", force: :cascade do |t|
+    t.string "name"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "packages", force: :cascade do |t|
+    t.string "sender_name"
+    t.string "sender_phone"
+    t.string "receiver_name"
+    t.string "receiver_phone"
+    t.bigint "origin_area_id"
+    t.bigint "destination_area_id"
+    t.bigint "origin_agent_id"
+    t.bigint "destination_agent_id"
+    t.bigint "user_id", null: false
+    t.string "delivery_type"
+    t.string "state"
+    t.integer "cost"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
+    t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
+    t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
+    t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
+    t.index ["user_id"], name: "index_packages_on_user_id"
+  end
+
+  create_table "prices", force: :cascade do |t|
+    t.bigint "origin_area_id"
+    t.bigint "destination_area_id"
+    t.integer "cost"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.bigint "origin_agent_id"
+    t.bigint "destination_agent_id"
+    t.string "delivery_type"
+    t.index ["destination_agent_id"], name: "index_prices_on_destination_agent_id"
+    t.index ["destination_area_id"], name: "index_prices_on_destination_area_id"
+    t.index ["origin_agent_id"], name: "index_prices_on_origin_agent_id"
+    t.index ["origin_area_id"], name: "index_prices_on_origin_area_id"
   end
 
   create_table "roles", force: :cascade do |t|
@@ -59,6 +121,16 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_135856) do
     t.datetime "updated_at", null: false
     t.index ["name", "resource_type", "resource_id"], name: "index_roles_on_name_and_resource_type_and_resource_id"
     t.index ["resource_type", "resource_id"], name: "index_roles_on_resource"
+  end
+
+  create_table "user_businesses", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "business_id", null: false
+    t.string "role"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["business_id"], name: "index_user_businesses_on_business_id"
+    t.index ["user_id"], name: "index_user_businesses_on_user_id"
   end
 
   create_table "users", force: :cascade do |t|
@@ -83,5 +155,19 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_135856) do
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
-  add_foreign_key "businesses", "users"
+  add_foreign_key "agents", "areas"
+  add_foreign_key "agents", "users"
+  add_foreign_key "areas", "locations"
+  add_foreign_key "businesses", "users", column: "owner_id"
+  add_foreign_key "packages", "agents", column: "destination_agent_id"
+  add_foreign_key "packages", "agents", column: "origin_agent_id"
+  add_foreign_key "packages", "areas", column: "destination_area_id"
+  add_foreign_key "packages", "areas", column: "origin_area_id"
+  add_foreign_key "packages", "users"
+  add_foreign_key "prices", "agents", column: "destination_agent_id"
+  add_foreign_key "prices", "agents", column: "origin_agent_id"
+  add_foreign_key "prices", "areas", column: "destination_area_id"
+  add_foreign_key "prices", "areas", column: "origin_area_id"
+  add_foreign_key "user_businesses", "businesses"
+  add_foreign_key "user_businesses", "users"
 end
