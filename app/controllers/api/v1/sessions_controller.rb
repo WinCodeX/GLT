@@ -6,9 +6,11 @@ module Api
 
       private
 
-      def respond_with(resource, _opts = {})
-        token = request.env['warden-jwt_auth.token']
-        response.set_header('Authorization', "Bearer #{token}") if token
+        def respond_with(resource, _opts = {})
+   token = request.env['warden-jwt_auth.token']
+  puts "JWT token dispatched: #{token.inspect}"
+  puts "🔍 Path: #{request.path}"
+puts "🧪 Token: #{request.env['warden-jwt_auth.token'].inspect}"
 
         render json: {
           message: "Logged in.",
