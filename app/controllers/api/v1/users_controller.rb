@@ -7,23 +7,13 @@ module Api
 
       # GET /api/v1/users/me
       def me
-        render json: {
-          id: current_user.id,
-          email: current_user.email,
-          roles: current_user.roles.pluck(:name)
-        }
+        render json: current_user, serializer: UserSerializer
       end
 
       # GET /api/v1/users
       def index
-        users = User.includes(:roles).all
-        render json: users.map { |u|
-          {
-            id: u.id,
-            email: u.email,
-            roles: u.roles.pluck(:name)
-          }
-        }
+        users = User.includes(:roles, :avatar_attachment, :avatar_blob)
+        render json: users, each_serializer: UserSerializer
       end
 
       # PATCH /api/v1/users/:id/assign_role
@@ -39,10 +29,10 @@ module Api
         end
       end
 
-      # PATCH /api/v1/users/update (or /me)
+      # PATCH /api/v1/users/update
       def update
         if current_user.update(user_params)
-          render json: current_user, status: :ok
+          render json: current_user, serializer: UserSerializer
         else
           render json: { errors: current_user.errors.full_messages }, status: :unprocessable_entity
         end
@@ -55,9 +45,7 @@ module Api
       end
 
       def ensure_admin
-        unless current_user.has_role?(:admin)
-          render json: { error: "Access denied" }, status: :forbidden
-        end
+        render json: { error: "Access denied" }, status: :forbidden unless current_user.has_role?(:admin)
       end
     end
   end
