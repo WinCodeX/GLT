@@ -8,9 +8,10 @@ class User < ApplicationRecord
   has_one_attached :avatar
 
 
-  has_many :businesses          # These are the businesses the user owns
-  has_many :business_memberships
-  has_many :joined_businesses, through: :business_memberships, source: :business
+  
+  has_many :owned_businesses, class_name: "Business", foreign_key: "owner_id"
+  has_many :user_businesses
+  has_many :businesses, through: :user_businesses
 
 
   # Rolify for roles
