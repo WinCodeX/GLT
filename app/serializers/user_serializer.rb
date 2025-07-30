@@ -10,6 +10,6 @@ class UserSerializer < ActiveModel::Serializer
 
   def avatar_url
     return unless object.avatar.attached?
-    rails_blob_url(object.avatar, host: "http://192.168.100.39:3000") # <- Add host here
+    rails_blob_url(object.avatar, host: "http://192.168.100.73:3000") # <- Add host here
   end
 end
