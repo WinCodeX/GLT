@@ -1,3 +1,6 @@
+require 'net/http'
+require 'uri'
+
 class UserSerializer < ActiveModel::Serializer
   include Rails.application.routes.url_helpers
   include ActionController::MimeResponds
