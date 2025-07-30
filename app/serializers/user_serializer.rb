@@ -8,7 +8,11 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   def avatar_url
-    return unless object.avatar.attached?
-    rails_blob_url(object.avatar, host: Rails.configuration.x.avatar_host)
-  end
+  return unless object.avatar.attached?
+
+  host = Rails.configuration.x.avatar_hosts&.find(&:present?)
+  return unless host
+
+  rails_blob_url(object.avatar, host: host)
+end
 end
