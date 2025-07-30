@@ -1,5 +1,6 @@
 class UserSerializer < ActiveModel::Serializer
   include Rails.application.routes.url_helpers
+  include UrlHostHelper
 
   attributes :id, :email, :roles, :avatar_url
 
@@ -8,11 +9,11 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   def avatar_url
-  return unless object.avatar.attached?
+    return unless object.avatar.attached?
 
-  host = Rails.configuration.x.avatar_hosts&.find(&:present?)
-  return unless host
+    host = first_available_host
+    return unless host
 
-  rails_blob_url(object.avatar, host: host)
-end
+    rails_blob_url(object.avatar, host: host)
+  end
 end
