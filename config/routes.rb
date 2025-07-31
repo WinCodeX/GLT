@@ -24,6 +24,8 @@ Rails.application.routes.draw do
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
 
+     post :google_login, to: 'sessions#google_login'
+
       # ✅ Business Invites
       resources :invites, only: [:create], defaults: { format: :json } do
         collection do
