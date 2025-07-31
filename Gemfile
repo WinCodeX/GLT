@@ -49,6 +49,9 @@ end
 gem 'devise'
 gem 'devise-jwt'
 
+#google auth
+gem 'google-id-token'
+
 # Role management (optional)
 gem 'rolify'
 gem 'cancancan'
