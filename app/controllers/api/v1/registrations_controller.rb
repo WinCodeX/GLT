@@ -1,20 +1,40 @@
 # app/controllers/api/v1/registrations_controller.rb
 module Api
   module V1
-    class RegistrationsController < ApplicationController
+    class RegistrationsController < Devise::RegistrationsController
+      respond_to :json
+      skip_before_action :verify_authenticity_token
+      skip_before_action :authenticate_user!
+
       def create
-        user = User.new(user_params)
-        if user.save
-          render json: { message: "Signup successful", user: user }, status: :created
+        build_resource(sign_up_params)
+
+        if resource.save
+          sign_in(resource) # <- Logs the user in
+          token = request.env['warden-jwt_auth.token'] # Devise-JWT
+
+          render json: {
+            user: resource,
+            token: token
+          }, status: :created
         else
-          render json: { errors: user.errors.full_messages }, status: :unprocessable_entity
+          render json: {
+            error: resource.errors.full_messages.to_sentence
+          }, status: :unprocessable_entity
         end
       end
 
       private
 
-      def user_params
-        params.require(:user).permit(:email, :password, :password_confirmation, :first_name, :last_name, :phone_number)
+      def sign_up_params
+        params.require(:user).permit(
+          :email,
+          :first_name,
+          :last_name,
+          :phone_number,
+          :password,
+          :password_confirmation
+        )
       end
     end
   end
