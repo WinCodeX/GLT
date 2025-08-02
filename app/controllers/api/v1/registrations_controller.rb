@@ -5,7 +5,27 @@ module Api
       def create
         user = User.new(user_params)
         if user.save
-          render json: { message: "Signup successful", user: user }, status: :created
+          # Add default role if no roles exist
+          user.add_role(:client) if user.roles.blank?
+          
+          # Sign in the user
+          sign_in(user)
+          
+          # Generate JWT token
+          jwt = Warden::JWTAuth::UserEncoder.new.call(user, :user, nil).first
+          
+          render json: { 
+            message: "Signup successful", 
+            token: jwt,
+            user: {
+              id: user.id,
+              email: user.email,
+              first_name: user.first_name,
+              last_name: user.last_name,
+              phone_number: user.phone_number,
+              roles: user.roles.pluck(:name)
+            }
+          }, status: :created
         else
           render json: { errors: user.errors.full_messages }, status: :unprocessable_entity
         end
