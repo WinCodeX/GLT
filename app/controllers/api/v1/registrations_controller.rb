@@ -1,4 +1,3 @@
-# app/controllers/api/v1/registrations_controller.rb
 module Api
   module V1
     class RegistrationsController < Devise::RegistrationsController
@@ -6,21 +5,28 @@ module Api
       skip_before_action :verify_authenticity_token
       skip_before_action :authenticate_user!
 
+      # POST /api/v1/signup
       def create
         build_resource(sign_up_params)
 
         if resource.save
-          sign_in(resource) # <- Logs the user in
-          token = request.env['warden-jwt_auth.token'] # Devise-JWT
+          sign_in(resource)  # Auto login after signup
+          token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil).first
 
           render json: {
-            user: resource,
-            token: token
+            message: "Account created successfully",
+            token: token,
+            user: {
+              id: resource.id,
+              email: resource.email,
+              first_name: resource.first_name,
+              last_name: resource.last_name,
+              phone_number: resource.phone_number,
+              roles: resource.roles.pluck(:name)
+            }
           }, status: :created
         else
-          render json: {
-            error: resource.errors.full_messages.to_sentence
-          }, status: :unprocessable_entity
+          render json: { error: resource.errors.full_messages.to_sentence }, status: :unprocessable_entity
         end
       end
 
@@ -29,11 +35,11 @@ module Api
       def sign_up_params
         params.require(:user).permit(
           :email,
+          :password,
+          :password_confirmation,
           :first_name,
           :last_name,
-          :phone_number,
-          :password,
-          :password_confirmation
+          :phone_number
         )
       end
     end
