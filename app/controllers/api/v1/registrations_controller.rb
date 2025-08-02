@@ -1,4 +1,3 @@
-# app/controllers/api/v1/registrations_controller.rb
 module Api
   module V1
     class RegistrationsController < ApplicationController
@@ -7,13 +6,10 @@ module Api
         if user.save
           # Add default role if no roles exist
           user.add_role(:client) if user.roles.blank?
-          
-          # Sign in the user
-          sign_in(user)
-          
-          # Generate JWT token
+
+          # Generate JWT token (no session writing involved)
           jwt = Warden::JWTAuth::UserEncoder.new.call(user, :user, nil).first
-          
+
           render json: { 
             message: "Signup successful", 
             token: jwt,
