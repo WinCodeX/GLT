@@ -1,4 +1,3 @@
-# app/controllers/api/v1/sessions_controller.rb
 require 'google-id-token'
 
 module Api
@@ -20,6 +19,9 @@ module Api
           user: {
             id: resource.id,
             email: resource.email,
+            first_name: resource.first_name,
+            last_name: resource.last_name,
+            phone_number: resource.phone_number,
             roles: resource.roles.pluck(:name)
           }
         }, status: :ok
@@ -48,6 +50,7 @@ module Api
           if user.new_record?
             user.first_name = first_name || 'Google'
             user.last_name = last_name || 'User'
+            user.phone_number = nil # Optional – update this if you extract phone from payload
             user.password = Devise.friendly_token[0, 20]
             user.skip_confirmation! if user.respond_to?(:skip_confirmation)
             user.save!
@@ -63,6 +66,9 @@ module Api
             user: {
               id: user.id,
               email: user.email,
+              first_name: user.first_name,
+              last_name: user.last_name,
+              phone_number: user.phone_number,
               roles: user.roles.pluck(:name)
             }
           }, status: :ok
