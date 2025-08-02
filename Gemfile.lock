@@ -134,6 +134,8 @@ GEM
     erubi (1.13.1)
     globalid (1.2.1)
       activesupport (>= 6.1)
+    google-id-token (1.4.2)
+      jwt (>= 1)
     i18n (1.14.7)
       concurrent-ruby (~> 1.0)
     io-console (0.8.1)
@@ -284,6 +286,7 @@ DEPENDENCIES
   devise
   devise-jwt
   dotenv-rails (~> 3.1)
+  google-id-token
   pg (~> 1.1)
   puma (>= 5.0)
   rack-cors
