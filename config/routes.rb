@@ -23,7 +23,7 @@ Rails.application.routes.draw do
       get 'users/search', to: 'users#search'
       post 'typing_status', to: 'typing_status#create'
 
-      
+      post 'signup', to: 'registrations#create'
 
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
