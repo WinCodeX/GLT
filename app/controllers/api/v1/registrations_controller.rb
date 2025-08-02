@@ -2,15 +2,12 @@ module Api
   module V1
     class RegistrationsController < Devise::RegistrationsController
       respond_to :json
-      skip_before_action :verify_authenticity_token
-      skip_before_action :authenticate_user!
 
-      # POST /api/v1/signup
       def create
         build_resource(sign_up_params)
 
         if resource.save
-          sign_in(resource)  # Auto login after signup
+          sign_in(resource)
           token = Warden::JWTAuth::UserEncoder.new.call(resource, :user, nil).first
 
           render json: {
