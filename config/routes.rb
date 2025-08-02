@@ -11,6 +11,9 @@ Rails.application.routes.draw do
     sessions: 'api/v1/sessions',
     registrations: 'api/v1/registrations' # <-- this too
   }
+devise_scope :user do
+  post 'api/v1/signup', to: 'api/v1/registrations#create'
+end
 
   namespace :api do
     namespace :v1 do
