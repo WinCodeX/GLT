@@ -1,4 +1,5 @@
 require 'google-id-token'
+require 'open-uri'
 
 module Api
   module V1
@@ -16,7 +17,7 @@ module Api
         render json: {
           message: "Logged in.",
           token: token,
-          user: user_response_data(resource)
+          user: serialize_user(resource)
         }, status: :ok
       end
 
@@ -37,24 +38,24 @@ module Api
           payload = validator.check(token, ENV['GOOGLE_CLIENT_ID'])
           email = payload['email']
           name  = payload['name']
-          avatar_url = payload['picture'] # Google provides avatar URL in 'picture' field
+          google_avatar_url = payload['picture'] # Google provides avatar URL in 'picture' field
           first_name, last_name = name.split(' ', 2)
 
           user = User.find_or_initialize_by(email: email)
+          
           if user.new_record?
             user.first_name = first_name || 'Google'
             user.last_name = last_name || 'User'
-            user.phone_number = nil # Optional – update this if you extract phone from payload
-            user.avatar_url = avatar_url if avatar_url.present? # Set avatar from Google
+            user.phone_number = nil
             user.password = Devise.friendly_token[0, 20]
             user.skip_confirmation! if user.respond_to?(:skip_confirmation)
             user.save!
             user.add_role(:client) if user.roles.blank?
-          else
-            # Update avatar for existing users if not already set or if Google provides a new one
-            if avatar_url.present? && (user.avatar_url.blank? || user.avatar_url != avatar_url)
-              user.update(avatar_url: avatar_url)
-            end
+          end
+
+          # Handle Google avatar attachment
+          if google_avatar_url.present? && !user.avatar.attached?
+            attach_google_avatar(user, google_avatar_url)
           end
 
           sign_in(user)
@@ -63,7 +64,7 @@ module Api
           render json: {
             message: 'Signed in with Google.',
             token: jwt,
-            user: user_response_data(user)
+            user: serialize_user(user)
           }, status: :ok
 
         rescue GoogleIDToken::ValidationError => e
@@ -74,17 +75,40 @@ module Api
 
       private
 
-      # Centralized method to format user response data
-      def user_response_data(user)
-        {
-          id: user.id,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          phone_number: user.phone_number,
-          avatar_url: user.avatar_url, # Include avatar_url in response
-          roles: user.roles.pluck(:name)
-        }
+      # Serialize user data using your existing UserSerializer
+      def serialize_user(user)
+        UserSerializer.new(user).as_json
+      end
+
+      # Download and attach Google avatar to user
+      def attach_google_avatar(user, google_avatar_url)
+        begin
+          # Download the image from Google
+          image_data = URI.open(google_avatar_url)
+          
+          # Extract filename from URL or use default
+          filename = extract_filename_from_url(google_avatar_url) || "google_avatar_#{user.id}.jpg"
+          
+          # Attach to user
+          user.avatar.attach(
+            io: image_data,
+            filename: filename,
+            content_type: image_data.content_type || 'image/jpeg'
+          )
+          
+          Rails.logger.info "✅ Avatar attached for user #{user.email}"
+        rescue StandardError => e
+          Rails.logger.error "❌ Failed to attach Google avatar: #{e.message}"
+          # Don't fail the login process if avatar attachment fails
+        end
+      end
+
+      # Extract filename from Google avatar URL
+      def extract_filename_from_url(url)
+        uri = URI.parse(url)
+        File.basename(uri.path).presence || nil
+      rescue
+        nil
       end
     end
   end
