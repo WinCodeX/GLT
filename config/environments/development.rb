@@ -6,7 +6,8 @@ Rails.application.configure do
 
   config.x.avatar_hosts = [
     "http://192.168.100.73:3000",
-    "http://10.41.201.106:3000"
+    "http://10.41.201.106:3000",
+    "http://10.35.210.106:3000",
   ]
 
 
