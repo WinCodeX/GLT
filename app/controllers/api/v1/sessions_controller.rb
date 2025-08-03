@@ -16,14 +16,7 @@ module Api
         render json: {
           message: "Logged in.",
           token: token,
-          user: {
-            id: resource.id,
-            email: resource.email,
-            first_name: resource.first_name,
-            last_name: resource.last_name,
-            phone_number: resource.phone_number,
-            roles: resource.roles.pluck(:name)
-          }
+          user: user_response_data(resource)
         }, status: :ok
       end
 
@@ -44,6 +37,7 @@ module Api
           payload = validator.check(token, ENV['GOOGLE_CLIENT_ID'])
           email = payload['email']
           name  = payload['name']
+          avatar_url = payload['picture'] # Google provides avatar URL in 'picture' field
           first_name, last_name = name.split(' ', 2)
 
           user = User.find_or_initialize_by(email: email)
@@ -51,10 +45,16 @@ module Api
             user.first_name = first_name || 'Google'
             user.last_name = last_name || 'User'
             user.phone_number = nil # Optional – update this if you extract phone from payload
+            user.avatar_url = avatar_url if avatar_url.present? # Set avatar from Google
             user.password = Devise.friendly_token[0, 20]
             user.skip_confirmation! if user.respond_to?(:skip_confirmation)
             user.save!
             user.add_role(:client) if user.roles.blank?
+          else
+            # Update avatar for existing users if not already set or if Google provides a new one
+            if avatar_url.present? && (user.avatar_url.blank? || user.avatar_url != avatar_url)
+              user.update(avatar_url: avatar_url)
+            end
           end
 
           sign_in(user)
@@ -63,20 +63,28 @@ module Api
           render json: {
             message: 'Signed in with Google.',
             token: jwt,
-            user: {
-              id: user.id,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              phone_number: user.phone_number,
-              roles: user.roles.pluck(:name)
-            }
+            user: user_response_data(user)
           }, status: :ok
 
         rescue GoogleIDToken::ValidationError => e
           Rails.logger.error "❌ Google token invalid: #{e.message}"
           render json: { error: 'Invalid Google token' }, status: :unauthorized
         end
+      end
+
+      private
+
+      # Centralized method to format user response data
+      def user_response_data(user)
+        {
+          id: user.id,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          phone_number: user.phone_number,
+          avatar_url: user.avatar_url, # Include avatar_url in response
+          roles: user.roles.pluck(:name)
+        }
       end
     end
   end
