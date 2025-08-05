@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_02_091601) do
+ActiveRecord::Schema[7.1].define(version: 2025_07_29_203524) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -76,28 +76,6 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_02_091601) do
     t.datetime "updated_at", null: false
   end
 
-  create_table "packages", force: :cascade do |t|
-    t.string "sender_name"
-    t.string "sender_phone"
-    t.string "receiver_name"
-    t.string "receiver_phone"
-    t.bigint "origin_area_id"
-    t.bigint "destination_area_id"
-    t.bigint "origin_agent_id"
-    t.bigint "destination_agent_id"
-    t.bigint "user_id", null: false
-    t.string "delivery_type"
-    t.string "state"
-    t.integer "cost"
-    t.datetime "created_at", null: false
-    t.datetime "updated_at", null: false
-    t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
-    t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
-    t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
-    t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
-    t.index ["user_id"], name: "index_packages_on_user_id"
-  end
-
   create_table "prices", force: :cascade do |t|
     t.bigint "origin_area_id"
     t.bigint "destination_area_id"
@@ -141,9 +119,6 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_02_091601) do
     t.datetime "remember_created_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.string "first_name"
-    t.string "last_name"
-    t.string "phone_number"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
   end
@@ -162,11 +137,6 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_02_091601) do
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
   add_foreign_key "businesses", "users", column: "owner_id"
-  add_foreign_key "packages", "agents", column: "destination_agent_id"
-  add_foreign_key "packages", "agents", column: "origin_agent_id"
-  add_foreign_key "packages", "areas", column: "destination_area_id"
-  add_foreign_key "packages", "areas", column: "origin_area_id"
-  add_foreign_key "packages", "users"
   add_foreign_key "prices", "agents", column: "destination_agent_id"
   add_foreign_key "prices", "agents", column: "origin_agent_id"
   add_foreign_key "prices", "areas", column: "destination_area_id"
