@@ -10,9 +10,12 @@ class CreateMessages < ActiveRecord::Migration[7.1]
       t.datetime :edited_at
       t.timestamps
     end
-    
-    add_index :messages, :conversation_id
-    add_index :messages, :user_id
+
+    # ❌ REMOVE redundant indexes:
+    # add_index :messages, :conversation_id
+    # add_index :messages, :user_id
+
+    # ✅ KEEP only useful new ones:
     add_index :messages, :message_type
     add_index :messages, :is_system
     add_index :messages, :created_at
