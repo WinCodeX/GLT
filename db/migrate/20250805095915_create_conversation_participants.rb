@@ -9,10 +9,13 @@ class CreateConversationParticipants < ActiveRecord::Migration[7.1]
       t.boolean :notifications_enabled, default: true
       t.timestamps
     end
-    
+
     add_index :conversation_participants, [:conversation_id, :user_id], 
               unique: true, name: 'index_conv_participants_on_conv_and_user'
-    add_index :conversation_participants, :user_id
+              
+    # 🔥 REMOVE this line — already added by `t.references :user`
+    # add_index :conversation_participants, :user_id
+
     add_index :conversation_participants, :role
   end
 end
