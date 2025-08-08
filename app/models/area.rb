@@ -1,15 +1,14 @@
-
 # app/models/area.rb
 class Area < ApplicationRecord
-  belongs_to :location
-  has_many :agents, dependent: :restrict_with_error
+  has_many :locations, dependent: :destroy
+  has_many :agents, through: :locations, dependent: :restrict_with_error
   
   # Package associations
   has_many :origin_packages, class_name: 'Package', foreign_key: 'origin_area_id', dependent: :restrict_with_error
   has_many :destination_packages, class_name: 'Package', foreign_key: 'destination_area_id', dependent: :restrict_with_error
   
   # Validations
-  validates :name, presence: true, uniqueness: { scope: :location_id }
+  validates :name, presence: true, uniqueness: true
   validates :initials, presence: true, uniqueness: true, 
             format: { with: /\A[A-Z]{2,3}\z/, message: "must be 2-3 uppercase letters" }
   
@@ -18,7 +17,6 @@ class Area < ApplicationRecord
   before_validation :upcase_initials
   
   # Scopes
-  scope :by_location, ->(location_id) { where(location_id: location_id) }
   scope :with_packages, -> { joins(:origin_packages).distinct }
   scope :active, -> { joins(:agents).where(agents: { active: true }).distinct }
 
