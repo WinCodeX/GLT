@@ -67,3 +67,8 @@ gem "dotenv-rails", "~> 3.1"
 gem 'active_model_serializers'
 
 
+gem 'rqrcode', '~> 2.0'
+gem 'chunky_png'
+gem 'mini_magick'
+
+
