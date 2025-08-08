@@ -1,16 +1,18 @@
+# db/migrate/xxx_add_code_to_packages_and_area_initials.rb
 class AddCodeToPackagesAndAreaInitials < ActiveRecord::Migration[7.0]
   def change
     # Add code to packages
-    add_column :packages, :code, :string, null: false, after: :id
-    add_index :packages, :code, unique: true
+    add_column :packages, :code, :string, null: false
+    add_index :packages, :code, unique: true, name: 'idx_packages_code'
     
     # Add initials to areas (assuming you have an areas table)
     add_column :areas, :initials, :string, limit: 3
-    add_index :areas, :initials, unique: true
+    add_index :areas, :initials, unique: true, name: 'idx_areas_initials'
     
     # Add counter cache for packages per route
     add_column :packages, :route_sequence, :integer
-    add_index :packages, [:origin_area_id, :destination_area_id, :route_sequence]
+    add_index :packages, [:origin_area_id, :destination_area_id, :route_sequence], 
+              name: 'idx_packages_route_seq'
     
     reversible do |dir|
       dir.up do
