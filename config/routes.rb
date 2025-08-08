@@ -41,12 +41,42 @@ Rails.application.routes.draw do
       # ✅ Businesses
       resources :businesses, only: [:create, :index, :show], defaults: { format: :json }
     
-      # ✅ Resources
-      resources :packages, only: [:index, :create, :show]
-      resources :locations, only: [:index, :create]
-      resources :areas, only: [:index, :create]
-      resources :agents, only: [:index, :create]
-      resources :prices, only: [:index, :create]
+      # ✅ Enhanced Resources with Full CRUD and Additional Features
+      
+      # 📦 PACKAGES - Enhanced with QR codes, tracking, search, etc.
+      resources :packages, only: [:index, :create, :show, :update, :destroy] do
+        member do
+          get :validate          # Validate package by code
+          get :qr_code          # Generate QR code
+          get :tracking_page    # Full tracking information
+          post :pay             # Process payment
+          patch :submit         # Submit for delivery
+        end
+        collection do
+          get :search           # Search packages by code
+          get :stats           # Package statistics
+        end
+      end
+
+      # 🏢 AREAS - Enhanced with package management and route analytics
+      resources :areas, only: [:index, :create, :show, :update, :destroy] do
+        member do
+          get :packages         # Get packages for this area
+          get :routes          # Get route statistics
+        end
+        collection do
+          post :bulk_create     # Create multiple areas at once
+        end
+      end
+
+      # 📍 LOCATIONS - Keep existing functionality
+      resources :locations, only: [:index, :create, :show]
+
+      # 👥 AGENTS - Keep existing functionality  
+      resources :agents, only: [:index, :create, :show]
+
+      # 💰 PRICES - Keep existing functionality
+      resources :prices, only: [:index, :create, :show]
 
       # ✅ CONVERSATIONS AND SUPPORT SYSTEM
       resources :conversations, only: [:index, :show] do
@@ -77,6 +107,9 @@ Rails.application.routes.draw do
           end
         end
       end
+
+      # 🔍 Public tracking endpoint (no authentication required)
+      get 'track/:code', to: 'packages#public_tracking', as: :package_tracking
     end
   end
 
