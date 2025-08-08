@@ -1,15 +1,16 @@
-# Create this file: app/models/message.rb
+# app/models/message.rb
 class Message < ApplicationRecord
   belongs_to :conversation
   belongs_to :user
   
+  # Add _suffix to avoid enum conflicts
   enum message_type: {
     text: 0,
     voice: 1,
     image: 2,
     file: 3,
     system: 4
-  }
+  }, _suffix: :msg
   
   validates :content, presence: true
   validates :message_type, presence: true
