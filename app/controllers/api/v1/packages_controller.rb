@@ -1,10 +1,10 @@
-
 # app/controllers/api/v1/packages_controller.rb
 module Api
   module V1
     class PackagesController < ApplicationController
-      before_action :authenticate_user!
-      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page]
+      before_action :authenticate_user!, except: [:public_tracking, :validate]
+      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit]
+      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy]
 
       def index
         packages = current_user.packages
@@ -56,7 +56,12 @@ module Api
         package.state = 'pending_unpaid'
         
         # Calculate cost using the enhanced method
-        package.cost = package.calculate_delivery_cost
+        begin
+          package.cost = package.calculate_delivery_cost
+        rescue => e
+          # Fallback to basic cost calculation if enhanced method fails
+          package.cost = calculate_cost(package)
+        end
 
         if package.save
           render json: {
@@ -80,7 +85,12 @@ module Api
         if @package.update(package_update_params)
           # Recalculate cost if route changed
           if package_update_params.keys.any? { |key| key.include?('area_id') || key == 'delivery_type' }
-            @package.update_cost!
+            begin
+              @package.update_cost!
+            rescue => e
+              # Log error but don't fail the update
+              Rails.logger.error "Failed to update cost for package #{@package.id}: #{e.message}"
+            end
           end
 
           render json: {
@@ -122,46 +132,68 @@ module Api
 
         qr_options = qr_style_options(style)
 
-        case format
-        when 'base64'
-          base64_data = @package.qr_code_base64(qr_options)
-          render json: { 
-            success: true,
-            qr_code: base64_data, 
-            package_code: @package.code 
-          }
-        when 'png'
-          png_data = @package.generate_qr_code(qr_options)
-          send_data png_data, 
-                    type: 'image/png', 
-                    filename: "#{@package.code}_qr.png",
-                    disposition: 'inline'
-        when 'file'
-          file_path = @package.qr_code_path(qr_options)
-          send_file file_path, 
-                    type: 'image/png', 
-                    filename: "#{@package.code}_qr.png"
-        else
-          render json: { 
+        begin
+          case format
+          when 'base64'
+            base64_data = @package.qr_code_base64(qr_options)
+            render json: { 
+              success: true,
+              qr_code: base64_data, 
+              package_code: @package.code 
+            }
+          when 'png'
+            png_data = @package.generate_qr_code(qr_options)
+            send_data png_data, 
+                      type: 'image/png', 
+                      filename: "#{@package.code}_qr.png",
+                      disposition: 'inline'
+          when 'file'
+            file_path = @package.qr_code_path(qr_options)
+            send_file file_path, 
+                      type: 'image/png', 
+                      filename: "#{@package.code}_qr.png"
+          else
+            render json: { 
+              success: false,
+              error: 'Invalid format. Use: base64, png, or file' 
+            }, status: :bad_request
+          end
+        rescue => e
+          render json: {
             success: false,
-            error: 'Invalid format. Use: base64, png, or file' 
-          }, status: :bad_request
+            error: 'Failed to generate QR code',
+            message: e.message
+          }, status: :internal_server_error
         end
       end
 
       # GET /api/v1/packages/:id/tracking_page
       def tracking_page
-        render json: {
-          success: true,
-          package: @package.as_json(
-            include: [:origin_area, :destination_area],
-            methods: [:tracking_code, :route_description],
-            include_status: true
-          ),
-          qr_code: @package.qr_code_base64,
-          tracking_url: @package.tracking_url,
-          timeline: package_timeline(@package)
-        }
+        begin
+          render json: {
+            success: true,
+            package: @package.as_json(
+              include: [:origin_area, :destination_area],
+              methods: [:tracking_code, :route_description],
+              include_status: true
+            ),
+            qr_code: @package.qr_code_base64,
+            tracking_url: @package.tracking_url,
+            timeline: package_timeline(@package)
+          }
+        rescue => e
+          render json: {
+            success: true,
+            package: @package.as_json(
+              include: [:origin_area, :destination_area],
+              methods: [:tracking_code, :route_description],
+              include_status: true
+            ),
+            tracking_url: package_tracking_url(@package.code),
+            timeline: package_timeline(@package),
+            message: 'QR code generation failed but package data is available'
+          }
+        end
       end
 
       # GET /api/v1/packages/search
@@ -177,8 +209,15 @@ module Api
 
         packages = current_user.packages
                               .includes(:origin_area, :destination_area)
-                              .search_by_code(query)
-                              .limit(20)
+
+        # Search by code if search_by_code method exists, otherwise use basic search
+        if Package.respond_to?(:search_by_code)
+          packages = packages.search_by_code(query)
+        else
+          packages = packages.where("code ILIKE ?", "%#{query}%")
+        end
+
+        packages = packages.limit(20)
 
         render json: {
           success: true,
@@ -195,14 +234,18 @@ module Api
       def stats
         packages = current_user.packages
         
+        # Safe stats calculation with fallbacks
+        intra_count = packages.respond_to?(:intra_area) ? packages.intra_area.count : 0
+        inter_count = packages.respond_to?(:inter_area) ? packages.inter_area.count : 0
+        
         stats = {
           total_packages: packages.count,
           by_state: packages.group(:state).count,
           by_delivery_type: packages.group(:delivery_type).count,
           total_cost: packages.sum(:cost),
           this_month: packages.where(created_at: Time.current.beginning_of_month..Time.current).count,
-          intra_area: packages.intra_area.count,
-          inter_area: packages.inter_area.count
+          intra_area: intra_count,
+          inter_area: inter_count
         }
 
         render json: { success: true, stats: stats }
@@ -242,6 +285,52 @@ module Api
         end
       end
 
+      # Public tracking endpoint (no authentication required)
+      # GET /api/v1/track/:code
+      def public_tracking
+        package = Package.find_by(code: params[:code])
+        
+        unless package
+          return render json: {
+            success: false,
+            message: "Package with tracking code '#{params[:code]}' not found"
+          }, status: :not_found
+        end
+
+        # Only show limited information for public tracking
+        begin
+          render json: {
+            success: true,
+            package: {
+              code: package.code,
+              state: package.state,
+              state_display: package.state.humanize,
+              route_description: package.route_description,
+              created_at: package.created_at,
+              updated_at: package.updated_at,
+              is_trackable: package.trackable?
+            },
+            timeline: public_package_timeline(package),
+            qr_code: package.qr_code_base64
+          }
+        rescue => e
+          # Fallback without QR code if generation fails
+          render json: {
+            success: true,
+            package: {
+              code: package.code,
+              state: package.state,
+              state_display: package.state.humanize,
+              route_description: package.route_description,
+              created_at: package.created_at,
+              updated_at: package.updated_at,
+              is_trackable: package.respond_to?(:trackable?) ? package.trackable? : true
+            },
+            timeline: public_package_timeline(package)
+          }
+        end
+      end
+
       # Validate package by code (public endpoint for tracking)
       def validate
         package = Package.find_by_code_or_id(params[:id])
@@ -269,12 +358,26 @@ module Api
       private
 
       def set_package
-        @package = Package.find_by_code_or_id(params[:id])
+        @package = if Package.respond_to?(:find_by_code_or_id)
+                     Package.find_by_code_or_id(params[:id])
+                   else
+                     Package.find_by(code: params[:id]) || Package.find_by(id: params[:id])
+                   end
         
         unless @package
           render json: { 
             success: false, 
             message: "Package with identifier '#{params[:id]}' not found" 
+          }, status: :not_found
+        end
+      end
+
+      def set_package_for_authenticated_user
+        # Ensure the package belongs to the current user for sensitive operations
+        unless @package&.user == current_user
+          render json: { 
+            success: false, 
+            message: 'Package not found or access denied' 
           }, status: :not_found
         end
       end
@@ -312,19 +415,27 @@ module Api
         
         # Filter by date range
         if params[:start_date].present?
-          packages = packages.where('created_at >= ?', Date.parse(params[:start_date]))
+          begin
+            packages = packages.where('created_at >= ?', Date.parse(params[:start_date]))
+          rescue ArgumentError
+            # Invalid date format, ignore filter
+          end
         end
         
         if params[:end_date].present?
-          packages = packages.where('created_at <= ?', Date.parse(params[:end_date]).end_of_day)
+          begin
+            packages = packages.where('created_at <= ?', Date.parse(params[:end_date]).end_of_day)
+          rescue ArgumentError
+            # Invalid date format, ignore filter
+          end
         end
         
         # Filter by intra/inter area
         case params[:shipment_type]
         when 'intra'
-          packages = packages.intra_area
+          packages = packages.where('origin_area_id = destination_area_id')
         when 'inter'
-          packages = packages.inter_area
+          packages = packages.where('origin_area_id != destination_area_id')
         end
         
         packages
@@ -335,28 +446,23 @@ module Api
         when 'purple_gradient'
           {
             gradient: true,
-            gradient_start: ChunkyPNG::Color.rgb(138, 43, 226), # Purple
-            gradient_end: ChunkyPNG::Color.rgb(30, 144, 255),   # Blue
             center_logo: true,
             corner_radius: 4
           }
         when 'blue'
           {
-            foreground_color: ChunkyPNG::Color.rgb(30, 144, 255),
             gradient: false,
             center_logo: true,
             corner_radius: 3
           }
         when 'minimal'
           {
-            foreground_color: ChunkyPNG::Color::BLACK,
             gradient: false,
             center_logo: false,
             corner_radius: 2
           }
         when 'green'
           {
-            foreground_color: ChunkyPNG::Color.rgb(34, 197, 94),
             gradient: false,
             center_logo: true,
             corner_radius: 3
@@ -376,7 +482,7 @@ module Api
           active: true
         }
         
-        if package.paid?
+        if package.respond_to?(:paid?) && package.paid?
           timeline << {
             status: 'paid',
             timestamp: package.updated_at,
@@ -413,6 +519,74 @@ module Api
         end
         
         timeline
+      end
+
+      # Simplified timeline for public tracking (no sensitive information)
+      def public_package_timeline(package)
+        timeline = []
+        
+        timeline << {
+          status: 'created',
+          timestamp: package.created_at,
+          description: 'Package created',
+          completed: true
+        }
+        
+        if package.respond_to?(:paid?) && package.paid?
+          timeline << {
+            status: 'paid',
+            timestamp: package.updated_at,
+            description: 'Payment confirmed',
+            completed: true
+          }
+        end
+        
+        if package.submitted?
+          timeline << {
+            status: 'submitted',
+            timestamp: package.updated_at,
+            description: 'Package accepted for delivery',
+            completed: true
+          }
+        end
+        
+        if package.in_transit?
+          timeline << {
+            status: 'in_transit',
+            timestamp: package.updated_at,
+            description: 'Package is in transit',
+            completed: true,
+            current: true
+          }
+        end
+        
+        if package.delivered? || package.collected?
+          timeline << {
+            status: 'delivered',
+            timestamp: package.updated_at,
+            description: package.delivered? ? 'Package delivered' : 'Package collected by recipient',
+            completed: true
+          }
+        end
+        
+        timeline
+      end
+
+      # Fallback cost calculation method
+      def calculate_cost(pkg)
+        price = Price.find_by(
+          origin_area_id: pkg.origin_area_id,
+          destination_area_id: pkg.destination_area_id,
+          origin_agent_id: pkg.origin_agent_id,
+          destination_agent_id: pkg.destination_agent_id,
+          delivery_type: pkg.delivery_type
+        )
+        price&.cost || 0
+      end
+
+      # Helper to generate tracking URL
+      def package_tracking_url(code)
+        "#{request.base_url}/api/v1/track/#{code}"
       end
     end
   end
