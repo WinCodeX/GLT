@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_07_29_203524) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_05_095917) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -70,10 +70,77 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_203524) do
     t.index ["owner_id"], name: "index_businesses_on_owner_id"
   end
 
+  create_table "conversation_participants", force: :cascade do |t|
+    t.bigint "conversation_id", null: false
+    t.bigint "user_id", null: false
+    t.string "role", default: "participant"
+    t.datetime "joined_at"
+    t.datetime "last_read_at"
+    t.boolean "notifications_enabled", default: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["conversation_id", "user_id"], name: "index_conv_participants_on_conv_and_user", unique: true
+    t.index ["conversation_id"], name: "index_conversation_participants_on_conversation_id"
+    t.index ["role"], name: "index_conversation_participants_on_role"
+    t.index ["user_id"], name: "index_conversation_participants_on_user_id"
+  end
+
+  create_table "conversations", force: :cascade do |t|
+    t.string "conversation_type", null: false
+    t.string "title"
+    t.json "metadata", default: {}
+    t.datetime "last_activity_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "((metadata ->> 'status'::text))", name: "index_conversations_on_status"
+    t.index "((metadata ->> 'ticket_id'::text))", name: "index_conversations_on_ticket_id"
+    t.index ["conversation_type"], name: "index_conversations_on_conversation_type"
+    t.index ["last_activity_at"], name: "index_conversations_on_last_activity_at"
+  end
+
   create_table "locations", force: :cascade do |t|
     t.string "name"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+  end
+
+  create_table "messages", force: :cascade do |t|
+    t.bigint "conversation_id", null: false
+    t.bigint "user_id", null: false
+    t.text "content"
+    t.integer "message_type", default: 0
+    t.json "metadata", default: {}
+    t.boolean "is_system", default: false
+    t.datetime "edited_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["conversation_id"], name: "index_messages_on_conversation_id"
+    t.index ["created_at"], name: "index_messages_on_created_at"
+    t.index ["is_system"], name: "index_messages_on_is_system"
+    t.index ["message_type"], name: "index_messages_on_message_type"
+    t.index ["user_id"], name: "index_messages_on_user_id"
+  end
+
+  create_table "packages", force: :cascade do |t|
+    t.string "sender_name"
+    t.string "sender_phone"
+    t.string "receiver_name"
+    t.string "receiver_phone"
+    t.bigint "origin_area_id"
+    t.bigint "destination_area_id"
+    t.bigint "origin_agent_id"
+    t.bigint "destination_agent_id"
+    t.bigint "user_id", null: false
+    t.string "delivery_type"
+    t.string "state"
+    t.integer "cost"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
+    t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
+    t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
+    t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
+    t.index ["user_id"], name: "index_packages_on_user_id"
   end
 
   create_table "prices", force: :cascade do |t|
@@ -119,7 +186,13 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_203524) do
     t.datetime "remember_created_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "first_name"
+    t.string "last_name"
+    t.string "phone_number"
+    t.boolean "online", default: false
+    t.datetime "last_seen_at"
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["online"], name: "index_users_on_online"
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
   end
 
@@ -137,6 +210,15 @@ ActiveRecord::Schema[7.1].define(version: 2025_07_29_203524) do
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
   add_foreign_key "businesses", "users", column: "owner_id"
+  add_foreign_key "conversation_participants", "conversations"
+  add_foreign_key "conversation_participants", "users"
+  add_foreign_key "messages", "conversations"
+  add_foreign_key "messages", "users"
+  add_foreign_key "packages", "agents", column: "destination_agent_id"
+  add_foreign_key "packages", "agents", column: "origin_agent_id"
+  add_foreign_key "packages", "areas", column: "destination_area_id"
+  add_foreign_key "packages", "areas", column: "origin_area_id"
+  add_foreign_key "packages", "users"
   add_foreign_key "prices", "agents", column: "destination_agent_id"
   add_foreign_key "prices", "agents", column: "origin_agent_id"
   add_foreign_key "prices", "areas", column: "destination_area_id"
