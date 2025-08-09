@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_05_095917) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_09_085032) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -49,6 +49,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_05_095917) do
     t.bigint "user_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "active"
     t.index ["area_id"], name: "index_agents_on_area_id"
     t.index ["user_id"], name: "index_agents_on_user_id"
   end
@@ -58,6 +59,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_05_095917) do
     t.bigint "location_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "initials", limit: 3
+    t.index ["initials"], name: "idx_areas_initials", unique: true
     t.index ["location_id"], name: "index_areas_on_location_id"
   end
 
@@ -136,9 +139,13 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_05_095917) do
     t.integer "cost"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "code", null: false
+    t.integer "route_sequence"
+    t.index ["code"], name: "idx_packages_code", unique: true
     t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
     t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
     t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
+    t.index ["origin_area_id", "destination_area_id", "route_sequence"], name: "idx_packages_route_seq"
     t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
     t.index ["user_id"], name: "index_packages_on_user_id"
   end
