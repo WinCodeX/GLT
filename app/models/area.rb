@@ -1,14 +1,14 @@
-# app/models/area.rb
+# app/models/area.rb  
 class Area < ApplicationRecord
-  has_many :locations, dependent: :destroy
-  has_many :agents, through: :locations, dependent: :restrict_with_error
+  belongs_to :location
+  has_many :agents, dependent: :restrict_with_error
   
   # Package associations
   has_many :origin_packages, class_name: 'Package', foreign_key: 'origin_area_id', dependent: :restrict_with_error
   has_many :destination_packages, class_name: 'Package', foreign_key: 'destination_area_id', dependent: :restrict_with_error
   
   # Validations
-  validates :name, presence: true, uniqueness: true
+  validates :name, presence: true, uniqueness: { scope: :location_id }
   validates :initials, presence: true, uniqueness: true, 
             format: { with: /\A[A-Z]{2,3}\z/, message: "must be 2-3 uppercase letters" }
   
@@ -37,6 +37,10 @@ class Area < ApplicationRecord
   
   def can_be_deleted?
     package_count == 0 && agents.count == 0
+  end
+
+  def full_name
+    "#{name}, #{location.name}"
   end
 
   # Route statistics
