@@ -17,7 +17,7 @@ module Api
         location = Location.find(params[:id])
         render json: {
           success: true,
-          location: LocationSerializer.new(location).as_json
+          location: LocationSerializer.new(location)
         }
       rescue ActiveRecord::RecordNotFound
         render json: {
