@@ -17,7 +17,7 @@ Rails.application.routes.draw do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
   end
 
-  namespace :api do
+  namespace :api, defaults: { format: :json } do
     namespace :v1 do
       # User profile and management
       get 'users/me', to: 'users#me'
