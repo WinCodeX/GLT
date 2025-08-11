@@ -1,24 +1,17 @@
-# app/controllers/api/v1/locations_controller.rb
 module Api
   module V1
     class LocationsController < ApplicationController
       before_action :authenticate_user!
+      before_action :force_json_format
 
       def index
         locations = Location.all.order(:name)
-        
-        render json: {
-          success: true,
-          locations: LocationSerializer.serialize_collection(locations)
-        }
+        render json: LocationSerializer.new(locations).serialized_json
       end
 
       def show
         location = Location.find(params[:id])
-        render json: {
-          success: true,
-          location: LocationSerializer.new(location)
-        }
+        render json: LocationSerializer.new(location).serialized_json
       rescue ActiveRecord::RecordNotFound
         render json: {
           success: false,
@@ -31,7 +24,7 @@ module Api
         if location.save
           render json: {
             success: true,
-            location: LocationSerializer.new(location),
+            data: JSON.parse(LocationSerializer.new(location).serialized_json),
             message: 'Location created successfully'
           }, status: :created
         else
@@ -43,6 +36,10 @@ module Api
       end
 
       private
+
+      def force_json_format
+        request.format = :json
+      end
 
       def location_params
         params.require(:location).permit(:name, :initials)
