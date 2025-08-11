@@ -1,72 +1,74 @@
-# app/serializers/agent_serializer.rb
 class AgentSerializer
-  include ActiveModel::Serializers::JSON
-
-  def initialize(agent)
-    @agent = agent
+  include FastJsonapi::ObjectSerializer
+  
+  attributes :name, :phone, :area_id, :user_id, :created_at, :updated_at
+  belongs_to :area, serializer: AreaSerializer
+  
+  attribute :active do |agent|
+    agent.respond_to?(:active?) ? agent.active? : true
   end
+end
 
-  def as_json(options = {})
-    {
-      id: @agent.id.to_s,
-      name: @agent.name,
-      phone: @agent.phone,
-      area_id: @agent.area_id.to_s,
-      user_id: @agent.user_id&.to_s,
-      active: @agent.respond_to?(:active?) ? @agent.active? : true,
-      area: area_data,
-      created_at: @agent.created_at&.iso8601,
-      updated_at: @agent.updated_at&.iso8601
-    }
+# app/serializers/package_serializer.rb
+class PackageSerializer
+  include FastJsonapi::ObjectSerializer
+  
+  attributes :code, :state, :delivery_type, :cost, :sender_name, :sender_phone, 
+             :receiver_name, :receiver_phone, :created_at, :updated_at
+  
+  belongs_to :origin_area, serializer: AreaSerializer
+  belongs_to :destination_area, serializer: AreaSerializer
+  belongs_to :origin_agent, serializer: AgentSerializer
+  belongs_to :destination_agent, serializer: AgentSerializer
+  belongs_to :user, serializer: UserSerializer
+  
+  attribute :tracking_code do |package|
+    package.code
   end
-
-  def self.serialize_collection(agents)
-    agents.includes(area: :location).map { |agent| new(agent).as_json }
+  
+  attribute :state_display do |package|
+    package.state.humanize
   end
-
-  private
-
-  def area_data
-    return nil unless @agent.area
-    
-    {
-      id: @agent.area.id.to_s,
-      name: @agent.area.name,
-      initials: safe_initials(@agent.area),
-      location_id: @agent.area.location_id.to_s,
-      location: location_data
-    }
+  
+  attribute :route_description do |package|
+    package.route_description
   end
-
-  def location_data
-    return nil unless @agent.area&.location
-    
-    {
-      id: @agent.area.location.id.to_s,
-      name: @agent.area.location.name,
-      initials: safe_initials(@agent.area.location)
-    }
+  
+  attribute :is_intra_area do |package|
+    package.intra_area_shipment?
   end
-
-  def safe_initials(record)
-    # Try the initials attribute first, then generate from name
-    if record.respond_to?(:initials) && record.initials.present?
-      record.initials
-    elsif record.respond_to?(:safe_initials)
-      record.safe_initials
-    else
-      generate_initials(record.name)
+  
+  attribute :is_paid do |package|
+    package.paid?
+  end
+  
+  attribute :is_trackable do |package|
+    package.trackable?
+  end
+  
+  attribute :can_be_cancelled do |package|
+    package.can_be_cancelled?
+  end
+  
+  attribute :tracking_url do |package|
+    begin
+      package.tracking_url
+    rescue => e
+      Rails.logger.warn "Failed to generate tracking URL for package #{package.id}: #{e.message}"
+      "/track/#{package.code}"
     end
   end
-
-  def generate_initials(name)
-    return '' if name.blank?
-    
-    words = name.split(' ')
-    if words.length >= 2
-      words.first(2).map(&:first).join.upcase
-    else
-      name.first(3).upcase
+  
+  # Conditional QR code attribute
+  attribute :qr_code_base64, if: Proc.new { |record, params|
+    params && params[:include_qr_code]
+  } do |package, params|
+    begin
+      qr_options = params[:qr_options] || {}
+      package.qr_code_base64(qr_options)
+    rescue => e
+      Rails.logger.warn "Failed to generate QR code for package #{package.id}: #{e.message}"
+      nil
     end
   end
 end
