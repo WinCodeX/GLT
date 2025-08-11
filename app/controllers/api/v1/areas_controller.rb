@@ -20,7 +20,7 @@ module Api
       def show
         render json: {
           success: true,
-          area: AreaSerializer.new(@area).as_json
+          area: AreaSerializer.new(@area)
         }
       end
 
@@ -30,7 +30,7 @@ module Api
         if area.save
           render json: {
             success: true,
-            area: AreaSerializer.new(area).as_json,
+            area: AreaSerializer.new(area),
             message: 'Area created successfully'
           }, status: :created
         else
@@ -45,7 +45,7 @@ module Api
         if @area.update(area_params)
           render json: {
             success: true,
-            area: AreaSerializer.new(@area).as_json,
+            area: AreaSerializer.new(@area),
             message: 'Area updated successfully'
           }
         else
