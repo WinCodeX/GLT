@@ -24,11 +24,10 @@ module Api
 
         render json: {
           success: true,
-          packages: packages.as_json(
-            include: [:origin_area, :destination_area, :origin_agent, :destination_agent],
-            methods: [:tracking_code, :route_description, :is_intra_area],
-            include_status: true
-          ),
+          packages: PackageSerializer.serialize_collection(packages, {
+            include_areas: true,
+            include_agents: true
+          }),
           pagination: {
             current_page: page,
             per_page: per_page,
@@ -43,11 +42,11 @@ module Api
       def show
         render json: {
           success: true,
-          package: @package.as_json(
-            include: [:origin_area, :destination_area, :origin_agent, :destination_agent, :user],
-            methods: [:tracking_code, :route_description, :is_intra_area],
-            include_status: true
-          )
+          package: PackageSerializer.new(@package).as_json({
+            include_areas: true,
+            include_agents: true,
+            include_user: true
+          })
         }
       end
 
@@ -66,11 +65,9 @@ module Api
         if package.save
           render json: {
             success: true,
-            package: package.as_json(
-              include: [:origin_area, :destination_area],
-              methods: [:tracking_code, :route_description],
-              include_status: true
-            ),
+            package: PackageSerializer.new(package).as_json({
+              include_areas: true
+            }),
             message: 'Package created successfully'
           }, status: :created
         else
@@ -95,11 +92,9 @@ module Api
 
           render json: {
             success: true,
-            package: @package.as_json(
-              include: [:origin_area, :destination_area],
-              methods: [:tracking_code, :route_description],
-              include_status: true
-            ),
+            package: PackageSerializer.new(@package).as_json({
+              include_areas: true
+            }),
             message: 'Package updated successfully'
           }
         else
@@ -172,23 +167,19 @@ module Api
         begin
           render json: {
             success: true,
-            package: @package.as_json(
-              include: [:origin_area, :destination_area],
-              methods: [:tracking_code, :route_description],
-              include_status: true
-            ),
-            qr_code: @package.qr_code_base64,
+            package: PackageSerializer.new(@package).as_json({
+              include_areas: true,
+              include_qr_code: true
+            }),
             tracking_url: @package.tracking_url,
             timeline: package_timeline(@package)
           }
         rescue => e
           render json: {
             success: true,
-            package: @package.as_json(
-              include: [:origin_area, :destination_area],
-              methods: [:tracking_code, :route_description],
-              include_status: true
-            ),
+            package: PackageSerializer.new(@package).as_json({
+              include_areas: true
+            }),
             tracking_url: package_tracking_url(@package.code),
             timeline: package_timeline(@package),
             message: 'QR code generation failed but package data is available'
@@ -221,11 +212,10 @@ module Api
 
         render json: {
           success: true,
-          packages: packages.as_json(
-            include: [:origin_area, :destination_area],
-            methods: [:tracking_code, :route_description],
-            only: [:id, :code, :state, :created_at]
-          ),
+          packages: PackageSerializer.serialize_collection(packages, {
+            include_areas: true,
+            minimal: true # Only include essential fields for search results
+          }),
           query: query
         }
       end
@@ -258,7 +248,7 @@ module Api
           render json: { 
             success: true, 
             message: 'Payment processed successfully',
-            package: @package.as_json(methods: [:tracking_code], include_status: true)
+            package: PackageSerializer.new(@package).as_json
           }
         else
           render json: { 
@@ -275,7 +265,7 @@ module Api
           render json: { 
             success: true, 
             message: 'Package submitted for delivery',
-            package: @package.as_json(methods: [:tracking_code], include_status: true)
+            package: PackageSerializer.new(@package).as_json
           }
         else
           render json: { 
@@ -301,15 +291,7 @@ module Api
         begin
           render json: {
             success: true,
-            package: {
-              code: package.code,
-              state: package.state,
-              state_display: package.state.humanize,
-              route_description: package.route_description,
-              created_at: package.created_at,
-              updated_at: package.updated_at,
-              is_trackable: package.trackable?
-            },
+            package: public_package_data(package),
             timeline: public_package_timeline(package),
             qr_code: package.qr_code_base64
           }
@@ -317,15 +299,7 @@ module Api
           # Fallback without QR code if generation fails
           render json: {
             success: true,
-            package: {
-              code: package.code,
-              state: package.state,
-              state_display: package.state.humanize,
-              route_description: package.route_description,
-              created_at: package.created_at,
-              updated_at: package.updated_at,
-              is_trackable: package.respond_to?(:trackable?) ? package.trackable? : true
-            },
+            package: public_package_data(package),
             timeline: public_package_timeline(package)
           }
         end
@@ -338,11 +312,10 @@ module Api
         if package
           render json: {
             success: true,
-            package: package.as_json(
-              include: [:origin_area, :destination_area],
-              methods: [:tracking_code, :route_description],
-              only: [:id, :code, :state, :created_at]
-            ),
+            package: PackageSerializer.new(package).as_json({
+              include_areas: true,
+              minimal: true
+            }),
             valid: true
           }
         else
@@ -470,6 +443,20 @@ module Api
         else
           {} # Use defaults
         end
+      end
+
+      # Public package data - limited fields for security
+      def public_package_data(package)
+        {
+          code: package.code,
+          state: package.state,
+          state_display: package.state.humanize,
+          route_description: package.route_description,
+          created_at: package.created_at,
+          updated_at: package.updated_at,
+          is_trackable: package.trackable?,
+          delivery_type: package.delivery_type
+        }
       end
 
       def package_timeline(package)
