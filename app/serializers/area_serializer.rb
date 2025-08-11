@@ -10,7 +10,7 @@ class AreaSerializer
     {
       id: @area.id.to_s,
       name: @area.name,
-      initials: @area.initials || generate_initials(@area.name),
+      initials: safe_initials(@area),
       location_id: @area.location_id.to_s,
       location: location_data,
       created_at: @area.created_at&.iso8601,
@@ -24,13 +24,22 @@ class AreaSerializer
 
   private
 
+  def safe_initials(area)
+    # Try the initials attribute first, then generate from name
+    if area.respond_to?(:initials) && area.initials.present?
+      area.initials
+    else
+      generate_initials(area.name)
+    end
+  end
+
   def location_data
     return nil unless @area.location
     
     {
       id: @area.location.id.to_s,
       name: @area.location.name,
-      initials: @area.location.initials || generate_initials(@area.location.name)
+      initials: safe_initials(@area.location)
     }
   end
 
