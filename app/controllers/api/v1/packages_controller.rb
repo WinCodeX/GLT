@@ -5,6 +5,7 @@ module Api
       before_action :authenticate_user!, except: [:public_tracking, :validate]
       before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit]
       before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy]
+      before_action :force_json_format
 
       def index
         packages = current_user.packages
@@ -40,9 +41,10 @@ module Api
       end
 
       def show
+        serialized_package = PackageSerializer.new(@package)
         render json: {
           success: true,
-          package: PackageSerializer.new(@package).as_json({
+          package: serialized_package.serialize_with_options({
             include_areas: true,
             include_agents: true,
             include_user: true
@@ -63,9 +65,10 @@ module Api
         end
 
         if package.save
+          serialized_package = PackageSerializer.new(package)
           render json: {
             success: true,
-            package: PackageSerializer.new(package).as_json({
+            package: serialized_package.serialize_with_options({
               include_areas: true
             }),
             message: 'Package created successfully'
@@ -90,9 +93,10 @@ module Api
             end
           end
 
+          serialized_package = PackageSerializer.new(@package)
           render json: {
             success: true,
-            package: PackageSerializer.new(@package).as_json({
+            package: serialized_package.serialize_with_options({
               include_areas: true
             }),
             message: 'Package updated successfully'
@@ -165,9 +169,10 @@ module Api
       # GET /api/v1/packages/:id/tracking_page
       def tracking_page
         begin
+          serialized_package = PackageSerializer.new(@package)
           render json: {
             success: true,
-            package: PackageSerializer.new(@package).as_json({
+            package: serialized_package.serialize_with_options({
               include_areas: true,
               include_qr_code: true
             }),
@@ -175,9 +180,10 @@ module Api
             timeline: package_timeline(@package)
           }
         rescue => e
+          serialized_package = PackageSerializer.new(@package)
           render json: {
             success: true,
-            package: PackageSerializer.new(@package).as_json({
+            package: serialized_package.serialize_with_options({
               include_areas: true
             }),
             tracking_url: package_tracking_url(@package.code),
@@ -248,7 +254,7 @@ module Api
           render json: { 
             success: true, 
             message: 'Payment processed successfully',
-            package: PackageSerializer.new(@package).as_json
+            package: PackageSerializer.new(@package).serialize_with_options({})
           }
         else
           render json: { 
@@ -265,7 +271,7 @@ module Api
           render json: { 
             success: true, 
             message: 'Package submitted for delivery',
-            package: PackageSerializer.new(@package).as_json
+            package: PackageSerializer.new(@package).serialize_with_options({})
           }
         else
           render json: { 
@@ -312,10 +318,10 @@ module Api
         if package
           render json: {
             success: true,
-            package: PackageSerializer.new(package).as_json({
+            package: PackageSerializer.serialize_collection([package], {
               include_areas: true,
               minimal: true
-            }),
+            }).first,
             valid: true
           }
         else
@@ -329,6 +335,10 @@ module Api
       end
 
       private
+
+      def force_json_format
+        request.format = :json
+      end
 
       def set_package
         @package = if Package.respond_to?(:find_by_code_or_id)
