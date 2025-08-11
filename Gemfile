@@ -70,5 +70,6 @@ gem 'active_model_serializers'
 gem 'rqrcode', '~> 2.0'
 gem 'chunky_png'
 gem 'mini_magick'
+gem 'fast_jsonapi'
 
 
