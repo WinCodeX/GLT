@@ -5,7 +5,7 @@ module Api
 
       def index
         prices = Price.includes(:origin_area, :destination_area, :origin_agent, :destination_agent)
-        render json: prices.as_json(include: [:origin_area, :destination_area, :origin_agent, :destination_agent])
+        render json: prices(include: [:origin_area, :destination_area, :origin_agent, :destination_agent])
       end
 
       def create
