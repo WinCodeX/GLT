@@ -1,27 +1,19 @@
-# app/controllers/api/v1/areas_controller.rb
 module Api
   module V1
     class AreasController < ApplicationController
       before_action :authenticate_user!
       before_action :set_area, only: [:show, :update, :destroy]
+      before_action :force_json_format
 
       def index
         areas = Area.includes(:location).order(:name)
-        
-        # Filter by location if specified
         areas = areas.where(location_id: params[:location_id]) if params[:location_id].present?
         
-        render json: {
-          success: true,
-          areas: AreaSerializer.serialize_collection(areas)
-        }
+        render json: AreaSerializer.new(areas, include: [:location]).serialized_json
       end
 
       def show
-        render json: {
-          success: true,
-          area: AreaSerializer.new(@area)
-        }
+        render json: AreaSerializer.new(@area, include: [:location]).serialized_json
       end
 
       def create
@@ -30,7 +22,7 @@ module Api
         if area.save
           render json: {
             success: true,
-            area: AreaSerializer.new(area),
+            data: JSON.parse(AreaSerializer.new(area, include: [:location]).serialized_json),
             message: 'Area created successfully'
           }, status: :created
         else
@@ -45,7 +37,7 @@ module Api
         if @area.update(area_params)
           render json: {
             success: true,
-            area: AreaSerializer.new(@area),
+            data: JSON.parse(AreaSerializer.new(@area, include: [:location]).serialized_json),
             message: 'Area updated successfully'
           }
         else
@@ -71,6 +63,10 @@ module Api
       end
 
       private
+
+      def force_json_format
+        request.format = :json
+      end
 
       def set_area
         @area = Area.find(params[:id])
