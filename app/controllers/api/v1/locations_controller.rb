@@ -31,7 +31,7 @@ module Api
         if location.save
           render json: {
             success: true,
-            location: LocationSerializer.new(location).as_json,
+            location: LocationSerializer.new(location),
             message: 'Location created successfully'
           }, status: :created
         else
