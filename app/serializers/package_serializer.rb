@@ -7,6 +7,19 @@ class PackageSerializer
   end
 
   def as_json(options = {})
+    # Minimal serialization for search results and listings
+    if options[:minimal]
+      return {
+        id: @package.id.to_s,
+        code: @package.code,
+        tracking_code: @package.code,
+        state: @package.state,
+        state_display: @package.state.humanize,
+        route_description: @package.route_description,
+        created_at: @package.created_at&.iso8601
+      }
+    end
+
     result = {
       id: @package.id.to_s,
       code: @package.code,
