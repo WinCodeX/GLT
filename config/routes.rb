@@ -43,7 +43,7 @@ Rails.application.routes.draw do
     
       # ✅ Enhanced Resources with Full CRUD and Additional Features
       
-      # 📦 PACKAGES - Enhanced with QR codes, tracking, search, etc.
+      # 📦 PACKAGES - Enhanced with QR codes, tracking, search, pricing, etc.
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
         member do
           get :validate          # Validate package by code
@@ -55,6 +55,7 @@ Rails.application.routes.draw do
         collection do
           get :search           # Search packages by code
           get :stats           # Package statistics
+          get :pricing         # Calculate package pricing - NEW!
         end
       end
 
@@ -75,8 +76,15 @@ Rails.application.routes.draw do
       # 👥 AGENTS - Keep existing functionality  
       resources :agents, only: [:index, :create, :show]
 
-      # 💰 PRICES - Keep existing functionality
-      resources :prices, only: [:index, :create, :show]
+      # 💰 PRICES - Keep existing functionality + pricing calculation
+      resources :prices, only: [:index, :create, :show] do
+        collection do
+          get :calculate        # Alternative pricing calculation endpoint
+        end
+      end
+
+      # 🔥 DEDICATED PRICING ENDPOINT (matches React Native helper expectations)
+      get 'pricing', to: 'packages#calculate_pricing', defaults: { format: :json }
 
       # ✅ CONVERSATIONS AND SUPPORT SYSTEM
       resources :conversations, only: [:index, :show] do
