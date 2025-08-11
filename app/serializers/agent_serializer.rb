@@ -32,7 +32,7 @@ class AgentSerializer
     {
       id: @agent.area.id.to_s,
       name: @agent.area.name,
-      initials: @agent.area.initials || generate_initials(@agent.area.name),
+      initials: safe_initials(@agent.area),
       location_id: @agent.area.location_id.to_s,
       location: location_data
     }
@@ -44,8 +44,19 @@ class AgentSerializer
     {
       id: @agent.area.location.id.to_s,
       name: @agent.area.location.name,
-      initials: @agent.area.location.initials || generate_initials(@agent.area.location.name)
+      initials: safe_initials(@agent.area.location)
     }
+  end
+
+  def safe_initials(record)
+    # Try the initials attribute first, then generate from name
+    if record.respond_to?(:initials) && record.initials.present?
+      record.initials
+    elsif record.respond_to?(:safe_initials)
+      record.safe_initials
+    else
+      generate_initials(record.name)
+    end
   end
 
   def generate_initials(name)
