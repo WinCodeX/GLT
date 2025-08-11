@@ -10,7 +10,7 @@ class LocationSerializer
     {
       id: @location.id.to_s,
       name: @location.name,
-      initials: @location.initials || generate_initials(@location.name),
+      initials: safe_initials(@location),
       created_at: @location.created_at&.iso8601,
       updated_at: @location.updated_at&.iso8601
     }
@@ -21,6 +21,17 @@ class LocationSerializer
   end
 
   private
+
+  def safe_initials(location)
+    # Try the initials attribute first, then generate from name
+    if location.respond_to?(:initials) && location.initials.present?
+      location.initials
+    elsif location.respond_to?(:safe_initials)
+      location.safe_initials
+    else
+      generate_initials(location.name)
+    end
+  end
 
   def generate_initials(name)
     return '' if name.blank?
