@@ -3,7 +3,7 @@ module Api
     class PackagesController < ApplicationController
       before_action :authenticate_user!
       before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit]
-      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy]
+      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code] # Added qr_code
       before_action :force_json_format
 
       def index
@@ -70,6 +70,15 @@ module Api
         begin
           package = current_user.packages.build(package_params)
           package.state = 'pending_unpaid'
+          
+          # Generate package code using service
+          begin
+            code_generator = PackageCodeGenerator.new(package)
+            package.code = code_generator.generate
+          rescue => code_error
+            Rails.logger.warn "Package code generation failed: #{code_error.message}, using fallback"
+            package.code = generate_fallback_code
+          end
           
           # Try to calculate cost with fallback
           begin
@@ -188,6 +197,64 @@ module Api
           render json: { 
             success: false, 
             message: 'An error occurred while deleting the package' 
+          }, status: :internal_server_error
+        end
+      end
+
+      # ADDED: Missing QR Code action
+      def qr_code
+        begin
+          # Use your existing QrCodeGenerator service
+          qr_generator = QrCodeGenerator.new(@package, qr_code_options)
+          
+          case params[:format]&.to_sym
+          when :base64
+            qr_data = qr_generator.generate_base64
+            render json: {
+              success: true,
+              data: {
+                qr_code_base64: qr_data,
+                tracking_url: package_tracking_url(@package.code),
+                package_code: @package.code
+              },
+              message: 'QR code generated successfully'
+            }
+          when :file
+            file_path = qr_generator.generate_and_save
+            render json: {
+              success: true,
+              data: {
+                file_path: file_path.to_s,
+                tracking_url: package_tracking_url(@package.code),
+                package_code: @package.code
+              },
+              message: 'QR code file generated successfully'
+            }
+          else
+            # Default: return PNG data as base64
+            png_data = qr_generator.generate
+            base64_data = "data:image/png;base64,#{Base64.encode64(png_data)}"
+            
+            render json: {
+              success: true,
+              data: {
+                qr_code_base64: base64_data,
+                qr_code_raw: Base64.encode64(png_data),
+                tracking_url: package_tracking_url(@package.code),
+                package_code: @package.code,
+                package_state: @package.state,
+                route_description: safe_route_description(@package)
+              },
+              message: 'QR code generated successfully'
+            }
+          end
+        rescue => e
+          Rails.logger.error "PackagesController#qr_code error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          render json: { 
+            success: false, 
+            message: 'Failed to generate QR code',
+            error: e.message
           }, status: :internal_server_error
         end
       end
@@ -333,6 +400,17 @@ module Api
 
       def set_package
         @package = Package.find_by!(code: params[:id])
+        
+        # Generate code if missing (using your PackageCodeGenerator service)
+        if @package.code.blank?
+          begin
+            code_generator = PackageCodeGenerator.new(@package)
+            generated_code = code_generator.generate
+            @package.update!(code: generated_code) if generated_code.present?
+          rescue => e
+            Rails.logger.error "Failed to generate package code: #{e.message}"
+          end
+        end
       rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
@@ -342,11 +420,35 @@ module Api
 
       def set_package_for_authenticated_user
         @package = current_user.packages.find_by!(code: params[:id])
+        
+        # Generate code if missing (using your PackageCodeGenerator service)
+        if @package.code.blank?
+          begin
+            code_generator = PackageCodeGenerator.new(@package)
+            generated_code = code_generator.generate
+            @package.update!(code: generated_code) if generated_code.present?
+          rescue => e
+            Rails.logger.error "Failed to generate package code: #{e.message}"
+          end
+        end
       rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
           message: 'Package not found or access denied' 
         }, status: :not_found
+      end
+
+      # ADDED: QR code options for customization
+      def qr_code_options
+        {
+          module_size: params[:module_size]&.to_i || 12,
+          border_size: params[:border_size]&.to_i || 24,
+          corner_radius: params[:corner_radius]&.to_i || 4,
+          data_type: params[:data_type]&.to_sym || :url,
+          center_logo: params[:center_logo] != 'false', # Default true
+          gradient: params[:gradient] != 'false', # Default true
+          logo_size: params[:logo_size]&.to_i || 40
+        }
       end
 
       def package_params
@@ -395,6 +497,11 @@ module Api
           Rails.logger.error "Fallback cost calculation failed: #{e.message}"
           200 # Ultimate fallback
         end
+      end
+
+      # ADDED: Fallback code generation
+      def generate_fallback_code
+        "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
       end
 
       def can_be_deleted?(package)
