@@ -9,9 +9,9 @@ class PackageCodeGenerator
   def generate
     return package.code if package.code.present?
     
-    # Get location initials instead of area initials
-    origin_location_initials = package.origin_area&.location&.initials
-    destination_location_initials = package.destination_area&.location&.initials
+    # Get location initials - handle case where initials attribute might not exist
+    origin_location_initials = get_location_initials(package.origin_area&.location)
+    destination_location_initials = get_location_initials(package.destination_area&.location)
     
     return generate_fallback_code unless origin_location_initials
     
@@ -86,7 +86,37 @@ class PackageCodeGenerator
     )
   end
   
-  def fallback_sequence_calculation
+  def get_location_initials(location)
+    return nil unless location
+    
+    # Try different attributes that might contain initials
+    if location.respond_to?(:initials) && location.initials.present?
+      location.initials.upcase
+    elsif location.respond_to?(:code) && location.code.present?
+      location.code.upcase[0..2]
+    elsif location.respond_to?(:abbreviation) && location.abbreviation.present?
+      location.abbreviation.upcase
+    elsif location.name.present?
+      # Generate initials from name (e.g., "Nairobi" -> "NRB", "Kisumu" -> "KSM")
+      generate_initials_from_name(location.name)
+    else
+      'UNK'
+    end
+  end
+
+  def generate_initials_from_name(name)
+    # Remove common words and generate 3-letter code
+    cleaned_name = name.upcase.gsub(/\b(CITY|TOWN|COUNTY|AREA)\b/, '').strip
+    
+    # If single word, take first 3 characters
+    if cleaned_name.split.length == 1
+      cleaned_name[0..2].ljust(3, 'X')
+    else
+      # Multiple words: take first letter of each word (max 3)
+      initials = cleaned_name.split.map(&:first).join[0..2]
+      initials.ljust(3, 'X')
+    end
+  end
     begin
       # Simple time-based sequence as ultimate fallback
       time_component = Time.current.strftime('%H%M').to_i
