@@ -117,6 +117,8 @@ class PackageCodeGenerator
       initials.ljust(3, 'X')
     end
   end
+
+  def fallback_sequence_calculation
     begin
       # Simple time-based sequence as ultimate fallback
       time_component = Time.current.strftime('%H%M').to_i
@@ -142,5 +144,5 @@ class PackageCodeGenerator
   def generate_fallback_code
     # Fallback if locations don't have initials
     "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%m%d')}"
+  end
 end
-end 
