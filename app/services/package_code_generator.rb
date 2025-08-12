@@ -9,44 +9,48 @@ class PackageCodeGenerator
   def generate
     return package.code if package.code.present?
     
-    origin_initials = package.origin_area&.initials
-    destination_initials = package.destination_area&.initials
+    # Get location initials instead of area initials
+    origin_location_initials = package.origin_area&.location&.initials
+    destination_location_initials = package.destination_area&.location&.initials
     
-    return generate_fallback_code unless origin_initials
+    return generate_fallback_code unless origin_location_initials
     
     sequence = calculate_sequence_number
     
-    if intra_area_shipment?
-      # Format: NRB-001
-      "#{origin_initials}-#{format_sequence(sequence)}"
+    if intra_location_shipment?
+      # Format: NRB-001 (same location, like CBD to Kasarani within Nairobi)
+      "#{origin_location_initials}-#{format_sequence(sequence)}"
     else
-      # Format: NRB-001-KSM
-      dest_suffix = destination_initials || 'UNK'
-      "#{origin_initials}-#{format_sequence(sequence)}-#{dest_suffix}"
+      # Format: NRB-001-KSM (different locations, like Nairobi to Kisumu)
+      dest_suffix = destination_location_initials || 'UNK'
+      "#{origin_location_initials}-#{format_sequence(sequence)}-#{dest_suffix}"
     end
   end
   
   private
   
-  def intra_area_shipment?
-    package.origin_area_id == package.destination_area_id
+  def intra_location_shipment?
+    # Check if both areas belong to the same location
+    return false unless package.origin_area&.location && package.destination_area&.location
+    package.origin_area.location.id == package.destination_area.location.id
   end
   
   def calculate_sequence_number
-    # Thread-safe sequence generation - FIXED: Removed .lock from aggregate query
+    # Thread-safe sequence generation based on location pairs
     Package.transaction do
-      if intra_area_shipment?
-        # Count packages within same area
-        max_sequence = Package.where(
-          origin_area_id: package.origin_area_id,
-          destination_area_id: package.destination_area_id
-        ).maximum(:route_sequence).to_i  # REMOVED .lock HERE
+      origin_location_id = package.origin_area&.location&.id
+      destination_location_id = package.destination_area&.location&.id
+      
+      return fallback_sequence_calculation unless origin_location_id
+      
+      if intra_location_shipment?
+        # Count packages within same location (all area combinations within the location)
+        max_sequence = packages_for_intra_location_query(origin_location_id)
+                        .maximum(:route_sequence).to_i
       else
-        # Count packages between specific areas
-        max_sequence = Package.where(
-          origin_area_id: package.origin_area_id,
-          destination_area_id: package.destination_area_id
-        ).maximum(:route_sequence).to_i  # REMOVED .lock HERE
+        # Count packages between specific location pairs
+        max_sequence = packages_for_inter_location_query(origin_location_id, destination_location_id)
+                        .maximum(:route_sequence).to_i
       end
       
       next_sequence = max_sequence + 1
@@ -55,8 +59,50 @@ class PackageCodeGenerator
     end
   rescue => e
     Rails.logger.error "Sequence calculation failed: #{e.message}"
-    # Fallback to avoid complete failure
-    rand(1..999)
+    Rails.logger.error e.backtrace.join("\n")
+    fallback_sequence_calculation
+  end
+
+  def packages_for_intra_location_query(location_id)
+    # Get all area IDs for this location
+    area_ids = Area.where(location_id: location_id).pluck(:id)
+    
+    # Find packages where both origin and destination are within the same location
+    Package.where(
+      origin_area_id: area_ids,
+      destination_area_id: area_ids
+    )
+  end
+
+  def packages_for_inter_location_query(origin_location_id, destination_location_id)
+    # Get area IDs for both locations
+    origin_area_ids = Area.where(location_id: origin_location_id).pluck(:id)
+    destination_area_ids = Area.where(location_id: destination_location_id).pluck(:id)
+    
+    # Find packages between these specific location pairs
+    Package.where(
+      origin_area_id: origin_area_ids,
+      destination_area_id: destination_area_ids
+    )
+  end
+  
+  def fallback_sequence_calculation
+    begin
+      # Simple time-based sequence as ultimate fallback
+      time_component = Time.current.strftime('%H%M').to_i
+      random_component = rand(1..99)
+      
+      sequence = (time_component + random_component) % 999
+      sequence = 1 if sequence == 0
+      
+      package.route_sequence = sequence
+      sequence
+    rescue => e
+      Rails.logger.error "Fallback sequence calculation failed: #{e.message}"
+      # Absolute final fallback
+      package.route_sequence = 1
+      1
+    end
   end
   
   def format_sequence(number)
@@ -64,7 +110,7 @@ class PackageCodeGenerator
   end
   
   def generate_fallback_code
-    # Fallback if areas don't have initials
-    "PKG-#{SecureRandom.hex(4).upcase}"
+    # Fallback if locations don't have initials
+    "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%m%d')}"
   end
 end
