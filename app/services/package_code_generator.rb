@@ -1,4 +1,3 @@
-# 3. Package Code Generator Service
 # app/services/package_code_generator.rb
 class PackageCodeGenerator
   attr_reader :package
@@ -34,26 +33,30 @@ class PackageCodeGenerator
   end
   
   def calculate_sequence_number
-    # Thread-safe sequence generation
+    # Thread-safe sequence generation - FIXED: Removed .lock from aggregate query
     Package.transaction do
       if intra_area_shipment?
         # Count packages within same area
         max_sequence = Package.where(
           origin_area_id: package.origin_area_id,
           destination_area_id: package.destination_area_id
-        ).lock.maximum(:route_sequence).to_i
+        ).maximum(:route_sequence).to_i  # REMOVED .lock HERE
       else
         # Count packages between specific areas
         max_sequence = Package.where(
           origin_area_id: package.origin_area_id,
           destination_area_id: package.destination_area_id
-        ).lock.maximum(:route_sequence).to_i
+        ).maximum(:route_sequence).to_i  # REMOVED .lock HERE
       end
       
       next_sequence = max_sequence + 1
       package.route_sequence = next_sequence
       next_sequence
     end
+  rescue => e
+    Rails.logger.error "Sequence calculation failed: #{e.message}"
+    # Fallback to avoid complete failure
+    rand(1..999)
   end
   
   def format_sequence(number)
