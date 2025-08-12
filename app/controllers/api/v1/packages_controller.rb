@@ -487,17 +487,22 @@ module Api
       def serialize_package_detailed(package)
         data = serialize_package_basic(package)
         
-        # Add detailed information
-        data.merge!({
+        # Add detailed information - check if attributes exist before accessing
+        additional_data = {
           sender_phone: package.sender_phone,
           receiver_phone: package.receiver_phone,
-          delivery_location: package.delivery_location,
           origin_area: serialize_area(package.origin_area),
           destination_area: serialize_area(package.destination_area),
           origin_agent: serialize_agent(package.origin_agent),
           destination_agent: serialize_agent(package.destination_agent)
-        })
+        }
         
+        # Only add delivery_location if the attribute exists
+        if package.respond_to?(:delivery_location)
+          additional_data[:delivery_location] = package.delivery_location
+        end
+        
+        data.merge!(additional_data)
         data
       end
 
@@ -542,18 +547,31 @@ module Api
       end
 
       def package_params
-        params.require(:package).permit(
+        # Build permitted params dynamically based on what exists
+        base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
           :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
-          :delivery_type, :delivery_location
-        )
+          :delivery_type
+        ]
+        
+        # Only add delivery_location if the model supports it
+        if Package.column_names.include?('delivery_location')
+          base_params << :delivery_location
+        end
+        
+        params.require(:package).permit(*base_params)
       end
 
       def package_update_params
-        params.require(:package).permit(
-          :receiver_name, :receiver_phone, :destination_area_id, 
-          :destination_agent_id, :delivery_type, :delivery_location
-        )
+        # Build permitted params dynamically based on what exists
+        base_params = [:receiver_name, :receiver_phone, :destination_area_id, :destination_agent_id, :delivery_type]
+        
+        # Only add delivery_location if the model supports it
+        if Package.column_names.include?('delivery_location')
+          base_params << :delivery_location
+        end
+        
+        params.require(:package).permit(*base_params)
       end
 
       def apply_filters(packages)
