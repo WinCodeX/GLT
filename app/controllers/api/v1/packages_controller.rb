@@ -1,7 +1,7 @@
 module Api
   module V1
     class PackagesController < ApplicationController
-      before_action :authenticate_user!, except: [:public_tracking, :validate]
+      before_action :authenticate_user!, 
       before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit]
       before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy]
       before_action :force_json_format
