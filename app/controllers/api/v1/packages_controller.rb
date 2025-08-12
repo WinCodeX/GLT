@@ -153,6 +153,45 @@ module Api
         end
       end
 
+      def destroy
+        begin
+          # Additional authorization check (users should only delete their own packages)
+          unless @package.user == current_user
+            return render json: { 
+              success: false, 
+              message: 'Access denied' 
+            }, status: :forbidden
+          end
+
+          # Check if package can be deleted (business logic)
+          unless can_be_deleted?(@package)
+            return render json: { 
+              success: false, 
+              message: 'Package cannot be deleted in its current state. Only unpaid or pending packages can be deleted.' 
+            }, status: :unprocessable_entity
+          end
+
+          if @package.destroy
+            render json: { 
+              success: true, 
+              message: 'Package deleted successfully' 
+            }
+          else
+            render json: { 
+              success: false, 
+              message: 'Failed to delete package',
+              errors: @package.errors.full_messages 
+            }, status: :unprocessable_entity
+          end
+        rescue => e
+          Rails.logger.error "PackagesController#destroy error: #{e.message}"
+          render json: { 
+            success: false, 
+            message: 'An error occurred while deleting the package' 
+          }, status: :internal_server_error
+        end
+      end
+
       def tracking_page
         begin
           render json: {
@@ -356,6 +395,13 @@ module Api
           Rails.logger.error "Fallback cost calculation failed: #{e.message}"
           200 # Ultimate fallback
         end
+      end
+
+      def can_be_deleted?(package)
+        # Business logic: Only allow deletion if package is not yet in transit or delivered
+        # Users can delete unpaid packages or packages that haven't been picked up yet
+        deletable_states = ['pending_unpaid', 'pending']
+        deletable_states.include?(package.state)
       end
 
       def package_timeline(package)
