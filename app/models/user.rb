@@ -12,6 +12,9 @@ class User < ApplicationRecord
   has_many :user_businesses
   has_many :businesses, through: :user_businesses
 
+  # Package delivery system relationships
+  has_many :packages, dependent: :destroy
+
   # Messaging system relationships
   has_many :conversation_participants, dependent: :destroy
   has_many :conversations, through: :conversation_participants
@@ -72,6 +75,19 @@ class User < ApplicationRecord
   # For messaging system compatibility
   def customer?
     client? # Maps client role to customer for support system
+  end
+
+  # Package delivery related methods
+  def pending_packages_count
+    packages.where(state: ['pending_unpaid', 'pending']).count
+  end
+
+  def active_packages_count
+    packages.where(state: ['submitted', 'in_transit']).count
+  end
+
+  def delivered_packages_count
+    packages.where(state: 'delivered').count
   end
 
   private
