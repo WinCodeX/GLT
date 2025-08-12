@@ -389,7 +389,7 @@ module Api
           end
         end
         
-        # Fallback cost calculation
+        # Location-aware fallback cost calculation
         base_cost = 150
         
         case package.delivery_type
@@ -401,8 +401,23 @@ module Api
           base_cost += 50
         end
 
-        if package.origin_area_id != package.destination_area_id
-          base_cost += 100
+        # Use location-based pricing if available
+        origin_location_id = package.origin_area&.location&.id
+        destination_location_id = package.destination_area&.location&.id
+        
+        if origin_location_id && destination_location_id
+          if origin_location_id != destination_location_id
+            # Inter-location delivery (e.g., Nairobi to Kisumu)
+            base_cost += 200
+          else
+            # Intra-location delivery (e.g., CBD to Kasarani within Nairobi)
+            base_cost += 50
+          end
+        else
+          # Fallback to area-based pricing
+          if package.origin_area_id != package.destination_area_id
+            base_cost += 100
+          end
         end
 
         base_cost
@@ -593,13 +608,27 @@ module Api
           if package.respond_to?(:route_description)
             package.route_description
           else
-            origin = package.origin_area&.name || 'Unknown Origin'
-            destination = package.destination_area&.name || 'Unknown Destination'
-            "#{origin} → #{destination}"
+            # Updated: Use location-based route description to match generator logic
+            origin_location = package.origin_area&.location&.name || 'Unknown Origin'
+            destination_location = package.destination_area&.location&.name || 'Unknown Destination'
+            
+            # Show detailed area info only if different locations
+            if package.origin_area&.location&.id == package.destination_area&.location&.id
+              # Same location: show "Nairobi (CBD → Kasarani)"
+              origin_area = package.origin_area&.name || 'Unknown Area'
+              destination_area = package.destination_area&.name || 'Unknown Area'
+              "#{origin_location} (#{origin_area} → #{destination_area})"
+            else
+              # Different locations: show "Nairobi → Kisumu"
+              "#{origin_location} → #{destination_location}"
+            end
           end
         rescue => e
           Rails.logger.error "Route description generation failed: #{e.message}"
-          'Route information unavailable'
+          # Fallback to simple area-based description
+          origin = package.origin_area&.name || 'Unknown Origin'
+          destination = package.destination_area&.name || 'Unknown Destination'
+          "#{origin} → #{destination}"
         end
       end
 
