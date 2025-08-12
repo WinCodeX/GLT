@@ -142,5 +142,4 @@ class PackageCodeGenerator
   def generate_fallback_code
     # Fallback if locations don't have initials
     "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%m%d')}"
-  end
 end
