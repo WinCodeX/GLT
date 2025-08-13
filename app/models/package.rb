@@ -6,7 +6,7 @@ class Package < ApplicationRecord
   belongs_to :origin_agent, class_name: 'Agent', optional: true
   belongs_to :destination_agent, class_name: 'Agent', optional: true
 
-  enum delivery_type: { doorstep: 'doorstep', agent: 'agent', mixed: 'mixed' }
+  enum delivery_type: { doorstep: 'doorstep', agent: 'agent', fragile: 'fragile' }
   enum state: {
     pending_unpaid: 'pending_unpaid',
     pending: 'pending',
