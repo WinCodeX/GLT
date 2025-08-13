@@ -1,4 +1,7 @@
-# app/services/qr_code_generator.rb
+# =====================================================
+# FIXED: app/services/qr_code_generator.rb
+# =====================================================
+
 require 'rqrcode'
 require 'chunky_png'
 
@@ -13,6 +16,8 @@ class QrCodeGenerator
   def generate
     # Create QR code data
     qr_data = generate_qr_data
+    
+    Rails.logger.info "📱 QR data to encode: #{qr_data}"
     
     # Generate QR code
     qrcode = RQRCode::QRCode.new(qr_data, level: :h, size: options[:qr_size])
@@ -43,11 +48,12 @@ class QrCodeGenerator
   private
 
   def generate_qr_data
-    # Create comprehensive package data for QR code
-    base_url = Rails.application.routes.url_helpers.root_url
-    tracking_url = "#{base_url}track/#{package.code}"
+    # FIXED: Generate URL without requiring request context
+    tracking_url = generate_tracking_url_safely
     
-    # You can customize what data goes into the QR code
+    Rails.logger.info "📱 Generated tracking URL: #{tracking_url}"
+    
+    # Return appropriate data based on type
     case options[:data_type]
     when :url
       tracking_url
@@ -66,6 +72,34 @@ class QrCodeGenerator
     end
   end
 
+  # FIXED: Safe URL generation that works in any context
+  def generate_tracking_url_safely
+    begin
+      # Try to get configured host from application config
+      host = Rails.application.config.action_mailer.default_url_options[:host]
+      
+      if host.present?
+        protocol = Rails.env.production? ? 'https' : 'http'
+        base_url = "#{protocol}://#{host}"
+      else
+        # Fallback to environment-based defaults
+        if Rails.env.production?
+          # You'll need to set this in production
+          base_url = ENV['APP_URL'] || 'https://your-app.railway.app'
+        else
+          base_url = 'http://localhost:3000'
+        end
+      end
+      
+      "#{base_url}/track/#{package.code}"
+      
+    rescue => e
+      Rails.logger.warn "URL generation fallback triggered: #{e.message}"
+      # Ultimate fallback - relative URL
+      "/track/#{package.code}"
+    end
+  end
+
   def create_styled_png(qrcode)
     # Calculate dimensions
     module_size = options[:module_size]
@@ -73,6 +107,8 @@ class QrCodeGenerator
     qr_modules = qrcode.modules.size
     
     total_size = (qr_modules * module_size) + (border_size * 2)
+    
+    Rails.logger.info "🎨 Creating PNG: #{total_size}x#{total_size}, modules: #{qr_modules}"
     
     # Create canvas
     png = ChunkyPNG::Image.new(total_size, total_size, options[:background_color])
@@ -106,6 +142,7 @@ class QrCodeGenerator
       apply_gradient_effect(png)
     end
     
+    Rails.logger.info "✅ PNG created successfully"
     png.to_blob
   end
 
@@ -114,26 +151,19 @@ class QrCodeGenerator
     return 0 if max_radius == 0
     
     # Check surrounding modules to determine appropriate rounding
-    # This creates the smooth, organic look like in your image
-    
-    # Get surrounding module states
     neighbors = {
       top: row > 0 ? modules[row - 1][col] : false,
       bottom: row < modules.size - 1 ? modules[row + 1][col] : false,
       left: col > 0 ? modules[row][col - 1] : false,
       right: col < modules[row].size - 1 ? modules[row][col + 1] : false,
-      top_left: (row > 0 && col > 0) ? modules[row - 1][col - 1] : false,
-      top_right: (row > 0 && col < modules[row].size - 1) ? modules[row - 1][col + 1] : false,
-      bottom_left: (row < modules.size - 1 && col > 0) ? modules[row + 1][col - 1] : false,
-      bottom_right: (row < modules.size - 1 && col < modules[row].size - 1) ? modules[row + 1][col + 1] : false
     }
     
-    # Calculate rounding based on isolation (fewer neighbors = more rounding)
+    # Calculate rounding based on isolation
     connected_sides = [neighbors[:top], neighbors[:bottom], neighbors[:left], neighbors[:right]].count(true)
     
     case connected_sides
     when 0, 1 then max_radius # Isolated or end modules get full rounding
-    when 2 then max_radius * 0.7 # Corner modules get medium rounding
+    when 2 then max_radius * 0.7 # Corner modules get medium rounding  
     when 3 then max_radius * 0.4 # T-junction modules get slight rounding
     else 0 # Fully connected modules stay square
     end.to_i
@@ -179,7 +209,7 @@ class QrCodeGenerator
   end
 
   def add_center_logo(png, total_size)
-    # Add a center logo (like the paper plane in your image)
+    # Add a center logo
     center_x = total_size / 2
     center_y = total_size / 2
     logo_size = options[:logo_size]
@@ -197,13 +227,12 @@ class QrCodeGenerator
       end
     end
     
-    # You can add actual logo image here using MiniMagick
-    # For now, we'll just create a simple icon placeholder
+    # Draw simple icon
     draw_simple_icon(png, center_x, center_y, logo_size)
   end
 
   def draw_simple_icon(png, center_x, center_y, size)
-    # Draw a simple paper plane icon (simplified)
+    # Draw a simple paper plane icon
     icon_color = ChunkyPNG::Color::WHITE
     half_size = size / 4
     
@@ -216,7 +245,7 @@ class QrCodeGenerator
   end
 
   def apply_gradient_effect(png)
-    # Apply gradient coloring similar to your image (purple to blue)
+    # Apply gradient coloring
     width = png.width
     height = png.height
     
@@ -228,7 +257,7 @@ class QrCodeGenerator
         # Calculate position ratio (0.0 to 1.0)
         ratio = (x.to_f + y.to_f) / (width + height)
         
-        # Interpolate between purple and blue
+        # Interpolate between colors
         new_color = interpolate_color(options[:gradient_start], options[:gradient_end], ratio)
         png[x, y] = new_color
       end
@@ -248,18 +277,18 @@ class QrCodeGenerator
 
   def default_options
     {
-      module_size: 12,
-      border_size: 24,
-      corner_radius: 4,
-      qr_size: 4,
+      module_size: 8,
+      border_size: 20,
+      corner_radius: 3,
+      qr_size: 6,
       background_color: ChunkyPNG::Color::WHITE,
-      foreground_color: ChunkyPNG::Color.rgb(138, 43, 226), # Purple
+      foreground_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
       data_type: :url,
       center_logo: true,
-      logo_size: 40,
-      logo_color: ChunkyPNG::Color.rgb(138, 43, 226), # Purple
-      gradient: true,
-      gradient_start: ChunkyPNG::Color.rgb(138, 43, 226), # Purple
+      logo_size: 30,
+      logo_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
+      gradient: false, # Disable gradient for simpler testing
+      gradient_start: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
       gradient_end: ChunkyPNG::Color.rgb(30, 144, 255)    # Blue
     }
   end
