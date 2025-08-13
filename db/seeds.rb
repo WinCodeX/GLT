@@ -1,31 +1,12 @@
 # This file should ensure the existence of records required to run the application in every environment (production,
 # development, test). The code here should be idempotent so that it can be executed at any point in every environment.
 # The data can then be loaded with the bin/rails db:seed command (or created alongside the database with db:setup).
-#
-# Example:
-#
-#   ["Action", "Comedy", "Drama", "Horror"].each do |genre_name|
-#     MovieGenre.find_or_create_by!(name: genre_name)
-#   end
-#["admin", "agent", "rider", "client", "warehouse"].each do |role|
- # Role.find_or_create_by(name: role)
-#end
 
 # db/seeds.rb
 puts "🌱 Starting to seed the database..."
 
-# Clear existing data in development
-if Rails.env.development?
-  puts "🧹 Cleaning existing data..."
-  Price.destroy_all
-  Agent.destroy_all
-  Area.destroy_all
-  Location.destroy_all
-  puts "✅ Cleaned existing data"
-end
-
-# Create Locations (Main cities with initials for package codes)
-puts "🗺️ Creating main locations (cities with initials)..."
+# Update existing locations with initials (non-destructive approach)
+puts "🗺️ Updating locations with initials..."
 
 locations_data = [
   { name: "Nairobi", initials: "NRB" },
@@ -42,15 +23,25 @@ locations_data = [
 
 location_records = {}
 locations_data.each do |location_data|
-  location = Location.find_or_create_by!(name: location_data[:name]) do |l|
-    l.initials = location_data[:initials] if l.respond_to?(:initials)
+  location = Location.find_or_create_by!(name: location_data[:name])
+  
+  # Update initials if the column exists and if initials are missing/different
+  if location.respond_to?(:initials)
+    if location.initials != location_data[:initials]
+      location.update!(initials: location_data[:initials])
+      puts "  ✓ Updated location: #{location.name} → #{location_data[:initials]}"
+    else
+      puts "  ✓ Location already has correct initials: #{location.name} (#{location.initials})"
+    end
+  else
+    puts "  ⚠️  Warning: Location model does not support initials attribute"
   end
+  
   location_records[location_data[:name]] = location
-  puts "  ✓ Created location: #{location.name} (#{location_data[:initials]})"
 end
 
 # Create Areas within Locations (Specific neighborhoods/districts)
-puts "🏢 Creating areas within locations..."
+puts "🏢 Creating/updating areas within locations..."
 
 areas_data = [
   # Nairobi Areas
@@ -133,12 +124,20 @@ areas_data.each do |area_data|
   area = Area.find_or_create_by!(name: area_data[:name], location: location) do |a|
     a.initials = area_data[:initials]
   end
+  
+  # Update initials if they're different
+  if area.initials != area_data[:initials]
+    area.update!(initials: area_data[:initials])
+    puts "  ✓ Updated area: #{area.name} → #{area.initials} in #{location.name}"
+  else
+    puts "  ✓ Area already correct: #{area.name} (#{area.initials}) in #{location.name}"
+  end
+  
   area_records[area_data[:name]] = area
-  puts "  ✓ Created area: #{area.name} (#{area.initials}) in #{location.name}"
 end
 
 # Create system user for agents (required by schema)
-puts "👤 Creating system user for agents..."
+puts "👤 Creating/finding system user for agents..."
 system_user = User.find_or_create_by!(email: "system@glt.co.ke") do |u|
   u.password = "SecureSystemPassword123!"
   u.password_confirmation = "SecureSystemPassword123!"
@@ -146,11 +145,11 @@ system_user = User.find_or_create_by!(email: "system@glt.co.ke") do |u|
   u.last_name = "System"
   u.phone_number = "+254700000000"
 end
-puts "  ✓ Created/found system user: #{system_user.email}"
+puts "  ✓ System user ready: #{system_user.email}"
 
 # Create test user for development
 if Rails.env.development?
-  puts "👤 Creating test user..."
+  puts "👤 Creating/finding test user..."
   test_user = User.find_or_create_by!(email: "test@example.com") do |u|
     u.password = "password123"
     u.password_confirmation = "password123"
@@ -158,13 +157,13 @@ if Rails.env.development?
     u.last_name = "User"
     u.phone_number = "+254700000001"
   end
-  puts "  ✓ Created test user: #{test_user.email}"
+  puts "  ✓ Test user ready: #{test_user.email}"
   puts "  📧 Email: test@example.com"
   puts "  🔑 Password: password123"
 end
 
 # Create Agents (they belong directly to areas per schema)
-puts "👥 Creating agents..."
+puts "👥 Creating/updating agents..."
 
 agents_data = [
   # Nairobi Agents
@@ -224,11 +223,11 @@ agents_data.each do |agent_data|
     a.user = system_user
     a.active = true if a.respond_to?(:active)
   end
-  puts "  ✓ Created agent: #{agent.name} in #{area.name}, #{area.location.name}"
+  puts "  ✓ Agent ready: #{agent.name} in #{area.name}, #{area.location.name}"
 end
 
-# Create Prices (Location to Location pricing)
-puts "💰 Creating prices (location-based pricing)..."
+# Create/Update Prices (Location to Location pricing)
+puts "💰 Creating/updating prices (location-based pricing)..."
 
 all_locations = Location.all.to_a
 price_count = 0
@@ -310,7 +309,7 @@ all_locations.each do |origin_location|
   end
 end
 
-puts "  ✓ Created #{price_count} price entries"
+puts "  ✓ Price entries ready: #{Price.count} total"
 
 # Summary
 puts "\n🎉 Seeding completed successfully!"
@@ -332,8 +331,9 @@ puts "  📱 Ready for package creation testing!"
 # Display location initials for package code reference
 puts "\n📋 Location initials for package codes:"
 Location.all.each do |location|
-  initials = locations_data.find { |l| l[:name] == location.name }&.dig(:initials) || "N/A"
-  puts "  #{location.name}: #{initials}"
+  initials_from_data = locations_data.find { |l| l[:name] == location.name }&.dig(:initials) || "N/A"
+  actual_initials = location.respond_to?(:initials) ? (location.initials || "Not Set") : "No Column"
+  puts "  #{location.name}: #{actual_initials} (expected: #{initials_from_data})"
 end
 
 # Display some sample prices for verification
