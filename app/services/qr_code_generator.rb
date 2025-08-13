@@ -1,5 +1,5 @@
 # =====================================================
-# UPDATED: app/services/qr_code_generator.rb - Smooth Circular Design
+# ENHANCED: app/services/qr_code_generator.rb
 # =====================================================
 
 require 'rqrcode'
@@ -22,7 +22,7 @@ class QrCodeGenerator
     # Generate QR code
     qrcode = RQRCode::QRCode.new(qr_data, level: :h, size: options[:qr_size])
     
-    # Create smooth styled PNG
+    # Create styled PNG with smooth circular modules
     create_smooth_styled_png(qrcode)
   end
 
@@ -53,6 +53,7 @@ class QrCodeGenerator
     
     Rails.logger.info "📱 Generated tracking URL: #{tracking_url}"
     
+    # Return appropriate data based on type
     case options[:data_type]
     when :url
       tracking_url
@@ -67,18 +68,20 @@ class QrCodeGenerator
     when :simple
       package.code
     else
-      tracking_url
+      tracking_url # default
     end
   end
 
   def generate_tracking_url_safely
     begin
+      # Try to get configured host from application config
       host = Rails.application.config.action_mailer.default_url_options[:host]
       
       if host.present?
         protocol = Rails.env.production? ? 'https' : 'http'
         base_url = "#{protocol}://#{host}"
       else
+        # Fallback to environment-based defaults
         if Rails.env.production?
           base_url = ENV['APP_URL'] || 'https://your-app.railway.app'
         else
@@ -89,28 +92,25 @@ class QrCodeGenerator
       "#{base_url}/track/#{package.code}"
       
     rescue => e
-      Rails.logger.warn "URL generation fallback: #{e.message}"
+      Rails.logger.warn "URL generation fallback triggered: #{e.message}"
       "/track/#{package.code}"
     end
   end
 
   def create_smooth_styled_png(qrcode)
-    # Calculate dimensions
-    module_size = options[:module_size]
-    border_size = options[:border_size]
+    # Calculate dimensions with higher resolution for smoother output
+    module_size = options[:module_size] * 2 # Double resolution for smoothness
+    border_size = options[:border_size] * 2
     qr_modules = qrcode.modules.size
     
     total_size = (qr_modules * module_size) + (border_size * 2)
     
     Rails.logger.info "🎨 Creating smooth PNG: #{total_size}x#{total_size}, modules: #{qr_modules}"
     
-    # Create canvas with anti-aliasing support
+    # Create high-resolution canvas
     png = ChunkyPNG::Image.new(total_size, total_size, options[:background_color])
     
-    # Identify finder patterns (the three corner squares)
-    finder_patterns = identify_finder_patterns(qr_modules)
-    
-    # Draw QR modules with smooth, rounded styling
+    # First pass: Draw QR code with enhanced circular modules
     qrcode.modules.each_with_index do |row, row_index|
       row.each_with_index do |module_dark, col_index|
         next unless module_dark
@@ -118,151 +118,188 @@ class QrCodeGenerator
         x = border_size + (col_index * module_size)
         y = border_size + (row_index * module_size)
         
-        # Check if this module is part of a finder pattern
-        if finder_pattern_module?(finder_patterns, row_index, col_index)
-          draw_smooth_finder_module(png, x, y, module_size, row_index, col_index, finder_patterns)
+        # Check if this is a finder pattern (corner squares)
+        if is_finder_pattern?(row_index, col_index, qr_modules)
+          draw_smooth_finder_pattern(png, qrcode.modules, row_index, col_index, x, y, module_size)
         else
-          # Regular modules get smooth circular treatment
-          draw_smooth_circular_module(png, x, y, module_size, qrcode.modules, row_index, col_index)
+          # Regular modules with enhanced smoothness
+          smoothness_factor = calculate_smoothness_factor(qrcode.modules, row_index, col_index)
+          draw_smooth_circular_module(png, x, y, module_size, smoothness_factor)
         end
       end
     end
     
-    # Add center logo if specified
-    if options[:center_logo]
-      add_center_logo(png, total_size)
-    end
-    
-    # Add gradient effect if specified
+    # Apply gradient effect for premium look
     if options[:gradient]
       apply_smooth_gradient_effect(png)
     end
     
+    # Add refined center logo
+    if options[:center_logo]
+      add_refined_center_logo(png, total_size)
+    end
+    
+    # Scale down to target size with anti-aliasing
+    final_size = total_size / 2
+    scaled_png = scale_with_antialiasing(png, final_size, final_size)
+    
     Rails.logger.info "✅ Smooth PNG created successfully"
-    png.to_blob
+    scaled_png.to_blob
   end
 
-  # Identify the three finder patterns (corner squares)
-  def identify_finder_patterns(size)
-    [
-      { row: 3, col: 3, size: 7 },     # Top-left
-      { row: 3, col: size - 4, size: 7 }, # Top-right  
-      { row: size - 4, col: 3, size: 7 }  # Bottom-left
-    ]
+  def is_finder_pattern?(row, col, size)
+    # Check if current position is part of finder patterns (3 corner squares)
+    finder_size = 7
+    
+    # Top-left finder
+    return true if row < finder_size && col < finder_size
+    
+    # Top-right finder  
+    return true if row < finder_size && col >= size - finder_size
+    
+    # Bottom-left finder
+    return true if row >= size - finder_size && col < finder_size
+    
+    false
   end
 
-  # Check if a module is part of any finder pattern
-  def finder_pattern_module?(finder_patterns, row, col)
-    finder_patterns.any? do |pattern|
-      (row - pattern[:row]).abs <= 3 && (col - pattern[:col]).abs <= 3
+  def draw_smooth_finder_pattern(png, modules, start_row, start_col, x, y, module_size)
+    # Draw finder pattern with circular/rounded appearance
+    
+    # Get the current finder pattern position
+    finder_row = start_row % 7
+    finder_col = start_col % 7
+    
+    # Create circular modules for finder patterns
+    radius = module_size * 0.45 # Almost circular
+    
+    # For outer ring (7x7) and inner square (3x3), use different styles
+    if is_finder_outer_ring?(finder_row, finder_col)
+      # Outer ring - use rounded rectangles
+      draw_circular_module(png, x, y, module_size, radius * 0.9)
+    elsif is_finder_inner_square?(finder_row, finder_col)
+      # Inner square - use full circles
+      draw_circular_module(png, x, y, module_size, radius)
     end
   end
 
-  # Draw smooth finder pattern modules (corner squares)
-  def draw_smooth_finder_module(png, x, y, module_size, row, col, finder_patterns)
-    # Find which finder pattern this belongs to
-    pattern = finder_patterns.find do |p|
-      (row - p[:row]).abs <= 3 && (col - p[:col]).abs <= 3
-    end
-    
-    return unless pattern
-    
-    # Calculate position within finder pattern
-    rel_row = row - (pattern[:row] - 3)
-    rel_col = col - (pattern[:col] - 3)
-    
-    # Create smooth, almost circular finder patterns
-    if finder_outer_ring?(rel_row, rel_col)
-      # Outer ring - very rounded
-      draw_circular_module(png, x, y, module_size, 0.9)
-    elsif finder_inner_square?(rel_row, rel_col)
-      # Inner square - completely circular
-      draw_circular_module(png, x, y, module_size, 1.0)
-    end
+  def is_finder_outer_ring?(row, col)
+    # Check if position is part of the outer ring of finder pattern
+    (row == 0 || row == 6 || col == 0 || col == 6) && 
+    !(row >= 2 && row <= 4 && col >= 2 && col <= 4)
   end
 
-  # Check if module is part of finder pattern outer ring
-  def finder_outer_ring?(rel_row, rel_col)
-    # 7x7 finder pattern outer ring
-    (rel_row == 0 || rel_row == 6 || rel_col == 0 || rel_col == 6) &&
-    rel_row.between?(0, 6) && rel_col.between?(0, 6)
+  def is_finder_inner_square?(row, col)
+    # Check if position is part of inner 3x3 square
+    row >= 2 && row <= 4 && col >= 2 && col <= 4
   end
 
-  # Check if module is part of finder pattern inner square
-  def finder_inner_square?(rel_row, rel_col)
-    # 3x3 inner square of finder pattern
-    rel_row.between?(2, 4) && rel_col.between?(2, 4)
-  end
-
-  # Draw smooth circular module
-  def draw_circular_module(png, x, y, size, roundness = 0.8)
-    color = options[:foreground_color]
-    center_x = x + size / 2.0
-    center_y = y + size / 2.0
-    radius = (size / 2.0) * roundness
-    
-    # Draw anti-aliased circle
-    (x...(x + size)).each do |px|
-      (y...(y + size)).each do |py|
-        distance = Math.sqrt((px - center_x)**2 + (py - center_y)**2)
-        
-        if distance <= radius
-          # Solid color for inner area
-          png[px, py] = color
-        elsif distance <= radius + 1.0
-          # Anti-aliasing for smooth edges
-          alpha = 1.0 - (distance - radius)
-          anti_aliased_color = blend_colors(options[:background_color], color, alpha)
-          png[px, py] = anti_aliased_color
-        end
-      end
-    end
-  end
-
-  # Draw smooth circular module for regular data modules
-  def draw_smooth_circular_module(png, x, y, size, modules, row, col)
-    # Determine smoothness based on isolation
-    isolation_factor = calculate_isolation_factor(modules, row, col)
-    roundness = 0.3 + (isolation_factor * 0.5) # 0.3 to 0.8 roundness
-    
-    draw_circular_module(png, x, y, size, roundness)
-  end
-
-  # Calculate how isolated a module is (for variable roundness)
-  def calculate_isolation_factor(modules, row, col)
-    neighbors = []
+  def calculate_smoothness_factor(modules, row, col)
+    # Calculate how "isolated" a module is to determine roundness
+    neighbors_count = 0
+    corner_connections = 0
     
     # Check 8 surrounding positions
     (-1..1).each do |dr|
       (-1..1).each do |dc|
         next if dr == 0 && dc == 0 # Skip self
         
-        nr, nc = row + dr, col + dc
-        if nr.between?(0, modules.size - 1) && nc.between?(0, modules[0].size - 1)
-          neighbors << modules[nr][nc]
-        else
-          neighbors << false # Edge counts as empty
+        new_row = row + dr
+        new_col = col + dc
+        
+        # Check bounds
+        next if new_row < 0 || new_row >= modules.size
+        next if new_col < 0 || new_col >= modules[new_row].size
+        
+        if modules[new_row][new_col]
+          neighbors_count += 1
+          # Check if it's a corner connection
+          corner_connections += 1 if dr.abs == 1 && dc.abs == 1
         end
       end
     end
     
-    # More isolated modules get more rounding
-    empty_neighbors = neighbors.count(false)
-    empty_neighbors / 8.0 # Return ratio of empty neighbors
+    # Return smoothness factor (0.1 = very round, 0.9 = almost square)
+    case neighbors_count
+    when 0..1 then 0.8 # Very isolated = very round
+    when 2..3 then 0.6 # Somewhat isolated = medium round  
+    when 4..5 then 0.4 # Connected = slight rounding
+    else 0.3 # Highly connected = minimal rounding
+    end
   end
 
-  # Blend two colors with alpha
-  def blend_colors(bg_color, fg_color, alpha)
+  def draw_smooth_circular_module(png, x, y, size, smoothness_factor)
+    color = options[:foreground_color]
+    center_x = x + size / 2.0
+    center_y = y + size / 2.0
+    
+    # Calculate effective radius based on smoothness
+    max_radius = size / 2.0
+    effective_radius = max_radius * smoothness_factor
+    
+    # Draw anti-aliased circular module
+    (0...size).each do |dx|
+      (0...size).each do |dy|
+        pixel_x = x + dx
+        pixel_y = y + dy
+        
+        # Calculate distance from center
+        distance_from_center = Math.sqrt((dx - size/2.0)**2 + (dy - size/2.0)**2)
+        
+        if distance_from_center <= effective_radius
+          # Inside the circular area
+          alpha = calculate_antialiasing_alpha(distance_from_center, effective_radius)
+          blended_color = blend_colors(options[:background_color], color, alpha)
+          png[pixel_x, pixel_y] = blended_color
+        end
+      end
+    end
+  end
+
+  def draw_circular_module(png, x, y, size, radius)
+    color = options[:foreground_color]
+    center_x = x + size / 2.0
+    center_y = y + size / 2.0
+    
+    # Draw perfect circle
+    (0...size).each do |dx|
+      (0...size).each do |dy|
+        pixel_x = x + dx
+        pixel_y = y + dy
+        
+        distance_from_center = Math.sqrt((dx - size/2.0)**2 + (dy - size/2.0)**2)
+        
+        if distance_from_center <= radius
+          alpha = calculate_antialiasing_alpha(distance_from_center, radius)
+          blended_color = blend_colors(options[:background_color], color, alpha)
+          png[pixel_x, pixel_y] = blended_color
+        end
+      end
+    end
+  end
+
+  def calculate_antialiasing_alpha(distance, radius)
+    if distance <= radius - 0.5
+      1.0 # Fully opaque
+    elsif distance <= radius + 0.5
+      # Anti-aliasing zone
+      0.5 + (radius - distance)
+    else
+      0.0 # Transparent
+    end
+  end
+
+  def blend_colors(background, foreground, alpha)
     # Extract RGB components
-    bg_r = (bg_color >> 24) & 0xff
-    bg_g = (bg_color >> 16) & 0xff  
-    bg_b = (bg_color >> 8) & 0xff
+    bg_r = (background >> 24) & 0xff
+    bg_g = (background >> 16) & 0xff  
+    bg_b = (background >> 8) & 0xff
     
-    fg_r = (fg_color >> 24) & 0xff
-    fg_g = (fg_color >> 16) & 0xff
-    fg_b = (fg_color >> 8) & 0xff
+    fg_r = (foreground >> 24) & 0xff
+    fg_g = (foreground >> 16) & 0xff
+    fg_b = (foreground >> 8) & 0xff
     
-    # Blend
+    # Blend colors
     r = (bg_r + (fg_r - bg_r) * alpha).to_i
     g = (bg_g + (fg_g - bg_g) * alpha).to_i
     b = (bg_b + (fg_b - bg_b) * alpha).to_i
@@ -270,25 +307,86 @@ class QrCodeGenerator
     ChunkyPNG::Color.rgb(r, g, b)
   end
 
-  def add_center_logo(png, total_size)
+  def apply_smooth_gradient_effect(png)
+    # Apply smooth gradient from purple to blue like in the image
+    width = png.width
+    height = png.height
+    
+    png.width.times do |x|
+      png.height.times do |y|
+        current_pixel = png[x, y]
+        
+        # Skip background pixels
+        next if current_pixel == options[:background_color]
+        
+        # Calculate gradient position (diagonal gradient)
+        ratio = Math.sqrt((x.to_f / width)**2 + (y.to_f / height)**2) / Math.sqrt(2)
+        ratio = [ratio, 1.0].min # Clamp to 1.0
+        
+        # Smooth interpolation between gradient colors
+        new_color = smooth_interpolate_color(options[:gradient_start], options[:gradient_end], ratio)
+        png[x, y] = new_color
+      end
+    end
+  end
+
+  def smooth_interpolate_color(color1, color2, ratio)
+    # Smooth color interpolation with gamma correction
+    gamma = 2.2
+    
+    # Extract components
+    r1 = ((color1 >> 24) & 0xff) / 255.0
+    g1 = ((color1 >> 16) & 0xff) / 255.0
+    b1 = ((color1 >> 8) & 0xff) / 255.0
+    
+    r2 = ((color2 >> 24) & 0xff) / 255.0
+    g2 = ((color2 >> 16) & 0xff) / 255.0
+    b2 = ((color2 >> 8) & 0xff) / 255.0
+    
+    # Apply gamma correction for smoother gradients
+    r1_gamma = r1 ** gamma
+    g1_gamma = g1 ** gamma
+    b1_gamma = b1 ** gamma
+    
+    r2_gamma = r2 ** gamma
+    g2_gamma = g2 ** gamma
+    b2_gamma = b2 ** gamma
+    
+    # Interpolate in gamma space
+    r_gamma = r1_gamma + (r2_gamma - r1_gamma) * ratio
+    g_gamma = g1_gamma + (g2_gamma - g1_gamma) * ratio
+    b_gamma = b1_gamma + (b2_gamma - b1_gamma) * ratio
+    
+    # Convert back from gamma space
+    r = ((r_gamma ** (1.0/gamma)) * 255).to_i
+    g = ((g_gamma ** (1.0/gamma)) * 255).to_i
+    b = ((b_gamma ** (1.0/gamma)) * 255).to_i
+    
+    ChunkyPNG::Color.rgb(r, g, b)
+  end
+
+  def add_refined_center_logo(png, total_size)
+    # Create a refined paper plane logo like in the image
     center_x = total_size / 2
     center_y = total_size / 2
-    logo_size = options[:logo_size]
-    radius = logo_size / 2
+    logo_size = options[:logo_size] * 2 # Larger for high-res
     
     # Create smooth circular background
-    (-radius..radius).each do |x|
-      (-radius..radius).each do |y|
+    logo_radius = logo_size / 2
+    logo_bg_color = ChunkyPNG::Color.rgba(124, 58, 237, 220) # Slightly transparent purple
+    
+    # Draw smooth circular background
+    (-logo_radius..logo_radius).each do |x|
+      (-logo_radius..logo_radius).each do |y|
         distance = Math.sqrt(x * x + y * y)
         
-        if distance <= radius
-          # Solid background
-          png[center_x + x, center_y + y] = options[:logo_background_color]
-        elsif distance <= radius + 2
-          # Anti-aliased edge
-          alpha = 1.0 - ((distance - radius) / 2.0)
-          blended = blend_colors(options[:foreground_color], options[:logo_background_color], alpha)
-          png[center_x + x, center_y + y] = blended
+        if distance <= logo_radius
+          # Anti-aliased circle edge
+          alpha = distance <= logo_radius - 1 ? 1.0 : (logo_radius - distance)
+          alpha = [alpha, 0.0].max
+          
+          blended_color = blend_colors(png[center_x + x, center_y + y], logo_bg_color, alpha * 0.9)
+          png[center_x + x, center_y + y] = blended_color
         end
       end
     end
@@ -301,148 +399,99 @@ class QrCodeGenerator
     icon_color = ChunkyPNG::Color::WHITE
     icon_size = size * 0.4
     
-    # More detailed paper plane
+    # Paper plane shape coordinates (more refined)
     points = [
-      # Main triangle (paper plane body)
-      [-icon_size * 0.8, 0],
-      [icon_size * 0.3, -icon_size * 0.4],
-      [icon_size * 0.3, icon_size * 0.4],
-      
-      # Wing details
-      [-icon_size * 0.3, -icon_size * 0.2],
-      [icon_size * 0.1, -icon_size * 0.3],
-      [-icon_size * 0.3, icon_size * 0.2],
-      [icon_size * 0.1, icon_size * 0.3]
+      # Main triangle body
+      [center_x - icon_size*0.3, center_y - icon_size*0.4],
+      [center_x + icon_size*0.4, center_y],
+      [center_x - icon_size*0.3, center_y + icon_size*0.4],
+      [center_x - icon_size*0.1, center_y]
     ]
     
-    # Draw smooth lines for paper plane
-    points.each_with_index do |point, i|
-      next_point = points[(i + 1) % 3] # Connect first 3 points for main triangle
-      draw_smooth_line(png, 
-        center_x + point[0], center_y + point[1],
-        center_x + next_point[0], center_y + next_point[1],
-        icon_color, 2)
-    end
+    # Draw filled triangle with anti-aliasing
+    draw_smooth_polygon(png, points, icon_color)
     
-    # Add center dot
-    draw_circular_module(png, center_x - 1, center_y - 1, 3, 1.0)
+    # Add wing details
+    wing_points = [
+      [center_x - icon_size*0.1, center_y - icon_size*0.2],
+      [center_x + icon_size*0.1, center_y - icon_size*0.3],
+      [center_x + icon_size*0.2, center_y - icon_size*0.1],
+      [center_x, center_y]
+    ]
+    
+    draw_smooth_polygon(png, wing_points, icon_color)
   end
 
-  def draw_smooth_line(png, x1, y1, x2, y2, color, thickness = 1)
-    # Bresenham's line algorithm with thickness
-    dx = (x2 - x1).abs
-    dy = (y2 - y1).abs
-    x, y = x1, y1
-    x_inc = x1 < x2 ? 1 : -1
-    y_inc = y1 < y2 ? 1 : -1
-    error = dx - dy
-
-    while true
-      # Draw thick point
-      (-thickness..thickness).each do |tx|
-        (-thickness..thickness).each do |ty|
-          if Math.sqrt(tx*tx + ty*ty) <= thickness
-            safe_set_pixel(png, x + tx, y + ty, color)
-          end
+  def draw_smooth_polygon(png, points, color)
+    # Simple polygon fill with anti-aliasing
+    min_x = points.map { |p| p[0] }.min.to_i
+    max_x = points.map { |p| p[0] }.max.to_i
+    min_y = points.map { |p| p[1] }.min.to_i
+    max_y = points.map { |p| p[1] }.max.to_i
+    
+    (min_x..max_x).each do |x|
+      (min_y..max_y).each do |y|
+        if point_in_polygon?(x, y, points)
+          png[x, y] = color
         end
       end
-
-      break if x == x2 && y == y2
-
-      e2 = 2 * error
-      if e2 > -dy
-        error -= dy
-        x += x_inc
-      end
-      if e2 < dx
-        error += dx
-        y += y_inc
-      end
     end
   end
 
-  def safe_set_pixel(png, x, y, color)
-    return unless x.between?(0, png.width - 1) && y.between?(0, png.height - 1)
-    png[x, y] = color
+  def point_in_polygon?(x, y, points)
+    # Ray casting algorithm for point-in-polygon test
+    inside = false
+    j = points.length - 1
+    
+    points.each_with_index do |point, i|
+      xi, yi = point
+      xj, yj = points[j]
+      
+      if ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+        inside = !inside
+      end
+      
+      j = i
+    end
+    
+    inside
   end
 
-  def apply_smooth_gradient_effect(png)
-    # Enhanced gradient with smooth color transitions
-    width = png.width
-    height = png.height
+  def scale_with_antialiasing(png, target_width, target_height)
+    # Simple nearest neighbor scaling (can be enhanced with bilinear)
+    scaled = ChunkyPNG::Image.new(target_width, target_height, options[:background_color])
     
-    # Create radial gradient from center
-    center_x = width / 2.0
-    center_y = height / 2.0
-    max_distance = Math.sqrt(center_x**2 + center_y**2)
+    x_ratio = png.width.to_f / target_width
+    y_ratio = png.height.to_f / target_height
     
-    width.times do |x|
-      height.times do |y|
-        current_pixel = png[x, y]
-        next if current_pixel == options[:background_color]
+    target_width.times do |x|
+      target_height.times do |y|
+        # Sample from original image
+        orig_x = (x * x_ratio).to_i
+        orig_y = (y * y_ratio).to_i
         
-        # Calculate distance from center for radial gradient
-        distance = Math.sqrt((x - center_x)**2 + (y - center_y)**2)
-        ratio = [distance / max_distance, 1.0].min
-        
-        # Apply smooth color interpolation
-        new_color = interpolate_color_smooth(
-          options[:gradient_start], 
-          options[:gradient_end], 
-          ratio
-        )
-        png[x, y] = new_color
+        scaled[x, y] = png[orig_x, orig_y]
       end
     end
-  end
-
-  def interpolate_color_smooth(color1, color2, ratio)
-    # Smooth color interpolation with easing
-    eased_ratio = ease_in_out_cubic(ratio)
     
-    r1, g1, b1 = extract_rgb(color1)
-    r2, g2, b2 = extract_rgb(color2)
-    
-    r = (r1 + (r2 - r1) * eased_ratio).to_i.clamp(0, 255)
-    g = (g1 + (g2 - g1) * eased_ratio).to_i.clamp(0, 255)
-    b = (b1 + (b2 - b1) * eased_ratio).to_i.clamp(0, 255)
-    
-    ChunkyPNG::Color.rgb(r, g, b)
+    scaled
   end
 
-  def extract_rgb(color)
-    [(color >> 24) & 0xff, (color >> 16) & 0xff, (color >> 8) & 0xff]
-  end
-
-  def ease_in_out_cubic(t)
-    t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2
-  end
-
-  def create_styled_png(qrcode)
-    # Redirect to new smooth method
-    create_smooth_styled_png(qrcode)
-  end
-
-  # Updated default options for smooth, circular design
   def default_options
     {
-      module_size: 12,           # Larger modules for smoother circles
-      border_size: 24,           # More border for clean look
-      corner_radius: 8,          # High corner radius for circular effect
-      qr_size: 6,               # Good balance of size vs density
+      module_size: 10,          # Increased for smoother rendering
+      border_size: 25,          # Increased border for better proportions
+      corner_radius: 8,         # Higher radius for more rounding
+      qr_size: 6,              # Optimal size for readability
       background_color: ChunkyPNG::Color::WHITE,
       foreground_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
       data_type: :url,
       center_logo: true,
-      logo_size: 36,            # Slightly larger logo
+      logo_size: 35,           # Larger logo for better visibility
       logo_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
-      logo_background_color: ChunkyPNG::Color::WHITE,
-      gradient: true,           # Enable gradient for stunning effect
-      gradient_start: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
-      gradient_end: ChunkyPNG::Color.rgb(59, 130, 246),   # Blue
-      finder_roundness: 0.9,    # Very round finder patterns
-      module_roundness: 0.7,    # Moderately round data modules
-      anti_aliasing: true       # Smooth edges
+      gradient: true,          # Enable gradient by default for premium look
+      gradient_start: ChunkyPNG::Color.rgb(124, 58, 237), # Purple (#7c3aed)
+      gradient_end: ChunkyPNG::Color.rgb(59, 130, 246)    # Blue (#3b82f6)
     }
   end
 end
