@@ -80,6 +80,8 @@ Rails.application.routes.draw do
       resources :prices, only: [:index, :create, :show] do
         collection do
           get :calculate        # Alternative pricing calculation endpoint
+          get :search
+          post :bulk_scan, to: 'scanning#bulk_scan'
         end
       end
 
