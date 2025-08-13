@@ -19,6 +19,10 @@ Rails.application.routes.draw do
 
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
+      # ==========================================
+      # 🔐 USER MANAGEMENT & AUTHENTICATION
+      # ==========================================
+      
       # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
@@ -31,68 +35,220 @@ Rails.application.routes.draw do
       patch 'users/:id/assign_role', to: 'users#assign_role'
       post :google_login, to: 'sessions#google_login'
 
-      # ✅ Business Invites
+      # 📊 USER SCANNING ANALYTICS & STATS
+      get 'users/scanning_stats', to: 'users#scanning_stats'
+      get 'users/scan_history', to: 'users#scan_history'
+      get 'users/performance_metrics', to: 'users#performance_metrics'
+      get 'users/dashboard_stats', to: 'users#dashboard_stats'
+
+      # ==========================================
+      # 🏢 BUSINESS MANAGEMENT
+      # ==========================================
+      
+      # Business Invites
       resources :invites, only: [:create], defaults: { format: :json } do
         collection do
           post :accept
         end
       end
 
-      # ✅ Businesses
+      # Businesses
       resources :businesses, only: [:create, :index, :show], defaults: { format: :json }
-    
-      # ✅ Enhanced Resources with Full CRUD and Additional Features
+
+      # ==========================================
+      # 📦 PACKAGE MANAGEMENT & SCANNING SYSTEM
+      # ==========================================
       
-      # 📦 PACKAGES - Enhanced with QR codes, tracking, search, pricing, etc.
+      # Core Package Resources
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
         member do
+          # 📋 Package Information & Validation
           get :validate          # Validate package by code
           get :qr_code          # Generate QR code
           get :tracking_page    # Full tracking information
+          get :scan_info        # Package info for scanning (basic details + actions)
+          
+          # 💳 Payment & State Management
           post :pay             # Process payment
           patch :submit         # Submit for delivery
+          patch :cancel         # Cancel package
+          
+          # 📱 Scanning Actions (individual package)
+          post :scan, to: 'scanning#scan_action'
+          
+          # 📊 Package Analytics
+          get :timeline         # Detailed tracking timeline
+          get :print_history    # Print logs for this package
         end
+        
         collection do
+          # 🔍 Search & Discovery
           get :search           # Search packages by code
+          get :advanced_search  # Advanced search with filters
+          
+          # 📊 Analytics & Reports
           get :stats           # Package statistics
-          get :pricing         # Calculate package pricing - NEW!
+          get :analytics       # Detailed analytics for role-based users
+          
+          # 💰 Pricing & Cost Calculation
+          get :pricing         # Calculate package pricing
+          post :calculate_cost # Calculate cost for package parameters
+          
+          # 📱 Bulk Operations
+          post :bulk_scan, to: 'scanning#bulk_scan'
+          post :bulk_create    # Create multiple packages
+          patch :bulk_update   # Update multiple packages
         end
       end
 
-      # 🏢 AREAS - Enhanced with package management and route analytics
+      # ==========================================
+      # 📱 SCANNING SYSTEM (Core Functionality)
+      # ==========================================
+      
+      # Main Scanning Endpoints
+      scope :scanning do
+        # 🎯 Primary Scanning Actions
+        post :scan_action, to: 'scanning#scan_action'              # Main scanning endpoint
+        get :package_details, to: 'scanning#package_details'       # Get package + available actions
+        post :bulk_scan, to: 'scanning#bulk_scan'                  # Bulk scanning operations
+        
+        # 📋 Action Validation & Info
+        get 'package/:package_code/actions', to: 'scanning#available_actions'
+        post 'package/:package_code/validate', to: 'scanning#validate_action'
+        get 'package/:package_code/scan_info', to: 'scanning#package_scan_info'
+        
+        # 📊 Scanning Analytics
+        get :scan_stats, to: 'scanning#scan_statistics'
+        get :recent_scans, to: 'scanning#recent_scans'
+        
+        # 🔄 Offline Sync Support
+        post :sync_offline_actions, to: 'scanning#sync_offline_actions'
+        get :sync_status, to: 'scanning#sync_status'
+        delete :clear_offline_data, to: 'scanning#clear_offline_data'
+      end
+
+      # ==========================================
+      # 🖨️ PRINTING SYSTEM
+      # ==========================================
+      
+      scope :printing do
+        # 📄 Label Generation
+        post 'package/:package_code/label', to: 'printing#generate_label'
+        post 'package/:package_code/print', to: 'printing#print_label'
+        
+        # 📊 Print Management
+        get 'package/:package_code/print_history', to: 'printing#print_history'
+        get :print_queue, to: 'printing#print_queue'
+        get :printer_status, to: 'printing#printer_status'
+        
+        # ⚙️ Print Configuration
+        get :print_settings, to: 'printing#print_settings'
+        patch :update_settings, to: 'printing#update_print_settings'
+        
+        # 📱 Bulk Printing
+        post :bulk_print, to: 'printing#bulk_print'
+        get :bulk_print_status, to: 'printing#bulk_print_status'
+      end
+
+      # ==========================================
+      # 📍 TRACKING & EVENTS SYSTEM
+      # ==========================================
+      
+      # Package Tracking Events
+      resources :tracking_events, only: [:index, :show, :create] do
+        collection do
+          get :recent           # Recent tracking events
+          get :by_package      # Events for specific package
+          get :by_user         # Events by specific user
+          get :timeline        # Timeline view
+        end
+      end
+
+      # Real-time Tracking
+      scope :tracking do
+        get 'package/:package_code', to: 'tracking#package_status'
+        get 'package/:package_code/live', to: 'tracking#live_tracking'
+        get 'package/:package_code/timeline', to: 'tracking#detailed_timeline'
+        get 'package/:package_code/location', to: 'tracking#current_location'
+        
+        # Batch tracking
+        post :batch_status, to: 'tracking#batch_package_status'
+      end
+
+      # ==========================================
+      # 🏢 LOCATION & AGENT MANAGEMENT
+      # ==========================================
+      
+      # Areas - Enhanced with package management and route analytics
       resources :areas, only: [:index, :create, :show, :update, :destroy] do
         member do
           get :packages         # Get packages for this area
           get :routes          # Get route statistics
+          get :agents          # Get agents in this area
+          get :scan_activity   # Scanning activity in this area
         end
         collection do
           post :bulk_create     # Create multiple areas at once
+          get :with_stats      # Areas with package statistics
         end
       end
 
-      # 📍 LOCATIONS - Keep existing functionality
-      resources :locations, only: [:index, :create, :show]
+      # Locations - Keep existing functionality + analytics
+      resources :locations, only: [:index, :create, :show] do
+        member do
+          get :areas           # Areas in this location
+          get :package_volume  # Package volume analytics
+        end
+      end
 
-      # 👥 AGENTS - Keep existing functionality  
-      resources :agents, only: [:index, :create, :show]
+      # Agents - Enhanced with performance tracking
+      resources :agents, only: [:index, :create, :show, :update] do
+        member do
+          get :packages        # Packages handled by this agent
+          get :performance     # Agent performance metrics
+          get :scan_history    # Agent's scanning history
+          patch :toggle_active # Activate/deactivate agent
+        end
+        collection do
+          get :active          # Only active agents
+          get :by_area         # Agents filtered by area
+          get :performance_report # Performance report for all agents
+        end
+      end
 
-      # 💰 PRICES - Keep existing functionality + pricing calculation
-      resources :prices, only: [:index, :create, :show] do
+      # ==========================================
+      # 💰 PRICING SYSTEM
+      # ==========================================
+      
+      # Prices - Enhanced pricing calculation
+      resources :prices, only: [:index, :create, :show, :update, :destroy] do
+        member do
+          patch :update_cost   # Update pricing cost
+        end
         collection do
           get :calculate        # Alternative pricing calculation endpoint
-          get :search
-          post :bulk_scan, to: 'scanning#bulk_scan'
+          get :search          # Search prices by criteria
+          post :bulk_create    # Create multiple price rules
+          get :matrix          # Pricing matrix view
+          get :fragile_surcharge # Get fragile handling surcharges
         end
       end
 
-      # 🔥 DEDICATED PRICING ENDPOINT (matches React Native helper expectations)
+      # 🔥 DEDICATED PRICING ENDPOINTS (matches React Native helper expectations)
       get 'pricing', to: 'packages#calculate_pricing', defaults: { format: :json }
+      post 'pricing/calculate', to: 'packages#calculate_pricing'
+      get 'pricing/matrix', to: 'prices#pricing_matrix'
+      get 'pricing/fragile', to: 'prices#fragile_pricing'
 
-      # ✅ CONVERSATIONS AND SUPPORT SYSTEM
+      # ==========================================
+      # 💬 CONVERSATIONS AND SUPPORT SYSTEM
+      # ==========================================
+      
       resources :conversations, only: [:index, :show] do
         member do
           patch :close
           patch :reopen
+          patch :assign        # Assign conversation to agent
         end
         
         # Messages nested under conversations
@@ -106,6 +262,7 @@ Rails.application.routes.draw do
       # Support ticket specific endpoints
       post 'conversations/support_ticket', to: 'conversations#create_support_ticket'
       get 'conversations/active_support', to: 'conversations#active_support'
+      get 'conversations/package_support', to: 'conversations#package_support'
 
       # Admin conversation management (for support agents)
       namespace :admin do
@@ -116,13 +273,192 @@ Rails.application.routes.draw do
             patch 'status', to: 'conversations#update_status'
           end
         end
+        
+        # Admin analytics and reports
+        get 'analytics/scanning', to: 'analytics#scanning_overview'
+        get 'analytics/packages', to: 'analytics#package_analytics'
+        get 'analytics/performance', to: 'analytics#performance_metrics'
+        get 'analytics/fragile_packages', to: 'analytics#fragile_package_analytics'
       end
 
-      # 🔍 Public tracking endpoint (no authentication required)
-      get 'track/:code', to: 'packages#public_tracking', as: :package_tracking
+      # ==========================================
+      # 📊 ANALYTICS & REPORTING
+      # ==========================================
+      
+      scope :analytics do
+        # 📦 Package Analytics
+        get :package_overview, to: 'analytics#package_overview'
+        get :delivery_performance, to: 'analytics#delivery_performance'
+        get :fragile_package_stats, to: 'analytics#fragile_package_statistics'
+        
+        # 👥 User Performance
+        get :rider_performance, to: 'analytics#rider_performance'
+        get :agent_performance, to: 'analytics#agent_performance'
+        get :user_activity, to: 'analytics#user_activity'
+        
+        # 📱 Scanning Analytics
+        get :scan_volume, to: 'analytics#scan_volume'
+        get :scan_errors, to: 'analytics#scan_errors'
+        get :offline_sync_stats, to: 'analytics#offline_sync_statistics'
+        
+        # 💰 Financial Analytics
+        get :revenue_analysis, to: 'analytics#revenue_analysis'
+        get :cost_breakdown, to: 'analytics#cost_breakdown'
+        get :fragile_surcharge_impact, to: 'analytics#fragile_surcharge_impact'
+        
+        # 📍 Geographic Analytics
+        get :route_performance, to: 'analytics#route_performance'
+        get :area_activity, to: 'analytics#area_activity'
+        
+        # 📈 Trend Analysis
+        get :trends, to: 'analytics#trend_analysis'
+        get :forecasting, to: 'analytics#delivery_forecasting'
+      end
+
+      # ==========================================
+      # 🔧 SYSTEM CONFIGURATION & SETTINGS
+      # ==========================================
+      
+      scope :settings do
+        # 🖨️ Print Settings
+        get :print_configuration, to: 'settings#print_configuration'
+        patch :update_print_config, to: 'settings#update_print_configuration'
+        
+        # 📱 Scanning Settings
+        get :scan_configuration, to: 'settings#scan_configuration'
+        patch :update_scan_config, to: 'settings#update_scan_configuration'
+        
+        # 💰 Pricing Settings
+        get :pricing_configuration, to: 'settings#pricing_configuration'
+        patch :update_pricing_config, to: 'settings#update_pricing_configuration'
+        
+        # ⚠️ Fragile Package Settings
+        get :fragile_settings, to: 'settings#fragile_package_settings'
+        patch :update_fragile_settings, to: 'settings#update_fragile_settings'
+        
+        # 🔄 Sync Settings
+        get :sync_settings, to: 'settings#offline_sync_settings'
+        patch :update_sync_settings, to: 'settings#update_sync_settings'
+      end
+
+      # ==========================================
+      # 🔄 SYSTEM HEALTH & MONITORING
+      # ==========================================
+      
+      scope :system do
+        # 🏥 Health Checks
+        get :health, to: 'system#health_check'
+        get :printer_health, to: 'system#printer_health'
+        get :database_health, to: 'system#database_health'
+        
+        # 📊 System Stats
+        get :stats, to: 'system#system_statistics'
+        get :performance, to: 'system#performance_metrics'
+        
+        # 🔄 Background Jobs
+        get :job_status, to: 'system#background_job_status'
+        get :sync_queue, to: 'system#sync_queue_status'
+        
+        # 📝 System Logs
+        get :logs, to: 'system#recent_logs'
+        get :error_logs, to: 'system#error_logs'
+        get :scan_logs, to: 'system#scanning_logs'
+      end
     end
   end
 
-  # Health check endpoint
+  # ==========================================
+  # 🌐 PUBLIC ENDPOINTS (No Authentication Required)
+  # ==========================================
+  
+  # Public package tracking
+  scope :public do
+    get 'track/:code', to: 'public/tracking#show', as: :public_package_tracking
+    get 'track/:code/status', to: 'public/tracking#status'
+    get 'track/:code/timeline', to: 'public/tracking#timeline'
+    get 'track/:code/qr', to: 'public/tracking#qr_code'
+  end
+
+  # Legacy public tracking (maintain compatibility)
+  get 'api/v1/track/:code', to: 'api/v1/packages#public_tracking', as: :package_tracking
+
+  # ==========================================
+  # 🔗 WEBHOOK ENDPOINTS
+  # ==========================================
+  
+  scope :webhooks do
+    # Payment webhooks
+    post 'payment/success', to: 'webhooks#payment_success'
+    post 'payment/failed', to: 'webhooks#payment_failed'
+    
+    # External system integrations
+    post 'tracking/update', to: 'webhooks#tracking_update'
+    post 'delivery/notification', to: 'webhooks#delivery_notification'
+    
+    # Printer status webhooks
+    post 'printer/status', to: 'webhooks#printer_status_update'
+    post 'printer/error', to: 'webhooks#printer_error'
+  end
+
+  # ==========================================
+  # 📱 MOBILE APP SPECIFIC ENDPOINTS
+  # ==========================================
+  
+  scope :mobile do
+    namespace :v1 do
+      # 📦 Mobile-optimized package endpoints
+      get 'packages/recent', to: 'mobile#recent_packages'
+      get 'packages/my_scans', to: 'mobile#my_recent_scans'
+      
+      # 📱 Quick actions for mobile
+      post 'quick_scan', to: 'mobile#quick_scan'
+      post 'quick_print', to: 'mobile#quick_print'
+      
+      # 🔄 Mobile sync
+      post 'sync', to: 'mobile#sync_data'
+      get 'sync_status', to: 'mobile#sync_status'
+      
+      # 📊 Mobile dashboard
+      get 'dashboard', to: 'mobile#dashboard_data'
+      get 'notifications', to: 'mobile#notifications'
+    end
+  end
+
+  # ==========================================
+  # 🏥 HEALTH CHECK & STATUS
+  # ==========================================
+  
+  # Rails health check
   get "up" => "rails/health#show", as: :rails_health_check
+  
+  # Custom health checks
+  get "health/db" => "health#database", as: :database_health_check
+  get "health/redis" => "health#redis", as: :redis_health_check if defined?(Redis)
+  get "health/jobs" => "health#background_jobs", as: :jobs_health_check
+  
+  # API status endpoint
+  get "api/status" => "api/status#show", as: :api_status
+
+  # ==========================================
+  # 📱 PROGRESSIVE WEB APP SUPPORT
+  # ==========================================
+  
+  # PWA manifest and service worker
+  get '/manifest.json', to: 'pwa#manifest'
+  get '/sw.js', to: 'pwa#service_worker'
+  get '/offline', to: 'pwa#offline'
+
+  # ==========================================
+  # 🔀 CATCH-ALL AND REDIRECTS
+  # ==========================================
+  
+  # Redirect root to API documentation or status
+  root 'api/status#show'
+  
+  # API documentation (if you have one)
+  get '/docs', to: 'documentation#index'
+  get '/api/docs', to: 'documentation#api_docs'
+  
+  # Catch-all for unmatched routes (return 404 JSON)
+  match '*unmatched', to: 'application#route_not_found', via: :all
 end
