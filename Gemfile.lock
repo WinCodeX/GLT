@@ -133,6 +133,8 @@ GEM
       zeitwerk (~> 2.6)
     erb (5.0.2)
     erubi (1.13.1)
+    fast_jsonapi (1.5)
+      activesupport (>= 4.2)
     globalid (1.2.1)
       activesupport (>= 6.1)
     google-id-token (1.4.2)
@@ -294,6 +296,7 @@ DEPENDENCIES
   devise
   devise-jwt
   dotenv-rails (~> 3.1)
+  fast_jsonapi
   google-id-token
   mini_magick
   pg (~> 1.1)
@@ -301,7 +304,7 @@ DEPENDENCIES
   rack-cors
   rails (~> 7.1.5, >= 7.1.5.1)
   rolify
-  rqrcode (~> 2.0)
+  rqrcode
   tzinfo-data
 
 RUBY VERSION
