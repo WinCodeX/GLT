@@ -451,6 +451,14 @@ Rails.application.routes.draw do
         post :bulk_actions, to: 'scanning#admin_bulk_actions'
         get :audit_logs, to: 'system#audit_logs'
       end
+
+      # ==========================================
+      # 🏥 STATUS & HEALTH ENDPOINTS (Fixed)
+      # ==========================================
+      
+      # API status and health endpoints
+      get 'status', to: 'status#ping'
+      get 'health', to: 'status#ping'
     end
   end
 
@@ -532,9 +540,6 @@ Rails.application.routes.draw do
   get "health/jobs" => "health#background_jobs", as: :jobs_health_check
   get "health/scanning" => "health#scanning_system", as: :scanning_health_check
   
-  # API status endpoint
-  get "api/status" => "api/status#show", as: :api_status
-
   # ==========================================
   # 📱 PROGRESSIVE WEB APP SUPPORT
   # ==========================================
@@ -548,8 +553,8 @@ Rails.application.routes.draw do
   # 🔀 CATCH-ALL AND REDIRECTS
   # ==========================================
   
-  # Redirect root to API documentation or status
-  root 'api/status#show'
+  # Redirect root to API ping endpoint (uses existing controller)
+  root 'api/v1/status#ping'
   
   # API documentation (if you have one)
   get '/docs', to: 'documentation#index'
