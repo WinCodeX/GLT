@@ -2,309 +2,374 @@
 class PackageTrackingEvent < ApplicationRecord
   belongs_to :package
   belongs_to :user
-  
+
   # Event types for different scanning actions
-  EVENT_TYPES = %w[
-    created
-    payment_received
-    submitted_for_delivery
-    collected_by_rider
-    in_transit
-    delivered_by_rider
-    confirmed_by_receiver
-    printed_by_agent
-    cancelled
-    rejected
-  ].freeze
+  enum event_type: {
+    # Package lifecycle events
+    created: 'created',
+    payment_received: 'payment_received',
+    submitted_for_delivery: 'submitted_for_delivery',
+    
+    # Agent actions
+    printed_by_agent: 'printed_by_agent',
+    
+    # Rider actions
+    collected_by_rider: 'collected_by_rider',
+    delivered_by_rider: 'delivered_by_rider',
+    
+    # Warehouse actions
+    collected_by_warehouse: 'collected_by_warehouse',
+    processed_by_warehouse: 'processed_by_warehouse',
+    printed_by_warehouse: 'printed_by_warehouse',
+    sorted_by_warehouse: 'sorted_by_warehouse',
+    
+    # Customer actions
+    confirmed_by_receiver: 'confirmed_by_receiver',
+    
+    # System events
+    state_changed: 'state_changed',
+    cancelled: 'cancelled',
+    rejected: 'rejected',
+    
+    # Error events
+    scan_error: 'scan_error',
+    processing_error: 'processing_error'
+  }
 
-  validates :event_type, presence: true, inclusion: { in: EVENT_TYPES }
-  validates :package, :user, presence: true
-  
+  # Validations
+  validates :event_type, presence: true
+  validates :metadata, presence: true
+  validates :package, presence: true
+  validates :user, presence: true
+
+  # Scopes
   scope :recent, -> { order(created_at: :desc) }
-  scope :by_event_type, ->(type) { where(event_type: type) }
-  scope :for_package, ->(package) { where(package: package) }
+  scope :today, -> { where(created_at: Date.current.all_day) }
+  scope :this_week, -> { where(created_at: 1.week.ago..Time.current) }
+  scope :this_month, -> { where(created_at: 1.month.ago..Time.current) }
   scope :by_user, ->(user) { where(user: user) }
+  scope :by_package, ->(package) { where(package: package) }
+  scope :by_event_type, ->(event_type) { where(event_type: event_type) }
+  scope :by_role, ->(role) { joins(:user).where(users: { role: role }) }
+  scope :scanning_events, -> { where(event_type: scanning_event_types) }
+  scope :user_actions, -> { where.not(event_type: ['created', 'state_changed']) }
 
-  # JSON metadata structure examples:
-  # {
-  #   "location": { "lat": 1.2921, "lng": 36.8219, "accuracy": 10 },
-  #   "device_info": { "platform": "iOS", "version": "17.0" },
-  #   "scan_context": "qr_code",
-  #   "additional_notes": "Package in good condition"
-  # }
+  # Callbacks
+  before_validation :set_default_metadata
+  after_create :update_package_state, if: :state_changing_event?
+  after_create :notify_stakeholders, if: :notification_event?
 
-  def location
-    metadata&.dig('location')
+  # Class methods
+  def self.scanning_event_types
+    [
+      'printed_by_agent',
+      'collected_by_rider',
+      'delivered_by_rider',
+      'collected_by_warehouse',
+      'processed_by_warehouse',
+      'printed_by_warehouse',
+      'confirmed_by_receiver'
+    ]
   end
 
-  def has_location?
-    location.present? && location['lat'].present? && location['lng'].present?
+  def self.role_event_types(role)
+    case role.to_s
+    when 'agent'
+      ['printed_by_agent']
+    when 'rider'
+      ['collected_by_rider', 'delivered_by_rider']
+    when 'warehouse'
+      ['collected_by_warehouse', 'processed_by_warehouse', 'printed_by_warehouse', 'sorted_by_warehouse']
+    when 'client'
+      ['confirmed_by_receiver']
+    when 'admin'
+      event_types.keys
+    else
+      []
+    end
+  end
+
+  def self.create_scan_event(package:, user:, event_type:, metadata: {})
+    create!(
+      package: package,
+      user: user,
+      event_type: event_type,
+      metadata: default_scan_metadata.merge(metadata)
+    )
+  end
+
+  def self.create_bulk_scan_events(packages:, user:, event_type:, metadata: {})
+    events = []
+    
+    packages.each do |package|
+      events << new(
+        package: package,
+        user: user,
+        event_type: event_type,
+        metadata: default_scan_metadata.merge(metadata).merge(
+          bulk_operation: true,
+          package_code: package.code
+        )
+      )
+    end
+    
+    import(events, validate: true)
+    events
+  end
+
+  def self.default_scan_metadata
+    {
+      scan_context: 'qr_code',
+      timestamp: Time.current.iso8601,
+      app_version: Rails.application.class.module_parent_name,
+      scan_method: 'mobile_app'
+    }
+  end
+
+  def self.events_summary(start_date: 1.month.ago, end_date: Time.current)
+    events = where(created_at: start_date..end_date)
+    
+    {
+      total_events: events.count,
+      unique_packages: events.select(:package_id).distinct.count,
+      unique_users: events.select(:user_id).distinct.count,
+      events_by_type: events.group(:event_type).count,
+      events_by_role: events.joins(:user).group('users.role').count,
+      events_by_day: events.group_by_day(:created_at).count,
+      scanning_events: events.scanning_events.count,
+      error_events: events.where(event_type: ['scan_error', 'processing_error']).count
+    }
+  end
+
+  # Instance methods
+  def scanning_event?
+    self.class.scanning_event_types.include?(event_type)
+  end
+
+  def error_event?
+    ['scan_error', 'processing_error'].include?(event_type)
+  end
+
+  def state_changing_event?
+    event_type_to_state.present?
+  end
+
+  def notification_event?
+    ['delivered_by_rider', 'confirmed_by_receiver', 'cancelled', 'rejected'].include?(event_type)
+  end
+
+  def bulk_operation?
+    metadata['bulk_operation'] == true
+  end
+
+  def offline_sync?
+    metadata['offline_sync'] == true
+  end
+
+  def event_description
+    base_description = case event_type
+    when 'printed_by_agent'
+      "Package label printed by #{user.name}"
+    when 'collected_by_rider'
+      "Package collected by rider #{user.name}"
+    when 'delivered_by_rider'
+      "Package delivered by rider #{user.name}"
+    when 'collected_by_warehouse'
+      "Package collected by warehouse staff #{user.name}"
+    when 'processed_by_warehouse'
+      "Package processed in warehouse by #{user.name}"
+    when 'printed_by_warehouse'
+      "Package label printed in warehouse by #{user.name}"
+    when 'confirmed_by_receiver'
+      "Package receipt confirmed by #{user.name}"
+    when 'cancelled'
+      "Package cancelled by #{user.name}"
+    when 'rejected'
+      "Package rejected by #{user.name}"
+    else
+      "#{event_type.humanize} by #{user.name}"
+    end
+
+    # Add additional context
+    context_parts = []
+    context_parts << "Offline sync" if offline_sync?
+    context_parts << "Bulk operation" if bulk_operation?
+    context_parts << "Location: #{metadata['location']}" if metadata['location']
+    
+    if context_parts.any?
+      "#{base_description} (#{context_parts.join(', ')})"
+    else
+      base_description
+    end
+  end
+
+  def event_category
+    case event_type
+    when 'printed_by_agent', 'printed_by_warehouse'
+      'printing'
+    when 'collected_by_rider', 'collected_by_warehouse'
+      'collection'
+    when 'delivered_by_rider'
+      'delivery'
+    when 'processed_by_warehouse', 'sorted_by_warehouse'
+      'processing'
+    when 'confirmed_by_receiver'
+      'confirmation'
+    when 'cancelled', 'rejected'
+      'cancellation'
+    when 'scan_error', 'processing_error'
+      'error'
+    else
+      'system'
+    end
+  end
+
+  def location_info
+    location_data = metadata['location']
+    return nil unless location_data
+
+    if location_data.is_a?(Hash)
+      {
+        latitude: location_data['latitude'],
+        longitude: location_data['longitude'],
+        accuracy: location_data['accuracy'],
+        address: location_data['address']
+      }
+    else
+      { address: location_data.to_s }
+    end
   end
 
   def device_info
-    metadata&.dig('device_info') || {}
+    device_data = metadata['device_info']
+    return nil unless device_data.is_a?(Hash)
+
+    {
+      platform: device_data['platform'],
+      app_version: device_data['app_version'],
+      device_model: device_data['device_model']
+    }
   end
 
-  def scan_context
-    metadata&.dig('scan_context')
+  def processing_time
+    return nil unless metadata['processing_time']
+    
+    metadata['processing_time'].to_f
   end
 
-  def additional_notes
-    metadata&.dig('additional_notes')
+  def was_successful?
+    !error_event? && metadata['success'] != false
   end
 
-  def user_role_at_event
-    metadata&.dig('user_role') || user&.role
+  def error_message
+    return nil unless error_event?
+    
+    metadata['error_message'] || metadata['message']
+  end
+
+  def related_events
+    package.tracking_events
+           .where.not(id: id)
+           .where(created_at: (created_at - 1.hour)..(created_at + 1.hour))
+           .recent
+  end
+
+  def next_expected_event
+    case event_type
+    when 'printed_by_agent'
+      'collected_by_rider'
+    when 'collected_by_rider'
+      'delivered_by_rider'
+    when 'delivered_by_rider'
+      'confirmed_by_receiver'
+    when 'processed_by_warehouse'
+      'collected_by_rider'
+    else
+      nil
+    end
+  end
+
+  def time_since_creation
+    Time.current - created_at
   end
 
   def formatted_timestamp
     created_at.strftime('%Y-%m-%d %H:%M:%S %Z')
   end
 
-  def event_description
+  # JSON serialization
+  def as_json(options = {})
+    result = super(options.except(:include_package, :include_user, :include_location))
+    
+    result.merge!(
+      'event_description' => event_description,
+      'event_category' => event_category,
+      'was_successful' => was_successful?,
+      'time_since_creation' => time_since_creation,
+      'formatted_timestamp' => formatted_timestamp,
+      'scanning_event' => scanning_event?,
+      'bulk_operation' => bulk_operation?,
+      'offline_sync' => offline_sync?
+    )
+
+    # Include package info if requested
+    if options[:include_package]
+      result['package'] = {
+        id: package.id,
+        code: package.code,
+        state: package.state,
+        route_description: package.route_description
+      }
+    end
+
+    # Include user info if requested
+    if options[:include_user]
+      result['user'] = {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        role_display: user.role_display_name
+      }
+    end
+
+    # Include location info if requested and available
+    if options[:include_location] && location_info
+      result['location'] = location_info
+    end
+
+    result
+  end
+
+  private
+
+  def set_default_metadata
+    self.metadata ||= {}
+    self.metadata = self.class.default_scan_metadata.merge(metadata)
+  end
+
+  def update_package_state
+    new_state = event_type_to_state
+    return unless new_state && package.state != new_state
+
+    old_state = package.state
+    package.update_column(:state, new_state)
+    
+    # Log the state change
+    Rails.logger.info "Package #{package.code} state changed from #{old_state} to #{new_state} due to event #{event_type}"
+  end
+
+  def event_type_to_state
     case event_type
-    when 'created'
-      'Package created by customer'
     when 'payment_received'
-      'Payment processed successfully'
+      'pending'
     when 'submitted_for_delivery'
-      'Package submitted for delivery'
-    when 'collected_by_rider'
-      "Package collected by #{user&.name || 'rider'}"
-    when 'in_transit'
-      'Package is in transit'
-    when 'delivered_by_rider'
-      "Package delivered by #{user&.name || 'rider'}"
-    when 'confirmed_by_receiver'
-      "Package receipt confirmed by #{user&.name || 'customer'}"
-    when 'printed_by_agent'
-      "Package label printed by #{user&.name || 'agent'}"
-    when 'cancelled'
-      'Package delivery cancelled'
-    when 'rejected'
-      'Package rejected'
-    else
-      event_type.humanize
-    end
-  end
-
-  def self.create_for_scan_action(package, action_type, user, additional_metadata = {})
-    event_type = map_action_to_event_type(action_type)
-    return nil unless event_type
-
-    base_metadata = {
-      scan_context: 'qr_code',
-      action_type: action_type,
-      user_role: user.role,
-      timestamp: Time.current.iso8601
-    }.merge(additional_metadata)
-
-    create!(
-      package: package,
-      user: user,
-      event_type: event_type,
-      metadata: base_metadata
-    )
-  end
-
-  private
-
-  def self.map_action_to_event_type(action_type)
-    case action_type
-    when 'collect'
-      'collected_by_rider'
-    when 'deliver'
-      'delivered_by_rider'
-    when 'confirm_receipt'
-      'confirmed_by_receiver'
-    when 'print'
-      'printed_by_agent'
-    else
-      nil
-    end
-  end
-end
-
-# app/models/package_print_log.rb
-class PackagePrintLog < ApplicationRecord
-  belongs_to :package
-  belongs_to :user
-  
-  validates :package, :user, :printed_at, presence: true
-  validates :print_context, inclusion: { in: %w[qr_scan manual bulk_scan api] }
-  
-  scope :recent, -> { order(printed_at: :desc) }
-  scope :by_context, ->(context) { where(print_context: context) }
-  scope :for_package, ->(package) { where(package: package) }
-  scope :by_user, ->(user) { where(user: user) }
-
-  def self.log_print(package, user, context = 'manual', metadata = {})
-    create!(
-      package: package,
-      user: user,
-      printed_at: Time.current,
-      print_context: context,
-      metadata: metadata
-    )
-  end
-end
-
-# Migration file: db/migrate/[timestamp]_create_package_tracking_events.rb
-class CreatePackageTrackingEvents < ActiveRecord::Migration[7.0]
-  def change
-    create_table :package_tracking_events do |t|
-      t.references :package, null: false, foreign_key: true
-      t.references :user, null: false, foreign_key: true
-      t.string :event_type, null: false
-      t.json :metadata, default: {}
-      t.datetime :event_timestamp, default: -> { 'CURRENT_TIMESTAMP' }
-      
-      t.timestamps
-    end
-
-    add_index :package_tracking_events, [:package_id, :created_at]
-    add_index :package_tracking_events, [:event_type, :created_at]
-    add_index :package_tracking_events, [:user_id, :created_at]
-    add_index :package_tracking_events, :event_timestamp
-  end
-end
-
-# Migration file: db/migrate/[timestamp]_create_package_print_logs.rb
-class CreatePackagePrintLogs < ActiveRecord::Migration[7.0]
-  def change
-    create_table :package_print_logs do |t|
-      t.references :package, null: false, foreign_key: true
-      t.references :user, null: false, foreign_key: true
-      t.datetime :printed_at, null: false
-      t.string :print_context, default: 'manual'
-      t.json :metadata, default: {}
-      
-      t.timestamps
-    end
-
-    add_index :package_print_logs, [:package_id, :printed_at]
-    add_index :package_print_logs, [:user_id, :printed_at]
-    add_index :package_print_logs, :print_context
-  end
-end
-
-# Update to Package model: app/models/package.rb
-# Add these methods to your existing Package model:
-
-class Package < ApplicationRecord
-  # ... existing code ...
-  
-  has_many :tracking_events, class_name: 'PackageTrackingEvent', dependent: :destroy
-  has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
-
-  # Enhanced state transition methods with event tracking
-  def transition_to_state!(new_state, user, metadata = {})
-    return false if state == new_state
-    
-    old_state = state
-    
-    ActiveRecord::Base.transaction do
-      update!(state: new_state)
-      
-      # Create tracking event
-      event_type = state_to_event_type(new_state)
-      if event_type
-        tracking_events.create!(
-          user: user,
-          event_type: event_type,
-          metadata: metadata.merge(
-            previous_state: old_state,
-            new_state: new_state,
-            transition_context: 'state_change'
-          )
-        )
-      end
-    end
-    
-    true
-  rescue => e
-    Rails.logger.error "State transition failed: #{e.message}"
-    false
-  end
-
-  # Get comprehensive tracking timeline
-  def tracking_timeline(include_prints: false)
-    events = tracking_events.includes(:user).recent
-    
-    if include_prints
-      print_events = print_logs.includes(:user).map do |print_log|
-        {
-          type: 'print',
-          timestamp: print_log.printed_at,
-          user: print_log.user,
-          description: "Package label printed by #{print_log.user.name}",
-          metadata: print_log.metadata,
-          context: print_log.print_context
-        }
-      end
-      
-      event_data = events.map do |event|
-        {
-          type: 'tracking',
-          timestamp: event.created_at,
-          user: event.user,
-          description: event.event_description,
-          metadata: event.metadata,
-          event_type: event.event_type
-        }
-      end
-      
-      # Combine and sort by timestamp
-      (event_data + print_events).sort_by { |e| e[:timestamp] }.reverse
-    else
-      events.map do |event|
-        {
-          timestamp: event.created_at,
-          user: event.user,
-          description: event.event_description,
-          metadata: event.metadata,
-          event_type: event.event_type
-        }
-      end
-    end
-  end
-
-  # Check if package has been scanned recently
-  def recently_scanned?(within: 5.minutes)
-    tracking_events.where(created_at: within.ago..Time.current).exists?
-  end
-
-  # Get last scan information
-  def last_scan_info
-    last_event = tracking_events.where(
-      event_type: ['collected_by_rider', 'delivered_by_rider', 'confirmed_by_receiver', 'printed_by_agent']
-    ).recent.first
-    
-    return nil unless last_event
-    
-    {
-      event_type: last_event.event_type,
-      user: last_event.user,
-      timestamp: last_event.created_at,
-      location: last_event.location,
-      metadata: last_event.metadata
-    }
-  end
-
-  private
-
-  def state_to_event_type(state)
-    case state
-    when 'pending'
-      'payment_received'
-    when 'submitted'
-      'submitted_for_delivery'
-    when 'in_transit'
+      'submitted'
+    when 'collected_by_rider', 'collected_by_warehouse'
       'in_transit'
-    when 'delivered'
-      'delivered_by_rider'
-    when 'collected'
-      'confirmed_by_receiver'
+    when 'delivered_by_rider'
+      'delivered'
+    when 'confirmed_by_receiver'
+      'collected'
     when 'cancelled'
       'cancelled'
     when 'rejected'
@@ -312,5 +377,19 @@ class Package < ApplicationRecord
     else
       nil
     end
+  end
+
+  def notify_stakeholders
+    # This would integrate with your notification system
+    case event_type
+    when 'delivered_by_rider'
+      # Notify customer about delivery
+      NotificationService.new(package).notify_delivery_completed if defined?(NotificationService)
+    when 'confirmed_by_receiver'
+      # Notify sender about confirmation
+      NotificationService.new(package).notify_receipt_confirmed if defined?(NotificationService)
+    end
+  rescue => e
+    Rails.logger.error "Failed to send notification for event #{id}: #{e.message}"
   end
 end
