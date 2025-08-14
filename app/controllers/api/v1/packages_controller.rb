@@ -1,3 +1,4 @@
+# app/controllers/api/v1/packages_controller.rb
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -7,31 +8,24 @@ module Api
       before_action :force_json_format
 
       def index
-        # Add safety check for packages association
-        unless current_user.respond_to?(:packages)
-          return render json: { 
-            success: false, 
-            message: 'User packages association not found' 
-          }, status: :internal_server_error
-        end
-
-        packages = current_user.packages
-                              .includes(:origin_area, :destination_area, :origin_agent, :destination_agent)
-                              .order(created_at: :desc)
-        
-        packages = apply_filters(packages)
-        
-        # Pagination with better defaults
-        page = [params[:page]&.to_i || 1, 1].max
-        per_page = [[params[:per_page]&.to_i || 20, 1].max, 100].min
-        
-        total_count = packages.count
-        packages = packages.offset((page - 1) * per_page).limit(per_page)
-
         begin
+          # Use role-based package access instead of just current_user.packages
+          packages = current_user.accessible_packages
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent)
+                                .order(created_at: :desc)
+          
+          packages = apply_filters(packages)
+          
+          # Pagination with better defaults
+          page = [params[:page]&.to_i || 1, 1].max
+          per_page = [[params[:per_page]&.to_i || 20, 1].max, 100].min
+          
+          total_count = packages.count
+          packages = packages.offset((page - 1) * per_page).limit(per_page)
+
           # Simplified serialization to avoid FastJSONAPI issues
           serialized_packages = packages.map do |package|
-            serialize_package_basic(package)
+            serialize_package_with_access_info(package)
           end
 
           render json: {
@@ -44,6 +38,12 @@ module Api
               total_pages: (total_count / per_page.to_f).ceil,
               has_next: page * per_page < total_count,
               has_prev: page > 1
+            },
+            user_context: {
+              role: current_user.primary_role,
+              can_create_packages: current_user.client?,
+              accessible_areas_count: current_user.accessible_areas.count,
+              accessible_locations_count: current_user.accessible_locations.count
             }
           }
         rescue => e
@@ -59,9 +59,22 @@ module Api
 
       def show
         begin
+          # Check if user can access this package
+          unless current_user.can_access_package?(@package)
+            return render json: {
+              success: false,
+              message: 'Access denied to this package'
+            }, status: :forbidden
+          end
+
           render json: {
             success: true,
-            data: serialize_package_detailed(@package)
+            data: serialize_package_detailed(@package),
+            user_permissions: {
+              can_edit: can_edit_package?(@package),
+              can_delete: can_delete_package?(@package),
+              available_scanning_actions: get_available_scanning_actions(@package)
+            }
           }
         rescue => e
           Rails.logger.error "PackagesController#show error: #{e.message}"
@@ -74,12 +87,12 @@ module Api
       end
 
       def create
-        # Add safety check for packages association
-        unless current_user.respond_to?(:packages)
-          return render json: { 
-            success: false, 
-            message: 'User packages association not found' 
-          }, status: :internal_server_error
+        # Only clients can create packages
+        unless current_user.client?
+          return render json: {
+            success: false,
+            message: 'Only customers can create packages'
+          }, status: :forbidden
         end
 
         begin
@@ -118,6 +131,13 @@ module Api
 
       def update
         begin
+          unless can_edit_package?(@package)
+            return render json: {
+              success: false,
+              message: 'You cannot edit this package'
+            }, status: :forbidden
+          end
+
           if @package.update(package_update_params)
             # Recalculate cost if relevant fields changed
             if should_recalculate_cost?(package_update_params)
@@ -149,10 +169,10 @@ module Api
 
       def destroy
         begin
-          unless @package.user == current_user
+          unless can_delete_package?(@package)
             return render json: { 
               success: false, 
-              message: 'Access denied' 
+              message: 'You cannot delete this package' 
             }, status: :forbidden
           end
 
@@ -180,6 +200,44 @@ module Api
           render json: { 
             success: false, 
             message: 'An error occurred while deleting the package',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      def search
+        query = params[:query]&.strip
+        
+        if query.blank?
+          return render json: { 
+            success: false, 
+            message: 'Search query is required' 
+          }, status: :bad_request
+        end
+
+        begin
+          # Use role-based accessible packages for search
+          packages = current_user.accessible_packages
+                                .includes(:origin_area, :destination_area)
+                                .where("code ILIKE ?", "%#{query}%")
+                                .limit(20)
+
+          serialized_packages = packages.map do |package|
+            serialize_package_search(package)
+          end
+
+          render json: {
+            success: true,
+            data: serialized_packages,
+            query: query,
+            count: serialized_packages.length,
+            user_role: current_user.primary_role
+          }
+        rescue => e
+          Rails.logger.error "PackagesController#search error: #{e.message}"
+          render json: { 
+            success: false, 
+            message: 'Search failed',
             error: Rails.env.development? ? e.message : nil
           }, status: :internal_server_error
         end
@@ -223,50 +281,6 @@ module Api
           render json: { 
             success: false, 
             message: 'Failed to load tracking information',
-            error: Rails.env.development? ? e.message : nil
-          }, status: :internal_server_error
-        end
-      end
-
-      def search
-        query = params[:query]&.strip
-        
-        if query.blank?
-          return render json: { 
-            success: false, 
-            message: 'Search query is required' 
-          }, status: :bad_request
-        end
-
-        # Add safety check for packages association
-        unless current_user.respond_to?(:packages)
-          return render json: { 
-            success: false, 
-            message: 'User packages association not found' 
-          }, status: :internal_server_error
-        end
-
-        begin
-          packages = current_user.packages
-                                .includes(:origin_area, :destination_area)
-                                .where("code ILIKE ?", "%#{query}%")
-                                .limit(20)
-
-          serialized_packages = packages.map do |package|
-            serialize_package_search(package)
-          end
-
-          render json: {
-            success: true,
-            data: serialized_packages,
-            query: query,
-            count: serialized_packages.length
-          }
-        rescue => e
-          Rails.logger.error "PackagesController#search error: #{e.message}"
-          render json: { 
-            success: false, 
-            message: 'Search failed',
             error: Rails.env.development? ? e.message : nil
           }, status: :internal_server_error
         end
@@ -339,15 +353,8 @@ module Api
       end
 
       def set_package_for_authenticated_user
-        # Add safety check for packages association
-        unless current_user.respond_to?(:packages)
-          return render json: { 
-            success: false, 
-            message: 'User packages association not found' 
-          }, status: :internal_server_error
-        end
-
-        @package = current_user.packages.find_by!(code: params[:id])
+        # Use accessible packages instead of just user's packages
+        @package = current_user.accessible_packages.find_by!(code: params[:id])
         ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
         render json: { 
@@ -356,6 +363,118 @@ module Api
         }, status: :not_found
       end
 
+      def can_edit_package?(package)
+        case current_user.primary_role
+        when 'client'
+          package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
+        when 'admin'
+          true
+        else
+          false
+        end
+      end
+
+      def can_delete_package?(package)
+        case current_user.primary_role
+        when 'client'
+          package.user == current_user
+        when 'admin'
+          true
+        else
+          false
+        end
+      end
+
+      def get_available_scanning_actions(package)
+        return [] unless current_user.can_scan_packages?
+        
+        actions = []
+        
+        if current_user.can_perform_action?('print', package)
+          actions << { action: 'print', label: 'Print Label', available: true }
+        end
+        
+        if current_user.can_perform_action?('collect', package)
+          actions << { action: 'collect', label: 'Collect Package', available: true }
+        end
+        
+        if current_user.can_perform_action?('deliver', package)
+          actions << { action: 'deliver', label: 'Mark Delivered', available: true }
+        end
+        
+        if current_user.can_perform_action?('process', package)
+          actions << { action: 'process', label: 'Process Package', available: true }
+        end
+        
+        actions
+      end
+
+      def serialize_package_with_access_info(package)
+        data = serialize_package_basic(package)
+        
+        # Add access context for staff users
+        unless current_user.client?
+          data.merge!(
+            'access_reason' => get_access_reason(package),
+            'user_can_scan' => current_user.can_scan_packages?,
+            'available_actions' => get_available_scanning_actions(package).map { |a| a[:action] }
+          )
+        end
+        
+        data
+      end
+
+      def get_access_reason(package)
+        case current_user.primary_role
+        when 'agent'
+          if current_user.operates_in_area?(package.origin_area_id)
+            'Origin area agent'
+          elsif current_user.operates_in_area?(package.destination_area_id)
+            'Destination area agent'
+          else
+            'Area access'
+          end
+        when 'rider'
+          if current_user.operates_in_area?(package.origin_area_id)
+            'Collection area rider'
+          elsif current_user.operates_in_area?(package.destination_area_id)
+            'Delivery area rider'
+          else
+            'Area access'
+          end
+        when 'warehouse'
+          'Warehouse processing'
+        when 'admin'
+          'Administrator access'
+        else
+          'Unknown access'
+        end
+      end
+
+      def apply_filters(packages)
+        packages = packages.where(state: params[:state]) if params[:state].present?
+        packages = packages.where("code ILIKE ?", "%#{params[:search]}%") if params[:search].present?
+        
+        # Role-specific filters
+        case current_user.primary_role
+        when 'agent'
+          if params[:area_filter] == 'origin'
+            packages = packages.where(origin_area_id: current_user.accessible_areas)
+          elsif params[:area_filter] == 'destination'
+            packages = packages.where(destination_area_id: current_user.accessible_areas)
+          end
+        when 'rider'
+          if params[:action_filter] == 'collection'
+            packages = packages.where(origin_area_id: current_user.accessible_areas, state: 'submitted')
+          elsif params[:action_filter] == 'delivery'
+            packages = packages.where(destination_area_id: current_user.accessible_areas, state: 'in_transit')
+          end
+        end
+        
+        packages
+      end
+
+      # Rest of the private methods remain the same...
       def ensure_package_has_code(package)
         if package.code.blank?
           package.update!(code: generate_package_code(package))
@@ -365,7 +484,6 @@ module Api
       end
 
       def generate_package_code(package)
-        # Try using PackageCodeGenerator service if available
         if defined?(PackageCodeGenerator)
           begin
             code_generator = PackageCodeGenerator.new(package)
@@ -375,12 +493,10 @@ module Api
           end
         end
         
-        # Fallback code generation
         "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
       end
 
       def calculate_package_cost(package)
-        # Try using package's own method if available
         if package.respond_to?(:calculate_delivery_cost)
           begin
             return package.calculate_delivery_cost
@@ -389,7 +505,6 @@ module Api
           end
         end
         
-        # Location-aware fallback cost calculation
         base_cost = 150
         
         case package.delivery_type
@@ -401,20 +516,16 @@ module Api
           base_cost += 50
         end
 
-        # Use location-based pricing if available
         origin_location_id = package.origin_area&.location&.id
         destination_location_id = package.destination_area&.location&.id
         
         if origin_location_id && destination_location_id
           if origin_location_id != destination_location_id
-            # Inter-location delivery (e.g., Nairobi to Kisumu)
             base_cost += 200
           else
-            # Intra-location delivery (e.g., CBD to Kasarani within Nairobi)
             base_cost += 50
           end
         else
-          # Fallback to area-based pricing
           if package.origin_area_id != package.destination_area_id
             base_cost += 100
           end
@@ -423,7 +534,7 @@ module Api
         base_cost
       rescue => e
         Rails.logger.error "Cost calculation failed: #{e.message}"
-        200 # Ultimate fallback
+        200
       end
 
       def should_recalculate_cost?(params)
@@ -434,7 +545,6 @@ module Api
       def generate_qr_code_data(package)
         tracking_url = package_tracking_url(package.code)
         
-        # Try using QrCodeGenerator service if available
         if defined?(QrCodeGenerator)
           begin
             qr_generator = QrCodeGenerator.new(package, qr_code_options)
@@ -448,7 +558,6 @@ module Api
           end
         end
         
-        # Fallback: return tracking URL only
         {
           base64: nil,
           tracking_url: tracking_url
@@ -467,7 +576,7 @@ module Api
         }
       end
 
-      # Serialization methods to replace FastJSONAPI
+      # Serialization methods remain the same...
       def serialize_package_basic(package)
         {
           id: package.id.to_s,
@@ -487,7 +596,6 @@ module Api
       def serialize_package_detailed(package)
         data = serialize_package_basic(package)
         
-        # Add detailed information - check if attributes exist before accessing
         additional_data = {
           sender_phone: package.sender_phone,
           receiver_phone: package.receiver_phone,
@@ -497,7 +605,6 @@ module Api
           destination_agent: serialize_agent(package.destination_agent)
         }
         
-        # Only add delivery_location if the attribute exists
         if package.respond_to?(:delivery_location)
           additional_data[:delivery_location] = package.delivery_location
         end
@@ -547,14 +654,12 @@ module Api
       end
 
       def package_params
-        # Build permitted params dynamically based on what exists
         base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
           :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
           :delivery_type
         ]
         
-        # Only add delivery_location if the model supports it
         if Package.column_names.include?('delivery_location')
           base_params << :delivery_location
         end
@@ -563,21 +668,13 @@ module Api
       end
 
       def package_update_params
-        # Build permitted params dynamically based on what exists
         base_params = [:receiver_name, :receiver_phone, :destination_area_id, :destination_agent_id, :delivery_type]
         
-        # Only add delivery_location if the model supports it
         if Package.column_names.include?('delivery_location')
           base_params << :delivery_location
         end
         
         params.require(:package).permit(*base_params)
-      end
-
-      def apply_filters(packages)
-        packages = packages.where(state: params[:state]) if params[:state].present?
-        packages = packages.where("code ILIKE ?", "%#{params[:search]}%") if params[:search].present?
-        packages
       end
 
       def can_be_deleted?(package)
@@ -626,24 +723,19 @@ module Api
           if package.respond_to?(:route_description)
             package.route_description
           else
-            # Updated: Use location-based route description to match generator logic
             origin_location = package.origin_area&.location&.name || 'Unknown Origin'
             destination_location = package.destination_area&.location&.name || 'Unknown Destination'
             
-            # Show detailed area info only if different locations
             if package.origin_area&.location&.id == package.destination_area&.location&.id
-              # Same location: show "Nairobi (CBD → Kasarani)"
               origin_area = package.origin_area&.name || 'Unknown Area'
               destination_area = package.destination_area&.name || 'Unknown Area'
               "#{origin_location} (#{origin_area} → #{destination_area})"
             else
-              # Different locations: show "Nairobi → Kisumu"
               "#{origin_location} → #{destination_location}"
             end
           end
         rescue => e
           Rails.logger.error "Route description generation failed: #{e.message}"
-          # Fallback to simple area-based description
           origin = package.origin_area&.name || 'Unknown Origin'
           destination = package.destination_area&.name || 'Unknown Destination'
           "#{origin} → #{destination}"
