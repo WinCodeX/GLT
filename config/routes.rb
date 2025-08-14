@@ -42,12 +42,7 @@ Rails.application.routes.draw do
       get 'users/dashboard_stats', to: 'users#dashboard_stats'
 
 
-resources :users, only: [] do
-      collection do
-        get :scan_history
-       get :scanning_stats
-      end
-    end
+
       # ==========================================
       # 🏢 BUSINESS MANAGEMENT
       # ==========================================
