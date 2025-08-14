@@ -1,4 +1,4 @@
-# config/routes.rb
+# config/routes.rb - Scanning system routes configuration
 Rails.application.routes.draw do
   # Devise authentication (login/logout)
   devise_for :users,
@@ -36,8 +36,8 @@ Rails.application.routes.draw do
       post :google_login, to: 'sessions#google_login'
 
       # 📊 USER SCANNING ANALYTICS & STATS
-      get 'users/scanning_stats', to: 'users#scanning_stats'
-      get 'users/scan_history', to: 'users#scan_history'
+      get 'users/scanning_stats', to: 'scanning#scan_statistics'
+      get 'users/scan_history', to: 'scanning#recent_scans'
       get 'users/performance_metrics', to: 'users#performance_metrics'
       get 'users/dashboard_stats', to: 'users#dashboard_stats'
 
@@ -73,9 +73,6 @@ Rails.application.routes.draw do
           patch :submit         # Submit for delivery
           patch :cancel         # Cancel package
           
-          # 📱 Scanning Actions (individual package)
-          post :scan, to: 'scanning#scan_action'
-          
           # 📊 Package Analytics
           get :timeline         # Detailed tracking timeline
           get :print_history    # Print logs for this package
@@ -95,7 +92,6 @@ Rails.application.routes.draw do
           post :calculate_cost # Calculate cost for package parameters
           
           # 📱 Bulk Operations
-          post :bulk_scan, to: 'scanning#bulk_scan'
           post :bulk_create    # Create multiple packages
           patch :bulk_update   # Update multiple packages
         end
@@ -118,7 +114,7 @@ Rails.application.routes.draw do
         get 'package/:package_code/scan_info', to: 'scanning#package_scan_info'
         
         # 📊 Scanning Analytics
-        get :scan_stats, to: 'scanning#scan_statistics'
+        get :scan_statistics, to: 'scanning#scan_statistics'
         get :recent_scans, to: 'scanning#recent_scans'
         
         # 🔄 Offline Sync Support
@@ -126,6 +122,10 @@ Rails.application.routes.draw do
         get :sync_status, to: 'scanning#sync_status'
         delete :clear_offline_data, to: 'scanning#clear_offline_data'
       end
+
+      # Enhanced Package Search for Scanning
+      get 'packages/search', to: 'packages#search'
+      get 'packages/search_for_scan', to: 'scanning#search_packages'
 
       # ==========================================
       # 🖨️ PRINTING SYSTEM
@@ -216,6 +216,38 @@ Rails.application.routes.draw do
         end
       end
 
+      # Riders - Enhanced with scanning activity
+      resources :riders, only: [:index, :create, :show, :update] do
+        member do
+          get :packages        # Packages handled by this rider
+          get :performance     # Rider performance metrics
+          get :scan_history    # Rider's scanning history
+          get :route_activity  # Current route activity
+          patch :toggle_active # Activate/deactivate rider
+        end
+        collection do
+          get :active          # Only active riders
+          get :by_area         # Riders filtered by area
+          get :performance_report # Performance report for all riders
+        end
+      end
+
+      # Warehouse Staff - New resource for warehouse management
+      resources :warehouse_staff, only: [:index, :create, :show, :update] do
+        member do
+          get :packages        # Packages processed by this staff
+          get :performance     # Warehouse staff performance metrics
+          get :scan_history    # Staff's scanning history
+          get :processing_queue # Current processing queue
+          patch :toggle_active # Activate/deactivate staff
+        end
+        collection do
+          get :active          # Only active warehouse staff
+          get :by_location     # Staff filtered by location
+          get :performance_report # Performance report for warehouse
+        end
+      end
+
       # ==========================================
       # 💰 PRICING SYSTEM
       # ==========================================
@@ -282,7 +314,7 @@ Rails.application.routes.draw do
       end
 
       # ==========================================
-      # 📊 ANALYTICS & REPORTING
+      # 📊 ANALYTICS & REPORTING (Role-Based)
       # ==========================================
       
       scope :analytics do
@@ -294,12 +326,14 @@ Rails.application.routes.draw do
         # 👥 User Performance
         get :rider_performance, to: 'analytics#rider_performance'
         get :agent_performance, to: 'analytics#agent_performance'
+        get :warehouse_performance, to: 'analytics#warehouse_performance'
         get :user_activity, to: 'analytics#user_activity'
         
         # 📱 Scanning Analytics
         get :scan_volume, to: 'analytics#scan_volume'
         get :scan_errors, to: 'analytics#scan_errors'
         get :offline_sync_stats, to: 'analytics#offline_sync_statistics'
+        get :role_based_activity, to: 'analytics#role_based_scanning_activity'
         
         # 💰 Financial Analytics
         get :revenue_analysis, to: 'analytics#revenue_analysis'
@@ -309,6 +343,7 @@ Rails.application.routes.draw do
         # 📍 Geographic Analytics
         get :route_performance, to: 'analytics#route_performance'
         get :area_activity, to: 'analytics#area_activity'
+        get :warehouse_efficiency, to: 'analytics#warehouse_efficiency'
         
         # 📈 Trend Analysis
         get :trends, to: 'analytics#trend_analysis'
@@ -339,6 +374,10 @@ Rails.application.routes.draw do
         # 🔄 Sync Settings
         get :sync_settings, to: 'settings#offline_sync_settings'
         patch :update_sync_settings, to: 'settings#update_sync_settings'
+        
+        # 👥 Role Management Settings
+        get :role_permissions, to: 'settings#role_permissions'
+        patch :update_role_permissions, to: 'settings#update_role_permissions'
       end
 
       # ==========================================
@@ -363,6 +402,52 @@ Rails.application.routes.draw do
         get :logs, to: 'system#recent_logs'
         get :error_logs, to: 'system#error_logs'
         get :scan_logs, to: 'system#scanning_logs'
+      end
+
+      # ==========================================
+      # 👥 ROLE-BASED ENDPOINTS
+      # ==========================================
+
+      # Client-specific endpoints
+      scope :client do
+        get :packages, to: 'packages#index' # Client's own packages
+        get :tracking, to: 'tracking#client_packages'
+        post :confirm_receipt, to: 'scanning#scan_action' # Alias for receipt confirmation
+      end
+
+      # Agent-specific endpoints
+      scope :agent do
+        get :packages, to: 'packages#agent_packages'
+        get :print_queue, to: 'printing#agent_print_queue'
+        post :print_labels, to: 'scanning#bulk_scan' # Alias for bulk printing
+        get :performance, to: 'analytics#agent_performance'
+      end
+
+      # Rider-specific endpoints
+      scope :rider do
+        get :packages, to: 'packages#rider_packages'
+        get :routes, to: 'analytics#rider_routes'
+        post :collect_packages, to: 'scanning#bulk_scan' # Alias for bulk collection
+        post :deliver_packages, to: 'scanning#bulk_scan' # Alias for bulk delivery
+        get :performance, to: 'analytics#rider_performance'
+      end
+
+      # Warehouse-specific endpoints
+      scope :warehouse do
+        get :packages, to: 'packages#warehouse_packages'
+        get :processing_queue, to: 'packages#processing_queue'
+        post :process_packages, to: 'scanning#bulk_scan' # Alias for bulk processing
+        get :inventory, to: 'packages#warehouse_inventory'
+        get :performance, to: 'analytics#warehouse_performance'
+      end
+
+      # Admin-specific endpoints
+      scope :admin do
+        get :all_packages, to: 'packages#admin_index'
+        get :system_overview, to: 'analytics#system_overview'
+        get :user_management, to: 'users#admin_index'
+        post :bulk_actions, to: 'scanning#admin_bulk_actions'
+        get :audit_logs, to: 'system#audit_logs'
       end
     end
   end
@@ -398,6 +483,10 @@ Rails.application.routes.draw do
     # Printer status webhooks
     post 'printer/status', to: 'webhooks#printer_status_update'
     post 'printer/error', to: 'webhooks#printer_error'
+    
+    # Scanning system webhooks
+    post 'scan/completed', to: 'webhooks#scan_completed'
+    post 'bulk_scan/completed', to: 'webhooks#bulk_scan_completed'
   end
 
   # ==========================================
@@ -421,6 +510,10 @@ Rails.application.routes.draw do
       # 📊 Mobile dashboard
       get 'dashboard', to: 'mobile#dashboard_data'
       get 'notifications', to: 'mobile#notifications'
+      
+      # 📱 Role-specific mobile endpoints
+      get 'role_dashboard', to: 'mobile#role_based_dashboard'
+      get 'quick_actions', to: 'mobile#role_quick_actions'
     end
   end
 
@@ -435,6 +528,7 @@ Rails.application.routes.draw do
   get "health/db" => "health#database", as: :database_health_check
   get "health/redis" => "health#redis", as: :redis_health_check if defined?(Redis)
   get "health/jobs" => "health#background_jobs", as: :jobs_health_check
+  get "health/scanning" => "health#scanning_system", as: :scanning_health_check
   
   # API status endpoint
   get "api/status" => "api/status#show", as: :api_status
