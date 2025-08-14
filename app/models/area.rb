@@ -2,6 +2,7 @@
 class Area < ApplicationRecord
   belongs_to :location
   has_many :agents, dependent: :restrict_with_error
+  has_many :riders, dependent: :restrict_with_error  # Added for scanning system
   
   # Package associations
   has_many :origin_packages, class_name: 'Package', foreign_key: 'origin_area_id', dependent: :restrict_with_error
@@ -19,6 +20,8 @@ class Area < ApplicationRecord
   # Scopes
   scope :with_packages, -> { joins(:origin_packages).distinct }
   scope :active, -> { joins(:agents).where(agents: { active: true }).distinct }
+  scope :with_active_riders, -> { joins(:riders).where(riders: { active: true }).distinct }  # Added
+  scope :with_staff, -> { joins(:agents, :riders).distinct }  # Added
 
   # Instance methods for package management
   def package_count
@@ -31,12 +34,22 @@ class Area < ApplicationRecord
     agents.count # Fallback if 'active' column doesn't exist
   end
   
+  def active_riders_count  # Added for scanning system
+    riders.where(active: true).count
+  rescue
+    riders.count
+  end
+  
+  def total_staff_count  # Added for scanning system
+    active_agents_count + active_riders_count
+  end
+  
   def all_packages
     Package.where(origin_area: self).or(Package.where(destination_area: self))
   end
   
   def can_be_deleted?
-    package_count == 0 && agents.count == 0
+    package_count == 0 && agents.count == 0 && riders.count == 0  # Updated
   end
 
   def full_name
@@ -111,6 +124,8 @@ class Area < ApplicationRecord
       result.merge!(
         'package_count' => package_count,
         'active_agents_count' => active_agents_count,
+        'active_riders_count' => active_riders_count,  # Added
+        'total_staff_count' => total_staff_count,  # Added
         'can_be_deleted' => can_be_deleted?
       )
     end
@@ -151,4 +166,3 @@ class Area < ApplicationRecord
   def upcase_initials
     self.initials = initials&.upcase
   end
-end
