@@ -1,4 +1,4 @@
-# config/routes.rb - Scanning system routes configuration
+# config/routes.rb - Fixed Scanning system routes configuration
 Rails.application.routes.draw do
   # Devise authentication (login/logout)
   devise_for :users,
@@ -35,13 +35,11 @@ Rails.application.routes.draw do
       patch 'users/:id/assign_role', to: 'users#assign_role'
       post :google_login, to: 'sessions#google_login'
 
-      # 📊 USER SCANNING ANALYTICS & STATS
-      get 'users/scanning_stats', to: 'scanning#scan_statistics'
-      get 'users/scan_history', to: 'scanning#recent_scans'
+      # 📊 USER SCANNING ANALYTICS & STATS - Fixed routing
+      get 'users/scanning_stats', to: 'users#scanning_stats'
+      get 'users/scan_history', to: 'users#scan_history'
       get 'users/performance_metrics', to: 'users#performance_metrics'
       get 'users/dashboard_stats', to: 'users#dashboard_stats'
-
-
 
       # ==========================================
       # 🏢 BUSINESS MANAGEMENT
@@ -119,6 +117,9 @@ Rails.application.routes.draw do
         get :scan_statistics, to: 'scanning#scan_statistics'
         get :recent_scans, to: 'scanning#recent_scans'
         
+        # 🔍 Package Search for Scanning
+        get :search_packages, to: 'scanning#search_packages'
+        
         # 🔄 Offline Sync Support
         post :sync_offline_actions, to: 'scanning#sync_offline_actions'
         get :sync_status, to: 'scanning#sync_status'
@@ -127,7 +128,6 @@ Rails.application.routes.draw do
 
       # Enhanced Package Search for Scanning
       get 'packages/search', to: 'packages#search'
-      get 'packages/search_for_scan', to: 'scanning#search_packages'
 
       # ==========================================
       # 🖨️ PRINTING SYSTEM
