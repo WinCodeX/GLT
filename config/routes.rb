@@ -41,6 +41,12 @@ Rails.application.routes.draw do
       get 'users/performance_metrics', to: 'users#performance_metrics'
       get 'users/dashboard_stats', to: 'users#dashboard_stats'
 
+
+resources :users, only: [] do
+      collection do
+        get :scan_history
+      end
+    end
       # ==========================================
       # 🏢 BUSINESS MANAGEMENT
       # ==========================================
