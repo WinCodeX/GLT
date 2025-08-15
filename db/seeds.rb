@@ -235,7 +235,7 @@ ActiveRecord::Base.transaction do
         a.phone = agent_data[:phone_number]  # Agent model uses 'phone' attribute
         a.area = area
         a.user = system_user
-        a.active = true
+        a.active = true if a.respond_to?(:active)
       end
       puts "  ✓ Agent ready: #{agent.name} in #{area.name}, #{area.location.name}"
     end
