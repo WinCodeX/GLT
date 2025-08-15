@@ -33,7 +33,7 @@ class User < ApplicationRecord
 
   # Validations
   validates :email, presence: true, uniqueness: true
-  validates :name, presence: true, length: { minimum: 2, maximum: 100 }, allow_blank: true
+  validates :first_name, presence: true, length: { minimum: 2, maximum: 100 }
   validates :phone_number, format: { with: /\A\+?[0-9\s\-\(\)]+\z/, message: "Invalid phone format" }, allow_blank: true
 
   # Callbacks
@@ -41,8 +41,8 @@ class User < ApplicationRecord
   before_validation :normalize_phone
 
   # Scopes (existing + new)
-  scope :active, -> { where(active: true) }
-  scope :inactive, -> { where(active: false) }
+  scope :active, -> { where.not(last_seen_at: nil).where('last_seen_at > ?', 30.days.ago) }
+  scope :inactive, -> { where(last_seen_at: nil).or(where('last_seen_at <= ?', 30.days.ago)) }
   scope :with_scanning_activity, -> { joins(:package_tracking_events).distinct }
   scope :recent_scanners, -> { joins(:package_tracking_events).where(package_tracking_events: { created_at: 1.week.ago.. }).distinct }
 
@@ -74,8 +74,6 @@ class User < ApplicationRecord
   def full_name
     if first_name.present? || last_name.present?
       "#{first_name} #{last_name}".strip
-    elsif name.present?
-      name
     else
       email.split('@').first
     end
@@ -87,6 +85,11 @@ class User < ApplicationRecord
 
   def initials
     full_name.split.map(&:first).join.upcase
+  end
+
+  # Check if user is active (based on recent activity)
+  def active?
+    last_seen_at.present? && last_seen_at > 30.days.ago
   end
 
   # EXISTING: Role compatibility methods using Rolify
@@ -383,12 +386,12 @@ class User < ApplicationRecord
 
   # NEW: Account management
   def activate!
-    update!(active: true)
+    update!(last_seen_at: Time.current)
     activate_role_records
   end
 
   def deactivate!
-    update!(active: false)
+    update!(last_seen_at: 30.days.ago)
     deactivate_role_records
   end
 
