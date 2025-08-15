@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_13_083750) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_14_055146) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -126,6 +126,41 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_13_083750) do
     t.index ["user_id"], name: "index_messages_on_user_id"
   end
 
+  create_table "package_print_logs", force: :cascade do |t|
+    t.bigint "package_id", null: false
+    t.bigint "user_id", null: false
+    t.datetime "printed_at", null: false
+    t.string "print_context", default: "manual_print", null: false
+    t.string "status", default: "completed", null: false
+    t.integer "copies_printed", default: 1, null: false
+    t.json "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["package_id", "printed_at"], name: "index_package_print_logs_on_package_id_and_printed_at"
+    t.index ["package_id"], name: "index_package_print_logs_on_package_id"
+    t.index ["print_context", "printed_at"], name: "index_package_print_logs_on_print_context_and_printed_at"
+    t.index ["printed_at"], name: "index_package_print_logs_on_printed_at"
+    t.index ["status", "printed_at"], name: "index_package_print_logs_on_status_and_printed_at"
+    t.index ["user_id", "printed_at"], name: "index_package_print_logs_on_user_id_and_printed_at"
+    t.index ["user_id"], name: "index_package_print_logs_on_user_id"
+  end
+
+  create_table "package_tracking_events", force: :cascade do |t|
+    t.bigint "package_id", null: false
+    t.bigint "user_id", null: false
+    t.string "event_type", null: false
+    t.json "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_at"], name: "index_package_tracking_events_on_created_at"
+    t.index ["event_type", "created_at"], name: "index_package_tracking_events_on_event_type_and_created_at"
+    t.index ["package_id", "created_at"], name: "index_package_tracking_events_on_package_id_and_created_at"
+    t.index ["package_id", "event_type"], name: "index_package_tracking_events_on_package_id_and_event_type"
+    t.index ["package_id"], name: "index_package_tracking_events_on_package_id"
+    t.index ["user_id", "created_at"], name: "index_package_tracking_events_on_user_id_and_created_at"
+    t.index ["user_id"], name: "index_package_tracking_events_on_user_id"
+  end
+
   create_table "packages", force: :cascade do |t|
     t.string "sender_name"
     t.string "sender_phone"
@@ -223,6 +258,10 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_13_083750) do
   add_foreign_key "conversation_participants", "users"
   add_foreign_key "messages", "conversations"
   add_foreign_key "messages", "users"
+  add_foreign_key "package_print_logs", "packages"
+  add_foreign_key "package_print_logs", "users"
+  add_foreign_key "package_tracking_events", "packages"
+  add_foreign_key "package_tracking_events", "users"
   add_foreign_key "packages", "agents", column: "destination_agent_id"
   add_foreign_key "packages", "agents", column: "origin_agent_id"
   add_foreign_key "packages", "areas", column: "destination_area_id"
