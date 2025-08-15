@@ -139,6 +139,7 @@ GEM
       activesupport (>= 6.1)
     google-id-token (1.4.2)
       jwt (>= 1)
+    hiredis (0.6.3)
     i18n (1.14.7)
       concurrent-ruby (~> 1.0)
     io-console (0.8.1)
@@ -203,6 +204,8 @@ GEM
       nio4r (~> 2.0)
     racc (1.8.1)
     rack (3.1.16)
+    rack-attack (6.7.0)
+      rack (>= 1.0, < 4)
     rack-cors (3.0.0)
       logger
       rack (>= 3.0.14)
@@ -246,8 +249,14 @@ GEM
     rdoc (6.14.2)
       erb
       psych (>= 4.0.0)
+    redis (5.4.1)
+      redis-client (>= 0.22.0)
+    redis-client (0.25.2)
+      connection_pool
     reline (0.6.1)
       io-console (~> 0.5)
+    render_build_setup (0.0.1)
+      rails (>= 6.0)
     responders (3.1.1)
       actionpack (>= 5.2)
       railties (>= 5.2)
@@ -298,11 +307,15 @@ DEPENDENCIES
   dotenv-rails (~> 3.1)
   fast_jsonapi
   google-id-token
+  hiredis
   mini_magick
   pg (~> 1.1)
   puma (>= 5.0)
+  rack-attack
   rack-cors
   rails (~> 7.1.5, >= 7.1.5.1)
+  redis
+  render_build_setup (~> 0.0.1)
   rolify
   rqrcode
   tzinfo-data
