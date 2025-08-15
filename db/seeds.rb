@@ -138,26 +138,61 @@ end
 
 # Create system user for agents (required by schema)
 puts "👤 Creating/finding system user for agents..."
-system_user = User.find_or_create_by!(email: "system@glt.co.ke") do |u|
-  u.password = "SecureSystemPassword123!"
-  u.password_confirmation = "SecureSystemPassword123!"
-  u.first_name = "GLT"
-  u.last_name = "System"
-  u.phone_number = "+254700000000"
-end
-puts "  ✓ System user ready: #{system_user.email}"
+# db/seeds.rb
 
-# Create test user for development
-if Rails.env.development?
-  puts "👤 Creating/finding test user..."
-  test_user = User.find_or_create_by!(email: "test@example.com") do |u|
-    u.password = "password123"
-    u.password_confirmation = "password123"
-    u.first_name = "Test"
-    u.last_name = "User"
-    u.phone_number = "+254700000001"
+def create_user(email:, password:, first_name:, last_name:, phone_number:, role: nil)
+  user = User.find_or_create_by!(email: email) do |u|
+    u.password = password
+    u.password_confirmation = password
+    u.first_name = first_name
+    u.last_name = last_name
+    u.phone_number = phone_number
   end
-  puts "  ✓ Test user ready: #{test_user.email}"
+  user.add_role(role) if role && !user.has_role?(role)
+  puts "  ✓ User ready: #{user.email}#{role ? " (#{role})" : ""}"
+  user
+end
+
+# Ensure roles exist
+%w[client agent rider warehouse admin].each { |r| Role.find_or_create_by!(name: r) }
+
+# Fixed system user
+create_user(
+  email: "system@glt.co.ke",
+  password: "SecureSystemPassword123!",
+  first_name: "GLT",
+  last_name: "System",
+  phone_number: "+254700000000"
+)
+
+# Permanent users
+create_user(
+  email: "glenwinterg970@gmail.com",
+  password: "Leviathan@Xcode",
+  first_name: "Xs",
+  last_name: "",
+  phone_number: "+254700000002",
+  role: :client
+)
+
+create_user(
+  email: "admin@example.com",
+  password: "Password123",
+  first_name: "Glen",
+  last_name: "",
+  phone_number: "+254700000003",
+  role: :admin
+)
+
+# Development-only test user
+if Rails.env.development?
+  create_user(
+    email: "test@example.com",
+    password: "password123",
+    first_name: "Test",
+    last_name: "User",
+    phone_number: "+254700000001"
+  )
   puts "  📧 Email: test@example.com"
   puts "  🔑 Password: password123"
 end
