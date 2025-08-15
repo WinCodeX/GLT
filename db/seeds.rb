@@ -140,6 +140,8 @@ end
 puts "👤 Creating/finding users and  system user for agents..."
 # db/seeds.rb
 
+# db/seeds.rb
+
 def create_user(email:, password:, first_name:, last_name:, phone_number:, role: nil)
   user = User.find_or_create_by!(email: email) do |u|
     u.password = password
@@ -153,10 +155,12 @@ def create_user(email:, password:, first_name:, last_name:, phone_number:, role:
   user
 end
 
-# Ensure roles exist
-%w[client agent rider warehouse admin].each { |r| Role.find_or_create_by!(name: r) }
+# Auto-create roles from your Role model or Rolify config
+existing_roles = Role.pluck(:name)
+default_roles = %w[client agent rider warehouse admin]
+(default_roles - existing_roles).each { |r| Role.create!(name: r) }
 
-# Fixed system user
+# System user
 create_user(
   email: "system@glt.co.ke",
   password: "SecureSystemPassword123!",
@@ -165,7 +169,7 @@ create_user(
   phone_number: "+254700000000"
 )
 
-# Permanent users
+# Main users
 create_user(
   email: "glenwinterg970@gmail.com",
   password: "Leviathan@Xcode",
@@ -184,7 +188,7 @@ create_user(
   role: :admin
 )
 
-# Development-only test user
+# Development test user
 if Rails.env.development?
   create_user(
     email: "test@example.com",
@@ -196,7 +200,6 @@ if Rails.env.development?
   puts "  📧 Email: test@example.com"
   puts "  🔑 Password: password123"
 end
-
 # Create Agents (they belong directly to areas per schema)
 puts "👥 Creating/updating agents..."
 
