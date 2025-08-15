@@ -137,7 +137,7 @@ areas_data.each do |area_data|
 end
 
 # Create system user for agents (required by schema)
-puts "👤 Creating/finding system user for agents..."
+puts "👤 Creating/finding users and  system user for agents..."
 # db/seeds.rb
 
 def create_user(email:, password:, first_name:, last_name:, phone_number:, role: nil)
