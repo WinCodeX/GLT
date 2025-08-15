@@ -34,7 +34,7 @@ class User < ApplicationRecord
   # Validations
   validates :email, presence: true, uniqueness: true
   validates :name, presence: true, length: { minimum: 2, maximum: 100 }, allow_blank: true
-  validates :phone, format: { with: /\A\+?[0-9\s\-\(\)]+\z/, message: "Invalid phone format" }, allow_blank: true
+  validates :phone_number, format: { with: /\A\+?[0-9\s\-\(\)]+\z/, message: "Invalid phone format" }, allow_blank: true
 
   # Callbacks
   after_create :assign_default_role
@@ -343,14 +343,14 @@ class User < ApplicationRecord
       add_role(:agent) unless has_role?(:agent)
       agents.find_or_create_by(area: area) do |agent|
         agent.name = full_name
-        agent.phone = phone
+        agent.phone = phone_number
         agent.active = true
       end
     when 'rider'
       add_role(:rider) unless has_role?(:rider)
       riders.find_or_create_by(area: area) do |rider|
         rider.name = full_name
-        rider.phone = phone
+        rider.phone = phone_number
         rider.active = true
       end
     end
@@ -361,7 +361,7 @@ class User < ApplicationRecord
     
     warehouse_staff.find_or_create_by(location: location) do |staff|
       staff.name = full_name
-      staff.phone = phone
+      staff.phone = phone_number
       staff.active = true
     end
   end
@@ -437,16 +437,16 @@ class User < ApplicationRecord
   end
 
   def normalize_phone
-    return unless phone.present?
+    return unless phone_number.present?
     
     # Remove all non-digit characters except +
-    self.phone = phone.gsub(/[^\d\+]/, '')
+    self.phone_number = phone_number.gsub(/[^\d\+]/, '')
     
     # Add country code if missing (assuming Kenya +254)
-    if phone.match(/^[07]/) && phone.length == 10
-      self.phone = "+254#{phone[1..-1]}"
-    elsif phone.match(/^[7]/) && phone.length == 9
-      self.phone = "+254#{phone}"
+    if phone_number.match(/^[07]/) && phone_number.length == 10
+      self.phone_number = "+254#{phone_number[1..-1]}"
+    elsif phone_number.match(/^[7]/) && phone_number.length == 9
+      self.phone_number = "+254#{phone_number}"
     end
   end
 
