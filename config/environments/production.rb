@@ -33,7 +33,7 @@ Rails.application.configure do
   config.active_storage.service = :local
 
 
-Rails.application.routes.default_url_options[:host] = 'http://192.168.100.73:3000'
+Rails.application.routes.default_url_options[:host] = 'https://glt-53x8.onrender.com'
 
 
   # Mount Action Cable outside main process or domain.
