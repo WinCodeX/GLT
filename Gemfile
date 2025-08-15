@@ -73,3 +73,7 @@ gem 'mini_magick'
 gem 'fast_jsonapi'
 
 
+gem 'rack-cors'
+gem 'redis'
+gem 'hiredis'
+gem 'rack-attack
