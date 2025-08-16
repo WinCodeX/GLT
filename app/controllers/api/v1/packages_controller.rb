@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: State saving and permission issues
+# app/controllers/api/v1/packages_controller.rb - FIXED: User serialization and state transitions
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -9,7 +9,6 @@ module Api
 
       def index
         begin
-          # Use role-based package access instead of just current_user.packages
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
                                          origin_area: :location, destination_area: :location)
@@ -17,14 +16,12 @@ module Api
           
           packages = apply_filters(packages)
           
-          # Pagination with better defaults
           page = [params[:page]&.to_i || 1, 1].max
           per_page = [[params[:per_page]&.to_i || 20, 1].max, 100].min
           
           total_count = packages.count
           packages = packages.offset((page - 1) * per_page).limit(per_page)
 
-          # Enhanced serialization with complete data
           serialized_packages = packages.map do |package|
             serialize_package_with_complete_info(package)
           end
@@ -60,7 +57,6 @@ module Api
 
       def show
         begin
-          # Check if user can access this package
           unless current_user.can_access_package?(@package)
             return render json: {
               success: false,
@@ -88,7 +84,6 @@ module Api
       end
 
       def create
-        # Only clients can create packages
         unless current_user.client?
           return render json: {
             success: false,
@@ -99,11 +94,7 @@ module Api
         begin
           package = current_user.packages.build(package_params)
           package.state = 'pending_unpaid'
-          
-          # Generate package code with better error handling
           package.code = generate_package_code(package)
-          
-          # Calculate cost with fallback
           package.cost = calculate_package_cost(package)
 
           if package.save
@@ -130,7 +121,6 @@ module Api
         end
       end
 
-      # FIXED: Enhanced update method with proper state handling
       def update
         begin
           unless can_edit_package?(@package)
@@ -140,11 +130,10 @@ module Api
             }, status: :forbidden
           end
 
-          Rails.logger.info "🔄 Updating package #{@package.code} with params: #{params[:package]}"
+          Rails.logger.info "🔄 Updating package #{@package.code}"
           Rails.logger.info "🔄 Current user role: #{current_user.primary_role}"
           Rails.logger.info "🔄 Current package state: #{@package.state}"
 
-          # FIXED: Get filtered parameters based on user permissions
           filtered_params = package_update_params
           Rails.logger.info "🔄 Filtered update params: #{filtered_params}"
 
@@ -156,18 +145,15 @@ module Api
                 message: "Invalid state transition from #{@package.state} to #{filtered_params[:state]}"
               }, status: :unprocessable_entity
             end
-            Rails.logger.info "✅ State transition validated: #{@package.state} -> #{filtered_params[:state]}"
           end
 
           if @package.update(filtered_params)
-            # Recalculate cost if relevant fields changed
             if should_recalculate_cost?(filtered_params)
               new_cost = calculate_package_cost(@package)
               @package.update_column(:cost, new_cost) if new_cost
             end
 
             Rails.logger.info "✅ Package #{@package.code} updated successfully"
-            Rails.logger.info "✅ New package state: #{@package.reload.state}"
 
             render json: {
               success: true,
@@ -242,14 +228,12 @@ module Api
         end
 
         begin
-          # Use role-based accessible packages for search with enhanced includes
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
                                          origin_area: :location, destination_area: :location)
                                 .where("code ILIKE ?", "%#{query}%")
                                 .limit(20)
 
-          # ENHANCED: Return complete package information for search results
           serialized_packages = packages.map do |package|
             serialize_package_with_complete_info(package)
           end
@@ -381,7 +365,6 @@ module Api
       end
 
       def set_package_for_authenticated_user
-        # Use accessible packages instead of just user's packages
         @package = current_user.accessible_packages
                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
                                         origin_area: :location, destination_area: :location)
@@ -401,7 +384,6 @@ module Api
         when 'admin'
           true
         when 'agent', 'rider', 'warehouse'
-          # Staff can edit certain fields and state
           true
         else
           false
@@ -443,11 +425,9 @@ module Api
         actions
       end
 
-      # ENHANCED: Complete package serialization with all fields
       def serialize_package_with_complete_info(package)
         data = serialize_package_basic(package)
         
-        # Add all available contact and business information
         data.merge!(
           'sender_phone' => get_sender_phone(package),
           'sender_email' => get_sender_email(package),
@@ -456,7 +436,6 @@ module Api
           'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil
         )
         
-        # Add access context for staff users
         unless current_user.client?
           data.merge!(
             'access_reason' => get_access_reason(package),
@@ -468,7 +447,6 @@ module Api
         data
       end
 
-      # ENHANCED: Complete package serialization for detailed views
       def serialize_package_complete(package)
         data = serialize_package_basic(package)
         
@@ -524,7 +502,6 @@ module Api
         packages = packages.where(state: params[:state]) if params[:state].present?
         packages = packages.where("code ILIKE ?", "%#{params[:search]}%") if params[:search].present?
         
-        # Role-specific filters
         case current_user.primary_role
         when 'agent'
           if params[:area_filter] == 'origin'
@@ -543,7 +520,6 @@ module Api
         packages
       end
 
-      # ENHANCED: Helper methods to get contact information with fallbacks
       def get_sender_phone(package)
         return package.sender_phone if package.respond_to?(:sender_phone) && package.sender_phone.present?
         return package.user&.phone if package.user&.phone.present?
@@ -568,33 +544,28 @@ module Api
         return nil
       end
 
-      # FIXED: Enhanced state validation
+      # FIXED: Enhanced state validation with collected state
       def valid_state_transition?(current_state, new_state)
-        # Define valid transitions based on business logic
         valid_transitions = {
           'pending_unpaid' => ['pending', 'rejected'],
           'pending' => ['submitted', 'rejected'],
           'submitted' => ['in_transit', 'rejected'],
           'in_transit' => ['delivered', 'rejected'],
-          'delivered' => ['collected'],
+          'delivered' => ['collected', 'rejected'],  # FIXED: Added collected after delivered
           'collected' => [], # Final state
           'rejected' => ['pending'] # Can be resubmitted
         }
 
-        # Admin can make any transition
         return true if current_user.primary_role == 'admin'
         
-        # Check if transition is allowed
         allowed_states = valid_transitions[current_state] || []
         is_valid = allowed_states.include?(new_state)
         
         Rails.logger.info "🔄 State transition validation: #{current_state} -> #{new_state}, valid: #{is_valid}"
-        Rails.logger.info "🔄 Allowed transitions from #{current_state}: #{allowed_states}"
         
         is_valid
       end
 
-      # Rest of the helper methods remain the same...
       def ensure_package_has_code(package)
         if package.code.blank?
           package.update!(code: generate_package_code(package))
@@ -698,7 +669,6 @@ module Api
         }
       end
 
-      # Serialization methods
       def serialize_package_basic(package)
         {
           'id' => package.id.to_s,
@@ -746,12 +716,26 @@ module Api
         }
       end
 
+      # FIXED: User serialization to handle missing name field
       def serialize_user_basic(user)
         return nil unless user
         
+        # Build name from available fields
+        name = if user.respond_to?(:name) && user.name.present?
+          user.name
+        elsif user.respond_to?(:first_name) && user.respond_to?(:last_name)
+          "#{user.first_name} #{user.last_name}".strip
+        elsif user.respond_to?(:first_name) && user.first_name.present?
+          user.first_name
+        elsif user.respond_to?(:last_name) && user.last_name.present?
+          user.last_name
+        else
+          user.email # Fallback to email if no name fields
+        end
+        
         {
           'id' => user.id.to_s,
-          'name' => user.name,
+          'name' => name,
           'email' => user.email,
           'role' => user.primary_role
         }
@@ -764,7 +748,6 @@ module Api
           :delivery_type
         ]
         
-        # Add optional fields if they exist in the model
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
           base_params << field if Package.column_names.include?(field.to_s)
@@ -773,27 +756,19 @@ module Api
         params.require(:package).permit(*base_params)
       end
 
-      # FIXED: Enhanced package_update_params with better state handling
       def package_update_params
-        Rails.logger.info "🔒 Determining update permissions for user: #{current_user.primary_role}"
-        Rails.logger.info "🔒 Package state: #{@package.state}"
-        Rails.logger.info "🔒 Raw params: #{params[:package]}"
-        
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                       :destination_area_id, :destination_agent_id, :delivery_type, :state]
         
-        # Add optional fields if they exist in the model
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
           base_params << field if Package.column_names.include?(field.to_s)
         end
         
-        # Filter params based on user permissions
         permitted_params = []
         
         case current_user.primary_role
         when 'client'
-          # Clients can edit personal info and destination in certain states
           if ['pending_unpaid', 'pending'].include?(@package.state)
             permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                                :destination_area_id, :destination_agent_id, :delivery_location,
@@ -802,34 +777,22 @@ module Api
             end
           end
         when 'admin'
-          # Admins can edit all fields including state
           permitted_params = base_params
         when 'agent', 'rider', 'warehouse'
-          # FIXED: Staff can edit state and some operational fields
           permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
             base_params.include?(field)
           end
         end
         
-        Rails.logger.info "🔒 Permitted update params for #{current_user.primary_role}: #{permitted_params}"
-        
-        # Get the filtered parameters
         filtered_params = params.require(:package).permit(*permitted_params)
-        Rails.logger.info "🔒 Filtered params: #{filtered_params}"
         
-        # FIXED: Special handling for state parameter to ensure it's properly included
         if filtered_params[:state].present?
-          Rails.logger.info "🔒 State parameter present: #{filtered_params[:state]}"
-          
-          # Validate that the state is a valid state
           valid_states = ['pending_unpaid', 'pending', 'submitted', 'in_transit', 'delivered', 'collected', 'rejected']
           unless valid_states.include?(filtered_params[:state])
-            Rails.logger.warn "🔒 Invalid state value: #{filtered_params[:state]}"
             filtered_params.delete(:state)
           end
         end
         
-        Rails.logger.info "🔒 Final filtered params: #{filtered_params}"
         filtered_params
       end
 
