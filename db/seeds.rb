@@ -94,6 +94,26 @@ ActiveRecord::Base.transaction do
       puts "  📧 Dev Test User - Email: test@example.com, Password: password123"
     end
     
+
+
+# === PACKAGE STATE FIX ===
+puts "📦 Updating existing packages to 'pending' state..."
+
+# Example: find by tracking codes NRB-001 and NRB-001-MCH
+package_codes = ["NRB-001", "NRB-001-MCH"]
+
+package_codes.each do |code|
+  package = Package.find_by(code: code)
+  if package
+    package.update!(state: :pending) # if enum
+    # package.update!(state: "pending") # if string
+    puts "  ✓ Package #{code} updated to 'pending'"
+  else
+    puts "  ⚠️ Package #{code} not found, skipping..."
+  end
+end
+
+
     # === LOCATIONS SETUP ===
     puts "🗺️ Setting up locations with initials..."
     
