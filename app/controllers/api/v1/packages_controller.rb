@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - ENHANCED with complete package data
+# app/controllers/api/v1/packages_controller.rb - FIXED: State saving and permission issues
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -130,6 +130,7 @@ module Api
         end
       end
 
+      # FIXED: Enhanced update method with proper state handling
       def update
         begin
           unless can_edit_package?(@package)
@@ -139,16 +140,34 @@ module Api
             }, status: :forbidden
           end
 
-          Rails.logger.info "🔄 Updating package #{@package.code} with params: #{package_update_params}"
+          Rails.logger.info "🔄 Updating package #{@package.code} with params: #{params[:package]}"
+          Rails.logger.info "🔄 Current user role: #{current_user.primary_role}"
+          Rails.logger.info "🔄 Current package state: #{@package.state}"
 
-          if @package.update(package_update_params)
+          # FIXED: Get filtered parameters based on user permissions
+          filtered_params = package_update_params
+          Rails.logger.info "🔄 Filtered update params: #{filtered_params}"
+
+          # FIXED: Validate state transitions if state is being changed
+          if filtered_params[:state] && filtered_params[:state] != @package.state
+            unless valid_state_transition?(@package.state, filtered_params[:state])
+              return render json: {
+                success: false,
+                message: "Invalid state transition from #{@package.state} to #{filtered_params[:state]}"
+              }, status: :unprocessable_entity
+            end
+            Rails.logger.info "✅ State transition validated: #{@package.state} -> #{filtered_params[:state]}"
+          end
+
+          if @package.update(filtered_params)
             # Recalculate cost if relevant fields changed
-            if should_recalculate_cost?(package_update_params)
+            if should_recalculate_cost?(filtered_params)
               new_cost = calculate_package_cost(@package)
               @package.update_column(:cost, new_cost) if new_cost
             end
 
             Rails.logger.info "✅ Package #{@package.code} updated successfully"
+            Rails.logger.info "✅ New package state: #{@package.reload.state}"
 
             render json: {
               success: true,
@@ -165,6 +184,7 @@ module Api
           end
         rescue => e
           Rails.logger.error "PackagesController#update error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           render json: { 
             success: false, 
             message: 'An error occurred while updating the package',
@@ -548,6 +568,32 @@ module Api
         return nil
       end
 
+      # FIXED: Enhanced state validation
+      def valid_state_transition?(current_state, new_state)
+        # Define valid transitions based on business logic
+        valid_transitions = {
+          'pending_unpaid' => ['pending', 'rejected'],
+          'pending' => ['submitted', 'rejected'],
+          'submitted' => ['in_transit', 'rejected'],
+          'in_transit' => ['delivered', 'rejected'],
+          'delivered' => ['collected'],
+          'collected' => [], # Final state
+          'rejected' => ['pending'] # Can be resubmitted
+        }
+
+        # Admin can make any transition
+        return true if current_user.primary_role == 'admin'
+        
+        # Check if transition is allowed
+        allowed_states = valid_transitions[current_state] || []
+        is_valid = allowed_states.include?(new_state)
+        
+        Rails.logger.info "🔄 State transition validation: #{current_state} -> #{new_state}, valid: #{is_valid}"
+        Rails.logger.info "🔄 Allowed transitions from #{current_state}: #{allowed_states}"
+        
+        is_valid
+      end
+
       # Rest of the helper methods remain the same...
       def ensure_package_has_code(package)
         if package.code.blank?
@@ -727,7 +773,12 @@ module Api
         params.require(:package).permit(*base_params)
       end
 
+      # FIXED: Enhanced package_update_params with better state handling
       def package_update_params
+        Rails.logger.info "🔒 Determining update permissions for user: #{current_user.primary_role}"
+        Rails.logger.info "🔒 Package state: #{@package.state}"
+        Rails.logger.info "🔒 Raw params: #{params[:package]}"
+        
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                       :destination_area_id, :destination_agent_id, :delivery_type, :state]
         
@@ -740,31 +791,46 @@ module Api
         # Filter params based on user permissions
         permitted_params = []
         
-        if can_edit_package?(@package)
-          case current_user.primary_role
-          when 'client'
-            # Clients can edit personal info and destination in certain states
-            if ['pending_unpaid', 'pending'].include?(@package.state)
-              permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                                 :destination_area_id, :destination_agent_id, :delivery_location,
-                                 :sender_email, :receiver_email, :business_name].select do |field|
-                base_params.include?(field)
-              end
-            end
-          when 'admin'
-            # Admins can edit all fields
-            permitted_params = base_params
-          when 'agent', 'rider', 'warehouse'
-            # Staff can edit state and some operational fields
-            permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
+        case current_user.primary_role
+        when 'client'
+          # Clients can edit personal info and destination in certain states
+          if ['pending_unpaid', 'pending'].include?(@package.state)
+            permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
+                               :destination_area_id, :destination_agent_id, :delivery_location,
+                               :sender_email, :receiver_email, :business_name].select do |field|
               base_params.include?(field)
             end
+          end
+        when 'admin'
+          # Admins can edit all fields including state
+          permitted_params = base_params
+        when 'agent', 'rider', 'warehouse'
+          # FIXED: Staff can edit state and some operational fields
+          permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
+            base_params.include?(field)
           end
         end
         
         Rails.logger.info "🔒 Permitted update params for #{current_user.primary_role}: #{permitted_params}"
         
-        params.require(:package).permit(*permitted_params)
+        # Get the filtered parameters
+        filtered_params = params.require(:package).permit(*permitted_params)
+        Rails.logger.info "🔒 Filtered params: #{filtered_params}"
+        
+        # FIXED: Special handling for state parameter to ensure it's properly included
+        if filtered_params[:state].present?
+          Rails.logger.info "🔒 State parameter present: #{filtered_params[:state]}"
+          
+          # Validate that the state is a valid state
+          valid_states = ['pending_unpaid', 'pending', 'submitted', 'in_transit', 'delivered', 'collected', 'rejected']
+          unless valid_states.include?(filtered_params[:state])
+            Rails.logger.warn "🔒 Invalid state value: #{filtered_params[:state]}"
+            filtered_params.delete(:state)
+          end
+        end
+        
+        Rails.logger.info "🔒 Final filtered params: #{filtered_params}"
+        filtered_params
       end
 
       def can_be_deleted?(package)
