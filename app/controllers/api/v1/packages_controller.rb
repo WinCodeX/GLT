@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb
+# app/controllers/api/v1/packages_controller.rb - ENHANCED with complete package data
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -11,7 +11,8 @@ module Api
         begin
           # Use role-based package access instead of just current_user.packages
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent)
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
+                                         origin_area: :location, destination_area: :location)
                                 .order(created_at: :desc)
           
           packages = apply_filters(packages)
@@ -23,9 +24,9 @@ module Api
           total_count = packages.count
           packages = packages.offset((page - 1) * per_page).limit(per_page)
 
-          # Simplified serialization to avoid FastJSONAPI issues
+          # Enhanced serialization with complete data
           serialized_packages = packages.map do |package|
-            serialize_package_with_access_info(package)
+            serialize_package_with_complete_info(package)
           end
 
           render json: {
@@ -69,7 +70,7 @@ module Api
 
           render json: {
             success: true,
-            data: serialize_package_detailed(@package),
+            data: serialize_package_complete(@package),
             user_permissions: {
               can_edit: can_edit_package?(@package),
               can_delete: can_delete_package?(@package),
@@ -108,7 +109,7 @@ module Api
           if package.save
             render json: {
               success: true,
-              data: serialize_package_detailed(package),
+              data: serialize_package_complete(package),
               message: 'Package created successfully'
             }, status: :created
           else
@@ -138,6 +139,8 @@ module Api
             }, status: :forbidden
           end
 
+          Rails.logger.info "🔄 Updating package #{@package.code} with params: #{package_update_params}"
+
           if @package.update(package_update_params)
             # Recalculate cost if relevant fields changed
             if should_recalculate_cost?(package_update_params)
@@ -145,12 +148,15 @@ module Api
               @package.update_column(:cost, new_cost) if new_cost
             end
 
+            Rails.logger.info "✅ Package #{@package.code} updated successfully"
+
             render json: {
               success: true,
-              data: serialize_package_detailed(@package),
+              data: serialize_package_complete(@package.reload),
               message: 'Package updated successfully'
             }
           else
+            Rails.logger.error "❌ Package update failed: #{@package.errors.full_messages}"
             render json: { 
               success: false,
               errors: @package.errors.full_messages,
@@ -216,14 +222,16 @@ module Api
         end
 
         begin
-          # Use role-based accessible packages for search
+          # Use role-based accessible packages for search with enhanced includes
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area)
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                         origin_area: :location, destination_area: :location)
                                 .where("code ILIKE ?", "%#{query}%")
                                 .limit(20)
 
+          # ENHANCED: Return complete package information for search results
           serialized_packages = packages.map do |package|
-            serialize_package_search(package)
+            serialize_package_with_complete_info(package)
           end
 
           render json: {
@@ -272,7 +280,7 @@ module Api
         begin
           render json: {
             success: true,
-            data: serialize_package_detailed(@package),
+            data: serialize_package_complete(@package),
             timeline: package_timeline(@package),
             tracking_url: package_tracking_url(@package.code)
           }
@@ -354,7 +362,10 @@ module Api
 
       def set_package_for_authenticated_user
         # Use accessible packages instead of just user's packages
-        @package = current_user.accessible_packages.find_by!(code: params[:id])
+        @package = current_user.accessible_packages
+                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                        origin_area: :location, destination_area: :location)
+                               .find_by!(code: params[:id])
         ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
         render json: { 
@@ -368,6 +379,9 @@ module Api
         when 'client'
           package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
         when 'admin'
+          true
+        when 'agent', 'rider', 'warehouse'
+          # Staff can edit certain fields and state
           true
         else
           false
@@ -409,8 +423,18 @@ module Api
         actions
       end
 
-      def serialize_package_with_access_info(package)
+      # ENHANCED: Complete package serialization with all fields
+      def serialize_package_with_complete_info(package)
         data = serialize_package_basic(package)
+        
+        # Add all available contact and business information
+        data.merge!(
+          'sender_phone' => get_sender_phone(package),
+          'sender_email' => get_sender_email(package),
+          'receiver_email' => get_receiver_email(package),
+          'business_name' => get_business_name(package),
+          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil
+        )
         
         # Add access context for staff users
         unless current_user.client?
@@ -421,6 +445,31 @@ module Api
           )
         end
         
+        data
+      end
+
+      # ENHANCED: Complete package serialization for detailed views
+      def serialize_package_complete(package)
+        data = serialize_package_basic(package)
+        
+        additional_data = {
+          'sender_phone' => get_sender_phone(package),
+          'sender_email' => get_sender_email(package),
+          'receiver_email' => get_receiver_email(package),
+          'business_name' => get_business_name(package),
+          'origin_area' => serialize_area(package.origin_area),
+          'destination_area' => serialize_area(package.destination_area),
+          'origin_agent' => serialize_agent(package.origin_agent),
+          'destination_agent' => serialize_agent(package.destination_agent),
+          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil,
+          'tracking_url' => package_tracking_url(package.code),
+          'created_by' => serialize_user_basic(package.user),
+          'is_editable' => can_edit_package?(package),
+          'is_deletable' => can_delete_package?(package),
+          'available_scanning_actions' => get_available_scanning_actions(package)
+        }
+        
+        data.merge!(additional_data)
         data
       end
 
@@ -474,7 +523,32 @@ module Api
         packages
       end
 
-      # Rest of the private methods remain the same...
+      # ENHANCED: Helper methods to get contact information with fallbacks
+      def get_sender_phone(package)
+        return package.sender_phone if package.respond_to?(:sender_phone) && package.sender_phone.present?
+        return package.user&.phone if package.user&.phone.present?
+        return nil
+      end
+
+      def get_sender_email(package)
+        return package.sender_email if package.respond_to?(:sender_email) && package.sender_email.present?
+        return package.user&.email if package.user&.email.present?
+        return nil
+      end
+
+      def get_receiver_email(package)
+        return package.receiver_email if package.respond_to?(:receiver_email) && package.receiver_email.present?
+        return nil
+      end
+
+      def get_business_name(package)
+        return package.business_name if package.respond_to?(:business_name) && package.business_name.present?
+        return package.user&.business_name if package.user&.respond_to?(:business_name) && package.user&.business_name.present?
+        return package.user&.company if package.user&.respond_to?(:company) && package.user&.company.present?
+        return nil
+      end
+
+      # Rest of the helper methods remain the same...
       def ensure_package_has_code(package)
         if package.code.blank?
           package.update!(code: generate_package_code(package))
@@ -510,6 +584,8 @@ module Api
         case package.delivery_type
         when 'doorstep'
           base_cost += 100
+        when 'fragile'
+          base_cost += 150
         when 'agent'
           base_cost += 0
         when 'mixed'
@@ -576,51 +652,21 @@ module Api
         }
       end
 
-      # Serialization methods remain the same...
+      # Serialization methods
       def serialize_package_basic(package)
         {
-          id: package.id.to_s,
-          code: package.code,
-          state: package.state,
-          state_display: package.state&.humanize,
-          sender_name: package.sender_name,
-          receiver_name: package.receiver_name,
-          cost: package.cost,
-          delivery_type: package.delivery_type,
-          route_description: safe_route_description(package),
-          created_at: package.created_at&.iso8601,
-          updated_at: package.updated_at&.iso8601
-        }
-      end
-
-      def serialize_package_detailed(package)
-        data = serialize_package_basic(package)
-        
-        additional_data = {
-          sender_phone: package.sender_phone,
-          receiver_phone: package.receiver_phone,
-          origin_area: serialize_area(package.origin_area),
-          destination_area: serialize_area(package.destination_area),
-          origin_agent: serialize_agent(package.origin_agent),
-          destination_agent: serialize_agent(package.destination_agent)
-        }
-        
-        if package.respond_to?(:delivery_location)
-          additional_data[:delivery_location] = package.delivery_location
-        end
-        
-        data.merge!(additional_data)
-        data
-      end
-
-      def serialize_package_search(package)
-        {
-          id: package.id.to_s,
-          code: package.code,
-          state: package.state,
-          state_display: package.state&.humanize,
-          route_description: safe_route_description(package),
-          created_at: package.created_at&.iso8601
+          'id' => package.id.to_s,
+          'code' => package.code,
+          'state' => package.state,
+          'state_display' => package.state&.humanize,
+          'sender_name' => package.sender_name,
+          'receiver_name' => package.receiver_name,
+          'receiver_phone' => package.receiver_phone,
+          'cost' => package.cost,
+          'delivery_type' => package.delivery_type,
+          'route_description' => safe_route_description(package),
+          'created_at' => package.created_at&.iso8601,
+          'updated_at' => package.updated_at&.iso8601
         }
       end
 
@@ -628,9 +674,9 @@ module Api
         return nil unless area
         
         {
-          id: area.id.to_s,
-          name: area.name,
-          location: area.respond_to?(:location) ? serialize_location(area.location) : nil
+          'id' => area.id.to_s,
+          'name' => area.name,
+          'location' => area.respond_to?(:location) ? serialize_location(area.location) : nil
         }
       end
 
@@ -638,8 +684,8 @@ module Api
         return nil unless location
         
         {
-          id: location.id.to_s,
-          name: location.name
+          'id' => location.id.to_s,
+          'name' => location.name
         }
       end
 
@@ -647,9 +693,21 @@ module Api
         return nil unless agent
         
         {
-          id: agent.id.to_s,
-          name: agent.name,
-          phone: agent.phone
+          'id' => agent.id.to_s,
+          'name' => agent.name,
+          'phone' => agent.phone,
+          'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
+        }
+      end
+
+      def serialize_user_basic(user)
+        return nil unless user
+        
+        {
+          'id' => user.id.to_s,
+          'name' => user.name,
+          'email' => user.email,
+          'role' => user.primary_role
         }
       end
 
@@ -660,21 +718,53 @@ module Api
           :delivery_type
         ]
         
-        if Package.column_names.include?('delivery_location')
-          base_params << :delivery_location
+        # Add optional fields if they exist in the model
+        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
+        optional_fields.each do |field|
+          base_params << field if Package.column_names.include?(field.to_s)
         end
         
         params.require(:package).permit(*base_params)
       end
 
       def package_update_params
-        base_params = [:receiver_name, :receiver_phone, :destination_area_id, :destination_agent_id, :delivery_type]
+        base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
+                      :destination_area_id, :destination_agent_id, :delivery_type, :state]
         
-        if Package.column_names.include?('delivery_location')
-          base_params << :delivery_location
+        # Add optional fields if they exist in the model
+        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
+        optional_fields.each do |field|
+          base_params << field if Package.column_names.include?(field.to_s)
         end
         
-        params.require(:package).permit(*base_params)
+        # Filter params based on user permissions
+        permitted_params = []
+        
+        if can_edit_package?(@package)
+          case current_user.primary_role
+          when 'client'
+            # Clients can edit personal info and destination in certain states
+            if ['pending_unpaid', 'pending'].include?(@package.state)
+              permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
+                                 :destination_area_id, :destination_agent_id, :delivery_location,
+                                 :sender_email, :receiver_email, :business_name].select do |field|
+                base_params.include?(field)
+              end
+            end
+          when 'admin'
+            # Admins can edit all fields
+            permitted_params = base_params
+          when 'agent', 'rider', 'warehouse'
+            # Staff can edit state and some operational fields
+            permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
+              base_params.include?(field)
+            end
+          end
+        end
+        
+        Rails.logger.info "🔒 Permitted update params for #{current_user.primary_role}: #{permitted_params}"
+        
+        params.require(:package).permit(*permitted_params)
       end
 
       def can_be_deleted?(package)
@@ -754,6 +844,8 @@ module Api
           'Package is in transit'
         when 'delivered'
           'Package delivered successfully'
+        when 'collected'
+          'Package collected by receiver'
         when 'cancelled'
           'Package delivery cancelled'
         else
