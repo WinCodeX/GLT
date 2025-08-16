@@ -1,4 +1,4 @@
-# config/routes.rb - Fixed Scanning system routes configuration
+# config/routes.rb - Updated with Form Data endpoints for Package Edit Modal
 Rails.application.routes.draw do
   # Devise authentication (login/logout)
   devise_for :users,
@@ -59,6 +59,16 @@ Rails.application.routes.draw do
       # 📦 PACKAGE MANAGEMENT & SCANNING SYSTEM
       # ==========================================
       
+      # 📋 FORM DATA ENDPOINTS (For Package Creation & Editing)
+      namespace :form_data do
+        get :areas, to: 'form_data#areas'
+        get :agents, to: 'form_data#agents'  
+        get :locations, to: 'form_data#locations'
+        get :package_form_data, to: 'form_data#package_form_data'
+        get :package_states, to: 'form_data#package_states'
+        get :delivery_types, to: 'form_data#delivery_types'
+      end
+
       # Core Package Resources
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
         member do
