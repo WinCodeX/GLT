@@ -1,4 +1,5 @@
-# app/services/package_scanning_service.rb
+
+# app/services/package_scanning_service.rb - FIXED: Enhanced state transitions
 class PackageScanningService
   include ActiveModel::Model
   include ActiveModel::Attributes
@@ -18,9 +19,9 @@ class PackageScanningService
   def execute
     return failure_result('Invalid parameters') unless valid?
     return failure_result('Unauthorized action') unless authorized?
-    return failure_result('Invalid package state') unless valid_state?
+    return failure_result('Invalid package state for this action') unless valid_state_for_action?
 
-    Rails.logger.info "Executing #{action_type} action for package #{package.code} by #{user.name} (#{user.role})"
+    Rails.logger.info "🔄 Executing #{action_type} action for package #{package.code} by #{user.name} (#{user.primary_role})"
 
     ActiveRecord::Base.transaction do
       case action_type
@@ -63,10 +64,22 @@ class PackageScanningService
     end
   end
 
-  def valid_state?
+  # FIXED: Enhanced state validation for better transitions
+  def valid_state_for_action?
     case action_type
     when 'collect'
-      package.state == 'submitted'
+      case user.primary_role
+      when 'agent'
+        package.state == 'submitted' # Agent collects from sender
+      when 'rider'
+        ['submitted', 'in_transit'].include?(package.state) # Rider can collect from agent or for delivery
+      when 'warehouse'
+        ['submitted', 'in_transit'].include?(package.state) # Warehouse receives packages
+      when 'admin'
+        ['submitted', 'in_transit'].include?(package.state)
+      else
+        false
+      end
     when 'deliver'
       package.state == 'in_transit'
     when 'print'
@@ -81,11 +94,14 @@ class PackageScanningService
   end
 
   def user_can_collect?
-    case user.role
+    case user.primary_role
+    when 'agent'
+      # Agent can collect from sender if they operate in origin area
+      user.operates_in_area?(package.origin_area_id)
     when 'rider'
-      # Check if rider operates in the origin area
-      return false unless user.respond_to?(:riders)
-      user.riders.joins(:area).where(area_id: package.origin_area_id).exists?
+      # Rider can collect from agent (origin) or for delivery (destination)
+      user.operates_in_area?(package.origin_area_id) || 
+      user.operates_in_area?(package.destination_area_id)
     when 'warehouse'
       # Warehouse staff can collect packages for processing
       user_has_warehouse_access?
@@ -97,11 +113,10 @@ class PackageScanningService
   end
 
   def user_can_deliver?
-    case user.role
+    case user.primary_role
     when 'rider'
-      # Check if rider operates in the destination area
-      return false unless user.respond_to?(:riders)
-      user.riders.joins(:area).where(area_id: package.destination_area_id).exists?
+      # Rider can deliver in destination area
+      user.operates_in_area?(package.destination_area_id)
     when 'admin'
       true
     else
@@ -110,16 +125,17 @@ class PackageScanningService
   end
 
   def user_can_print?
-    case user.role
+    case user.primary_role
     when 'agent'
-      # Check if agent operates in either origin or destination area
-      return false unless user.respond_to?(:agents)
-      user_area_ids = user.agents.pluck(:area_id)
-      user_area_ids.include?(package.origin_area_id) || 
-      user_area_ids.include?(package.destination_area_id)
+      # Agent can print if they operate in origin or destination area
+      user.operates_in_area?(package.origin_area_id) || 
+      user.operates_in_area?(package.destination_area_id)
     when 'warehouse'
       # Warehouse staff can print packages they have access to
       user_has_warehouse_access?
+    when 'rider'
+      # Rider can print delivery receipts
+      user.operates_in_area?(package.destination_area_id)
     when 'admin'
       true
     else
@@ -128,7 +144,7 @@ class PackageScanningService
   end
 
   def user_can_confirm_receipt?
-    case user.role
+    case user.primary_role
     when 'client'
       package.user_id == user.id
     when 'admin'
@@ -139,7 +155,7 @@ class PackageScanningService
   end
 
   def user_can_process?
-    case user.role
+    case user.primary_role
     when 'warehouse'
       user_has_warehouse_access?
     when 'admin'
@@ -150,7 +166,7 @@ class PackageScanningService
   end
 
   def user_has_warehouse_access?
-    return false unless user.role == 'warehouse'
+    return false unless user.primary_role == 'warehouse'
     return false unless user.respond_to?(:warehouse_staff)
     
     # Check if warehouse staff has access to package locations
@@ -163,37 +179,63 @@ class PackageScanningService
     (user_location_ids & package_location_ids).any?
   end
 
+  # FIXED: Enhanced state transitions based on user role and context
   def perform_collect_action
-    # Update package state
     old_state = package.state
-    package.update!(state: 'in_transit')
     
-    # Create tracking event
-    event_type = user.role == 'warehouse' ? 'collected_by_warehouse' : 'collected_by_rider'
+    case user.primary_role
+    when 'agent'
+      # Agent collecting from sender
+      new_state = 'in_transit'
+      event_type = 'collected_by_agent'
+      message = "Package collected from sender by agent #{user.name}"
+    when 'rider'
+      if package.state == 'submitted'
+        # Rider collecting from agent
+        new_state = 'in_transit'
+        event_type = 'collected_by_rider'
+        message = "Package collected by rider #{user.name} for delivery"
+      else
+        # Rider collecting for delivery from warehouse
+        new_state = 'in_transit'
+        event_type = 'collected_for_delivery'
+        message = "Package collected by rider #{user.name} for delivery"
+      end
+    when 'warehouse'
+      # Warehouse receiving package
+      new_state = 'in_transit'
+      event_type = 'collected_by_warehouse'
+      message = "Package received at warehouse by #{user.name}"
+    else
+      new_state = 'in_transit'
+      event_type = 'collected_by_admin'
+      message = "Package collected by admin #{user.name}"
+    end
+    
+    package.update!(state: new_state)
+    
     create_tracking_event(event_type, {
       collection_time: Time.current,
       collector_name: user.name,
-      collector_role: user.role,
-      origin_area: package.origin_area&.name,
-      collection_location: metadata['location'],
-      previous_state: old_state
+      collector_role: user.primary_role,
+      previous_state: old_state,
+      new_state: new_state,
+      collection_context: determine_collection_context
     })
     
-    # Send notifications
     notify_collection_completed
     
-    success_result("Package collected successfully by #{user.name}", {
-      new_state: 'in_transit',
-      message: "Package #{package.code} collected by #{user.name} (#{user.role})"
+    success_result(message, {
+      new_state: new_state,
+      previous_state: old_state,
+      message: message
     })
   end
 
   def perform_deliver_action
-    # Update package state
     old_state = package.state
     package.update!(state: 'delivered')
     
-    # Create tracking event
     create_tracking_event('delivered_by_rider', {
       delivery_time: Time.current,
       rider_name: user.name,
@@ -203,45 +245,50 @@ class PackageScanningService
       previous_state: old_state
     })
     
-    # Send notifications
     notify_delivery_completed
     
     success_result("Package delivered successfully by #{user.name}", {
       new_state: 'delivered',
+      previous_state: old_state,
       message: "Package #{package.code} delivered by #{user.name}"
     })
   end
 
   def perform_print_action
-    # Log the print action
     print_log = create_print_log
     
-    # Create tracking event
-    event_type = user.role == 'warehouse' ? 'printed_by_warehouse' : 'printed_by_agent'
+    event_type = case user.primary_role
+    when 'warehouse'
+      'printed_by_warehouse'
+    when 'agent'
+      'printed_by_agent'
+    when 'rider'
+      'printed_by_rider'
+    else
+      'printed_by_admin'
+    end
+    
     create_tracking_event(event_type, {
       print_time: Time.current,
       staff_name: user.name,
-      staff_role: user.role,
+      staff_role: user.primary_role,
       print_log_id: print_log&.id,
       print_location: metadata['location']
     })
     
-    # Generate print data
     print_data = generate_print_data
     
     success_result("Package ready for printing by #{user.name}", {
       print_data: print_data,
       print_log_id: print_log&.id,
-      message: "Package #{package.code} label printed by #{user.name} (#{user.role})"
+      message: "Package #{package.code} label printed by #{user.name} (#{user.primary_role})"
     })
   end
 
   def perform_confirm_receipt_action
-    # Update package state
     old_state = package.state
     package.update!(state: 'collected')
     
-    # Create tracking event
     create_tracking_event('confirmed_by_receiver', {
       confirmation_time: Time.current,
       receiver_name: user.name,
@@ -251,20 +298,16 @@ class PackageScanningService
       previous_state: old_state
     })
     
-    # Update delivery metrics
     update_delivery_metrics
     
     success_result("Package receipt confirmed by #{user.name}", {
       new_state: 'collected',
+      previous_state: old_state,
       message: "Package #{package.code} receipt confirmed by #{user.name}"
     })
   end
 
   def perform_process_action
-    # Warehouse processing - could be sorting, weighing, etc.
-    # For now, we'll keep the state the same but log the processing
-    
-    # Create tracking event
     create_tracking_event('processed_by_warehouse', {
       processing_time: Time.current,
       warehouse_staff_name: user.name,
@@ -274,9 +317,22 @@ class PackageScanningService
     })
     
     success_result("Package processed successfully by #{user.name}", {
-      new_state: package.state, # State doesn't change for processing
+      new_state: package.state,
       message: "Package #{package.code} processed by #{user.name} at warehouse"
     })
+  end
+
+  def determine_collection_context
+    case user.primary_role
+    when 'agent'
+      'collection_from_sender'
+    when 'rider'
+      package.state == 'submitted' ? 'collection_from_agent' : 'collection_for_delivery'
+    when 'warehouse'
+      'warehouse_receipt'
+    else
+      'admin_collection'
+    end
   end
 
   def create_print_log
@@ -286,12 +342,13 @@ class PackageScanningService
       package: package,
       user: user,
       printed_at: Time.current,
-      print_context: 'qr_scan',
+      print_context: metadata['bulk_operation'] ? 'bulk_scan' : 'qr_scan',
       metadata: {
         printer_info: metadata['printer_info'],
         location: metadata['location'],
         staff_name: user.name,
-        staff_role: user.role
+        staff_role: user.primary_role,
+        scan_context: 'qr_code'
       }
     )
   rescue => e
@@ -305,7 +362,7 @@ class PackageScanningService
     base_metadata = {
       scan_context: 'qr_code',
       action_type: action_type,
-      user_role: user.role,
+      user_role: user.primary_role,
       timestamp: Time.current.iso8601,
       device_info: metadata['device_info'],
       offline_sync: metadata['offline_sync']
@@ -339,20 +396,20 @@ class PackageScanningService
         origin_area: package.origin_area&.name,
         destination_area: package.destination_area&.name,
         origin_agent: package.origin_agent&.name,
-        destination_agent: package.destination_agent&.name
+        destination_agent: package.destination_agent&.name,
+        delivery_location: package.delivery_location
       },
       print_info: {
         printed_by: user.name,
-        printed_by_role: user.role,
+        printed_by_role: user.primary_role,
         printed_at: Time.current.strftime('%Y-%m-%d %H:%M:%S'),
-        print_station: metadata['print_station'] || metadata['location'] || 'Unknown'
+        print_station: metadata['print_station'] || metadata['location'] || 'Mobile App'
       },
       qr_code_data: package.tracking_url
     }
   end
 
   def notify_collection_completed
-    # Send SMS/email to customer about collection
     if defined?(NotificationService)
       NotificationService.new(package).notify_collection_started
     end
@@ -361,7 +418,6 @@ class PackageScanningService
   end
 
   def notify_delivery_completed
-    # Send SMS/email to customer about delivery
     if defined?(NotificationService)
       NotificationService.new(package).notify_delivery_completed
     end
@@ -370,7 +426,6 @@ class PackageScanningService
   end
 
   def update_delivery_metrics
-    # Update rider performance metrics
     if defined?(RiderMetrics)
       RiderMetrics.update_delivery_stats(user, package)
     end
