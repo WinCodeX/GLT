@@ -9,11 +9,16 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   def avatar_url
-    return unless object.avatar.attached?
+    return nil unless object.avatar.attached?
 
     host = first_available_host
-    return unless host
+    return nil unless host
 
-    rails_blob_url(object.avatar, host: host)
+    begin
+      rails_blob_url(object.avatar, host: host)
+    rescue => e
+      Rails.logger.error "Error generating avatar URL: #{e.message}"
+      nil
+    end
   end
 end
