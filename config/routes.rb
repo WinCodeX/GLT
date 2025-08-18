@@ -562,6 +562,22 @@ Rails.application.routes.draw do
   # ==========================================
   # 🔀 CATCH-ALL AND REDIRECTS
   # ==========================================
+
+
+# ActiveStorage routes (must come before catch-all)
+  # This ensures blobs, variants, and redirects work properly
+  direct :rails_blob do |blob, options|
+    route_for(:rails_service_blob, blob.signed_id, blob.filename, options)
+  end
+
+  # Mount ActiveStorage engine
+  # Rails 7+ already includes the full set of ActiveStorage routes
+  draw(:active_storage) if respond_to?(:draw)
+
+  # Fallback route for frontend (e.g., React/Vue SPA)
+  # Or your explicit not-found handler
+  match "*path", to: "application#route_not_found", via: :all
+
   
   # Redirect root to API ping endpoint (uses existing controller)
   root 'api/v1/status#ping'
