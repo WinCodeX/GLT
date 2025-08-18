@@ -2,7 +2,7 @@
 
 Rails.application.routes.draw do
 
-Devise authentication (login/logout)
+#Devise authentication (login/logout)
 
 devise_for :users,
 path: 'api/v1',
