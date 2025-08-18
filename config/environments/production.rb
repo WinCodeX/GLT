@@ -63,7 +63,7 @@ Rails.application.configure do
   
   # Fallback to memory cache if Redis not available
   config.cache_store = :memory_store, { 
-    size: 128.megabytes,
+    size: 128 * 1024 * 1024,
     expires_in: 1.hour 
   }
 
