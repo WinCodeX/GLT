@@ -1,4 +1,4 @@
-# app/controllers/api/v1/scanning_controller.rb - FIXED: Safe method calls
+# app/controllers/api/v1/scanning_controller.rb - FIXED: Enhanced debug logging
 module Api
   module V1
     class ScanningController < ApplicationController
@@ -64,7 +64,10 @@ module Api
         action_type = params[:action_type]&.strip
         metadata = params[:metadata] || {}
 
+        Rails.logger.info "🚀 Starting scan_action: package=#{package_code}, action=#{action_type}, user=#{current_user.id}"
+
         if package_code.blank? || action_type.blank?
+          Rails.logger.error "❌ Missing required parameters"
           return render json: {
             success: false,
             message: 'Package code and action type are required'
@@ -73,13 +76,17 @@ module Api
 
         begin
           package = Package.find_by!(code: package_code)
+          Rails.logger.info "📦 Package found: #{package.code}, state: #{package.state}"
           
           unless current_user.can_access_package?(package)
+            Rails.logger.error "❌ Access denied to package"
             return render json: {
               success: false,
               message: 'Access denied to this package'
             }, status: :forbidden
           end
+
+          Rails.logger.info "✅ Access granted, creating scanning service"
 
           # FIXED: Use PackageScanningService for consistent state management
           scanning_service = PackageScanningService.new(
@@ -89,7 +96,10 @@ module Api
             metadata: metadata
           )
 
+          Rails.logger.info "🔄 Executing scanning service"
           result = scanning_service.execute
+
+          Rails.logger.info "📊 Scanning service result: success=#{result[:success]}, message=#{result[:message]}"
 
           if result[:success]
             render json: {
@@ -101,10 +111,11 @@ module Api
                 new_state: package.reload.state,
                 action_performed: action_type,
                 timestamp: Time.current.iso8601,
-                print_data: result[:data][:print_data] # Include print data if applicable
+                print_data: result[:data] && result[:data][:print_data] ? result[:data][:print_data] : nil
               }
             }
           else
+            Rails.logger.error "❌ Scanning service failed: #{result[:message]}"
             render json: {
               success: false,
               message: result[:message],
@@ -113,12 +124,14 @@ module Api
           end
 
         rescue ActiveRecord::RecordNotFound
+          Rails.logger.error "❌ Package not found: #{package_code}"
           render json: {
             success: false,
             message: 'Package not found'
           }, status: :not_found
         rescue => e
-          Rails.logger.error "Scanning scan_action error: #{e.message}"
+          Rails.logger.error "❌ Scanning scan_action error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           render json: {
             success: false,
             message: 'Failed to perform scan action',
@@ -166,7 +179,7 @@ module Api
                   success: true,
                   message: result[:message],
                   new_state: package.reload.state,
-                  printed: result[:data][:print_data].present?
+                  printed: result[:data] && result[:data][:print_data].present?
                 }
               else
                 failed_count += 1
@@ -217,6 +230,77 @@ module Api
             success: false,
             message: 'Bulk scanning failed',
             error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # NEW: Debug endpoint to test package and user states
+      def debug_package
+        package_code = params[:package_code]&.strip
+        action_type = params[:action_type]&.strip
+
+        if package_code.blank? || action_type.blank?
+          return render json: {
+            success: false,
+            message: 'Package code and action type are required'
+          }, status: :bad_request
+        end
+
+        begin
+          package = Package.find_by!(code: package_code)
+          
+          debug_info = {
+            package: {
+              code: package.code,
+              state: package.state,
+              origin_area_id: package.origin_area_id,
+              destination_area_id: package.destination_area_id,
+              user_id: package.user_id
+            },
+            user: {
+              id: current_user.id,
+              role: current_user.primary_role,
+              email: current_user.email
+            },
+            action_type: action_type,
+            validations: {
+              can_access_package: current_user.can_access_package?(package),
+              user_operates_in_origin: user_operates_in_area?(current_user, package.origin_area_id),
+              user_operates_in_destination: user_operates_in_area?(current_user, package.destination_area_id),
+              package_owner: package.user_id == current_user.id
+            }
+          }
+
+          # Test the scanning service validation
+          scanning_service = PackageScanningService.new(
+            package: package,
+            user: current_user,
+            action_type: action_type,
+            metadata: {}
+          )
+
+          debug_info[:service_validations] = {
+            valid: scanning_service.valid?,
+            errors: scanning_service.errors.full_messages,
+            authorized: scanning_service.send(:authorized?),
+            valid_state: scanning_service.send(:valid_state_for_action?)
+          }
+
+          render json: {
+            success: true,
+            debug_info: debug_info
+          }
+
+        rescue ActiveRecord::RecordNotFound
+          render json: {
+            success: false,
+            message: 'Package not found'
+          }, status: :not_found
+        rescue => e
+          render json: {
+            success: false,
+            message: e.message,
+            backtrace: Rails.env.development? ? e.backtrace[0..10] : nil
           }, status: :internal_server_error
         end
       end
