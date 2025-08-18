@@ -1,4 +1,4 @@
-# app/controllers/api/v1/me_controller.rb - FIXED: Proper avatar handling
+# app/controllers/api/v1/me_controller.rb - FIXED: Avatar-only updates without touching other fields
 module Api
   module V1
     class MeController < ApplicationController
@@ -39,73 +39,63 @@ module Api
         begin
           Rails.logger.info "🖼️ Starting avatar upload for user #{current_user.id}"
           
-          # Remove existing avatar if present
+          # Remove existing avatar if present (this doesn't affect user model)
           if current_user.avatar.attached?
             Rails.logger.info "🗑️ Removing existing avatar"
             current_user.avatar.purge
           end
 
-          # Attach new avatar
+          # Attach new avatar (ActiveStorage handles persistence automatically)
           Rails.logger.info "📎 Attaching new avatar"
           current_user.avatar.attach(avatar_file)
-
-          # Ensure the user record is saved after attachment
-          if current_user.save!
-            Rails.logger.info "✅ User saved successfully after avatar attachment"
+          
+          # ActiveStorage attachments are automatically persisted
+          # No need to call user.save! which could trigger other field validations
+          
+          # Wait a brief moment for attachment to be processed
+          sleep(0.1)
+          
+          # Verify attachment was successful
+          if current_user.avatar.attached?
+            Rails.logger.info "✅ Avatar attached successfully"
             
-            # Wait a moment for ActiveStorage to process
-            sleep(0.1)
-            
-            # Reload user to get fresh avatar data
-            current_user.reload
-            
-            if current_user.avatar.attached?
-              Rails.logger.info "✅ Avatar attached successfully"
-              
-              # Generate avatar URL safely
-              avatar_url = nil
-              begin
-                avatar_url = generate_avatar_url(current_user)
-                Rails.logger.info "🔗 Avatar URL generated: #{avatar_url}"
-              rescue => url_error
-                Rails.logger.warn "⚠️ Could not generate avatar URL immediately: #{url_error.message}"
-                # URL generation can fail immediately after upload, that's OK
-              end
-              
-              render json: {
-                success: true,
-                message: 'Avatar updated successfully',
-                avatar_url: avatar_url,
-                user: UserSerializer.new(current_user.reload).serializable_hash[:data][:attributes]
-              }, status: :ok
-            else
-              Rails.logger.error "❌ Avatar attachment verification failed"
-              render json: { 
-                success: false,
-                error: 'Avatar failed to attach properly' 
-              }, status: :unprocessable_entity
+            # Generate avatar URL safely
+            avatar_url = nil
+            begin
+              avatar_url = generate_avatar_url(current_user)
+              Rails.logger.info "🔗 Avatar URL generated: #{avatar_url}"
+            rescue => url_error
+              Rails.logger.warn "⚠️ Could not generate avatar URL immediately: #{url_error.message}"
+              # URL generation can fail immediately after upload, that's OK
             end
+            
+            # Return fresh user data without triggering full model save/validation
+            render json: {
+              success: true,
+              message: 'Avatar updated successfully',
+              avatar_url: avatar_url,
+              user: UserSerializer.new(current_user).serializable_hash[:data][:attributes]
+            }, status: :ok
           else
-            Rails.logger.error "❌ Failed to save user after avatar attachment"
+            Rails.logger.error "❌ Avatar attachment verification failed"
             render json: { 
               success: false,
-              error: 'Failed to save avatar changes' 
+              error: 'Avatar failed to attach properly' 
             }, status: :unprocessable_entity
           end
 
-        rescue ActiveRecord::RecordInvalid => e
-          Rails.logger.error "❌ Avatar upload validation error: #{e.message}"
-          render json: { 
-            success: false,
-            error: 'Validation failed',
-            details: e.record.errors.full_messages
-          }, status: :unprocessable_entity
-          
         rescue ActiveStorage::FileNotFoundError => e
           Rails.logger.error "❌ Avatar file not found: #{e.message}"
           render json: { 
             success: false,
             error: 'Avatar file could not be processed' 
+          }, status: :unprocessable_entity
+          
+        rescue ActiveStorage::IntegrityError => e
+          Rails.logger.error "❌ Avatar file integrity error: #{e.message}"
+          render json: { 
+            success: false,
+            error: 'Avatar file appears to be corrupted' 
           }, status: :unprocessable_entity
           
         rescue => e
@@ -125,8 +115,9 @@ module Api
           if current_user.avatar.attached?
             Rails.logger.info "🗑️ Removing avatar for user #{current_user.id}"
             
+            # Purge avatar (ActiveStorage handles this automatically)
             current_user.avatar.purge
-            current_user.save!
+            # No need to call user.save! since attachment deletion is automatic
             
             render json: {
               success: true,
@@ -161,9 +152,13 @@ module Api
       def generate_avatar_url(user)
         return nil unless user.avatar.attached?
 
-        # Ensure the attachment has been processed
-        unless user.avatar.blob.persisted?
-          Rails.logger.warn "⚠️ Avatar blob not yet persisted, cannot generate URL"
+        # Check if attachment exists and is accessible
+        begin
+          # Try to access the blob to ensure it's properly attached
+          blob = user.avatar.blob
+          return nil unless blob
+        rescue => e
+          Rails.logger.warn "⚠️ Avatar blob not accessible: #{e.message}"
           return nil
         end
 
@@ -171,7 +166,7 @@ module Api
         return nil unless host
 
         begin
-          # Use polymorphic_url for more reliable URL generation
+          # Use rails_blob_url for reliable URL generation
           rails_blob_url(user.avatar, host: host, protocol: host.include?('https') ? 'https' : 'http')
         rescue => e
           Rails.logger.error "❌ Error generating avatar URL: #{e.message}"
