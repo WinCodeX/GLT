@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: Removed undefined method calls
+# app/controllers/api/v1/packages_controller.rb - FIXED: Area ID assignment from agent IDs
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -92,18 +92,28 @@ module Api
         end
 
         begin
+          # Build package with permitted parameters
           package = current_user.packages.build(package_params)
+          
+          # FIXED: Set area IDs from agent IDs before validation
+          set_area_ids_from_agents(package)
+          
+          # Set initial state and generate metadata
           package.state = 'pending_unpaid'
-          package.code = generate_package_code(package)
+          package.code = generate_package_code(package) if package.code.blank?
           package.cost = calculate_package_cost(package)
 
+          Rails.logger.info "🆕 Creating package with params: origin_area_id=#{package.origin_area_id}, destination_area_id=#{package.destination_area_id}, origin_agent_id=#{package.origin_agent_id}"
+
           if package.save
+            Rails.logger.info "✅ Package created successfully: #{package.code}"
             render json: {
               success: true,
               data: serialize_package_complete(package),
               message: 'Package created successfully'
             }, status: :created
           else
+            Rails.logger.error "❌ Package creation failed: #{package.errors.full_messages}"
             render json: { 
               success: false,
               errors: package.errors.full_messages,
@@ -136,6 +146,11 @@ module Api
 
           filtered_params = package_update_params
           Rails.logger.info "🔄 Filtered update params: #{filtered_params}"
+
+          # FIXED: Set area IDs from agent IDs if agents are being updated
+          if filtered_params[:origin_agent_id].present? || filtered_params[:destination_agent_id].present?
+            set_area_ids_from_agents(@package, filtered_params)
+          end
 
           # FIXED: Validate state transitions if state is being changed
           if filtered_params[:state] && filtered_params[:state] != @package.state
@@ -349,6 +364,35 @@ module Api
       end
 
       private
+
+      # FIXED: New method to set area IDs from agent IDs
+      def set_area_ids_from_agents(package, params_override = nil)
+        params_to_use = params_override || package.attributes.symbolize_keys
+
+        # Set origin_area_id from origin_agent_id
+        if params_to_use[:origin_agent_id].present?
+          begin
+            origin_agent = Agent.find(params_to_use[:origin_agent_id])
+            package.origin_area_id = origin_agent.area_id
+            Rails.logger.info "📍 Set origin_area_id=#{package.origin_area_id} from origin_agent_id=#{params_to_use[:origin_agent_id]}"
+          rescue ActiveRecord::RecordNotFound
+            Rails.logger.error "❌ Origin agent not found: #{params_to_use[:origin_agent_id]}"
+            # Don't fail here, let validation handle it
+          end
+        end
+
+        # Set destination_area_id from destination_agent_id if provided and destination_area_id not already set
+        if params_to_use[:destination_agent_id].present? && package.destination_area_id.blank?
+          begin
+            destination_agent = Agent.find(params_to_use[:destination_agent_id])
+            package.destination_area_id = destination_agent.area_id
+            Rails.logger.info "📍 Set destination_area_id=#{package.destination_area_id} from destination_agent_id=#{params_to_use[:destination_agent_id]}"
+          rescue ActiveRecord::RecordNotFound
+            Rails.logger.error "❌ Destination agent not found: #{params_to_use[:destination_agent_id]}"
+            # Don't fail here, let validation handle it
+          end
+        end
+      end
 
       def force_json_format
         request.format = :json
@@ -770,7 +814,8 @@ module Api
 
       def package_update_params
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                      :destination_area_id, :destination_agent_id, :delivery_type, :state]
+                      :destination_area_id, :destination_agent_id, :delivery_type, :state,
+                      :origin_agent_id] # FIXED: Added origin_agent_id to update params
         
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
