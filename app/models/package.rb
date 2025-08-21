@@ -1,4 +1,4 @@
-# app/models/package.rb
+# app/models/package.rb - Enhanced with thermal QR support
 class Package < ApplicationRecord
   belongs_to :user
   belongs_to :origin_area, class_name: 'Area', optional: true
@@ -33,7 +33,7 @@ class Package < ApplicationRecord
 
   # Callbacks
   before_create :generate_package_code_and_sequence
-  after_create :generate_qr_code_file
+  after_create :generate_qr_code_files
   before_save :update_fragile_metadata, if: :fragile?
 
   # Scopes
@@ -150,31 +150,220 @@ class Package < ApplicationRecord
     end
   end
 
-  # QR Code methods
-  def generate_qr_code(options = {})
+  # ==========================================
+  # 🎨 ENHANCED QR CODE METHODS - DUAL SUPPORT
+  # ==========================================
+
+  # Generate organic QR code (original beautiful version for mobile/web)
+  def generate_organic_qr_code(options = {})
+    Rails.logger.info "🎨 [PACKAGE-QR] Generating organic QR for package: #{code}"
+    
     # Add fragile indicator to QR code options
     enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
     QrCodeGenerator.new(self, enhanced_options).generate
   end
 
-  def qr_code_base64(options = {})
+  def organic_qr_code_base64(options = {})
     enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
     QrCodeGenerator.new(self, enhanced_options).generate_base64
   end
 
-  def qr_code_path(options = {})
+  def organic_qr_code_path(options = {})
     enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
     QrCodeGenerator.new(self, enhanced_options).generate_and_save
   end
 
-  def tracking_url
-    Rails.application.routes.url_helpers.package_tracking_url(self.code)
-  rescue
-    # Fallback if route helpers aren't available
-    "#{Rails.application.config.force_ssl ? 'https' : 'http'}://#{Rails.application.config.host}/track/#{code}"
+  # Generate thermal QR code (new thermal-optimized version for printing)
+  def generate_thermal_qr_code(options = {})
+    Rails.logger.info "🖨️ [PACKAGE-THERMAL-QR] Generating thermal QR for package: #{code}"
+    
+    # Add fragile indicator to thermal QR options
+    enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
+    ThermalQrGenerator.new(self, enhanced_options).generate_thermal_qr
   end
 
-  # Enhanced JSON serialization
+  def thermal_qr_code_base64(options = {})
+    enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
+    ThermalQrGenerator.new(self, enhanced_options).generate_thermal_base64
+  end
+
+  def thermal_qr_response(options = {})
+    enhanced_options = fragile? ? options.merge(fragile_indicator: true) : options
+    ThermalQrGenerator.new(self, enhanced_options).generate_thermal_response
+  end
+
+  # Universal QR code methods (backwards compatible)
+  def generate_qr_code(options = {})
+    qr_type = options.delete(:qr_type) || :organic
+    
+    case qr_type.to_sym
+    when :thermal
+      generate_thermal_qr_code(options)
+    when :organic, :standard
+      generate_organic_qr_code(options)
+    else
+      generate_organic_qr_code(options) # Default to organic
+    end
+  end
+
+  def qr_code_base64(options = {})
+    qr_type = options.delete(:qr_type) || :organic
+    
+    case qr_type.to_sym
+    when :thermal
+      thermal_qr_code_base64(options)
+    when :organic, :standard
+      organic_qr_code_base64(options)
+    else
+      organic_qr_code_base64(options) # Default to organic
+    end
+  end
+
+  def qr_code_path(options = {})
+    qr_type = options.delete(:qr_type) || :organic
+    
+    case qr_type.to_sym
+    when :thermal
+      # Thermal QR files are typically temporary/generated on demand
+      Rails.logger.warn "🖨️ [PACKAGE-QR] Thermal QR path generation - using base64 instead"
+      thermal_qr_code_base64(options)
+    when :organic, :standard
+      organic_qr_code_path(options)
+    else
+      organic_qr_code_path(options) # Default to organic
+    end
+  end
+
+  # QR comparison for testing and debugging
+  def qr_code_comparison(include_images: false)
+    Rails.logger.info "🔍 [PACKAGE-QR] Generating QR comparison for package: #{code}"
+    
+    begin
+      # Generate both types
+      organic_qr_generator = QrCodeGenerator.new(self, organic_qr_options)
+      thermal_qr_generator = ThermalQrGenerator.new(self, thermal_qr_options)
+      
+      comparison = {
+        package_code: code,
+        route_description: route_description,
+        is_fragile: fragile?,
+        
+        organic_qr: {
+          qr_type: 'organic',
+          generator_class: 'QrCodeGenerator',
+          features: ['gradients', 'anti_aliasing', 'center_logo', 'colors', 'organic_shapes'],
+          target_use: 'Mobile app display, web tracking, visual appeal',
+          qr_data: organic_qr_generator.send(:generate_qr_data)
+        },
+        
+        thermal_qr: thermal_qr_generator.generate_thermal_response[:data].merge({
+          generator_class: 'ThermalQrGenerator',
+          features: ['monochrome', 'organic_shapes', 'thermal_optimized', 'no_gradients', 'pure_black_white'],
+          target_use: 'Receipt printing, thermal printers, monochrome output'
+        }),
+        
+        comparison_metadata: {
+          same_tracking_data: organic_qr_generator.send(:generate_qr_data) == 
+                             thermal_qr_generator.send(:generate_qr_data),
+          fragile_enhanced: fragile?,
+          route_type: intra_area_shipment? ? 'intra_area' : 'inter_area',
+          generated_at: Time.current.iso8601
+        }
+      }
+      
+      # Include actual images if requested
+      if include_images
+        comparison[:organic_qr][:qr_code_base64] = organic_qr_generator.generate_base64
+        comparison[:thermal_qr][:thermal_qr_base64] = thermal_qr_generator.generate_thermal_base64
+      end
+      
+      comparison
+      
+    rescue => e
+      Rails.logger.error "❌ [PACKAGE-QR] QR comparison failed: #{e.message}"
+      {
+        package_code: code,
+        error: "QR comparison failed: #{e.message}",
+        fallback_data: {
+          tracking_url: tracking_url,
+          package_state: state,
+          route_description: route_description
+        }
+      }
+    end
+  end
+
+  def tracking_url
+    begin
+      Rails.application.routes.url_helpers.package_tracking_url(self.code)
+    rescue
+      # Fallback if route helpers aren't available
+      base_url = Rails.env.production? ? 
+                 (ENV['APP_URL'] || "https://#{Rails.application.config.host}") :
+                 "http://localhost:3000"
+      "#{base_url}/track/#{code}"
+    end
+  end
+
+  # ==========================================
+  # 🔧 QR GENERATION OPTIONS
+  # ==========================================
+
+  def organic_qr_options
+    base_options = {
+      data_type: :url,
+      module_size: 8,
+      border_size: 20,
+      corner_radius: 5,
+      qr_size: 6,
+      center_logo: true,
+      gradient: true,
+      gradient_start: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
+      gradient_end: ChunkyPNG::Color.rgb(59, 130, 246)    # Blue
+    }
+    
+    # Enhance for fragile packages
+    if fragile?
+      base_options.merge({
+        fragile_indicator: true,
+        priority_styling: true,
+        center_logo: true,
+        logo_size: 35, # Slightly larger for visibility
+        corner_radius: 6 # More prominent rounding for fragile
+      })
+    else
+      base_options
+    end
+  end
+
+  def thermal_qr_options
+    base_options = {
+      data_type: :url,
+      module_size: 6,
+      border_size: 12,
+      corner_radius: 3,
+      qr_size: 5,
+      center_logo: false, # Usually disabled for thermal clarity
+      pure_monochrome: true,
+      anti_aliasing: false,
+      thermal_optimized: true
+    }
+    
+    # Enhance for fragile packages
+    if fragile?
+      base_options.merge({
+        fragile_indicator: true,
+        priority_handling: true,
+        module_size: 7, # Slightly larger for fragile visibility
+        border_size: 14,
+        corner_radius: 4 # More organic rounding even for thermal
+      })
+    else
+      base_options
+    end
+  end
+
+  # Enhanced JSON serialization with QR options
   def as_json(options = {})
     result = super(options).except('route_sequence') # Hide internal sequence from API
     
@@ -198,10 +387,34 @@ class Package < ApplicationRecord
       )
     end
     
-    # Optionally include QR code
+    # Enhanced QR code inclusion with type support
     if options[:include_qr_code]
+      qr_type = options[:qr_type] || :organic
       qr_options = options[:qr_options] || {}
-      result['qr_code_base64'] = qr_code_base64(qr_options)
+      
+      case qr_type.to_sym
+      when :thermal
+        thermal_response = thermal_qr_response(qr_options)
+        if thermal_response[:success]
+          result.merge!(thermal_response[:data])
+        else
+          result['qr_error'] = thermal_response[:error]
+        end
+      when :organic, :standard
+        result['qr_code_base64'] = organic_qr_code_base64(qr_options)
+        result['qr_type'] = 'organic'
+      when :both
+        # Include both QR types
+        result['organic_qr_code_base64'] = organic_qr_code_base64(qr_options)
+        thermal_response = thermal_qr_response(qr_options)
+        if thermal_response[:success]
+          result['thermal_qr_data'] = thermal_response[:data]
+        end
+        result['qr_types_available'] = ['organic', 'thermal']
+      else
+        result['qr_code_base64'] = organic_qr_code_base64(qr_options)
+        result['qr_type'] = 'organic'
+      end
     end
     
     # Include status information
@@ -428,16 +641,23 @@ class Package < ApplicationRecord
     self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
   end
 
-  def generate_qr_code_file
-    # Generate and save QR code file asynchronously (optional)
-    # Pass fragile context to job
-    if defined?(GenerateQrCodeJob)
-      job_options = fragile? ? { priority: 'high', fragile: true } : {}
-      GenerateQrCodeJob.perform_later(self, job_options)
+  def generate_qr_code_files
+    # Generate both QR code types asynchronously (optional)
+    # Pass fragile context to jobs
+    job_options = fragile? ? { priority: 'high', fragile: true } : {}
+    
+    begin
+      if defined?(GenerateQrCodeJob)
+        # Generate organic QR
+        GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
+        
+        # Generate thermal QR
+        GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal')) if defined?(GenerateThermalQrCodeJob)
+      end
+    rescue => e
+      # Log error but don't fail package creation
+      Rails.logger.error "Failed to generate QR codes for package #{id}: #{e.message}"
     end
-  rescue => e
-    # Log error but don't fail package creation
-    Rails.logger.error "Failed to generate QR code for package #{id}: #{e.message}"
   end
 
   def calculate_default_cost
