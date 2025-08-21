@@ -1,4 +1,4 @@
-# config/routes.rb - Complete version with Active Storage fixes and all routes preserved
+# config/routes.rb - Enhanced with thermal QR support
 Rails.application.routes.draw do
   # ==========================================
   # 🔐 AUTHENTICATION (Devise) - Must be first
@@ -87,12 +87,17 @@ Rails.application.routes.draw do
         get :delivery_types, to: 'form_data#delivery_types'
       end
 
-      # Core Package Resources
+      # Core Package Resources - ENHANCED WITH QR ENDPOINTS
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
         member do
           # 📋 Package Information & Validation
           get :validate          # Validate package by code
-          get :qr_code          # Generate QR code
+          
+          # 🎨 QR CODE GENERATION ENDPOINTS - ENHANCED
+          get :qr_code          # Generate QR code (supports ?type=organic|thermal)
+          get :thermal_qr_code  # 🖨️ NEW: Generate thermal-optimized QR code
+          get :qr_comparison    # 🔍 NEW: Compare organic vs thermal QR codes
+          
           get :tracking_page    # Full tracking information
           get :scan_info        # Package info for scanning (basic details + actions)
           
@@ -122,7 +127,32 @@ Rails.application.routes.draw do
           # 📱 Bulk Operations
           post :bulk_create    # Create multiple packages
           patch :bulk_update   # Update multiple packages
+          
+          # 🎨 QR CODE COLLECTION ENDPOINTS - NEW
+          get :qr_codes_batch  # 🆕 Generate QR codes for multiple packages
+          get :thermal_qr_batch # 🆕 Generate thermal QR codes for multiple packages
         end
+      end
+
+      # ==========================================
+      # 🎨 DEDICATED QR CODE ENDPOINTS - NEW SECTION
+      # ==========================================
+      
+      scope :qr_codes do
+        # Single package QR generation
+        get 'package/:package_code/organic', to: 'packages#qr_code', defaults: { type: 'organic' }
+        get 'package/:package_code/thermal', to: 'packages#thermal_qr_code'
+        get 'package/:package_code/compare', to: 'packages#qr_comparison'
+        
+        # Batch QR generation
+        post :batch_organic, to: 'packages#batch_organic_qr'
+        post :batch_thermal, to: 'packages#batch_thermal_qr'
+        post :batch_compare, to: 'packages#batch_qr_comparison'
+        
+        # QR testing and debugging
+        post :test_generation, to: 'qr_codes#test_generation'
+        get :generation_stats, to: 'qr_codes#generation_statistics'
+        get :thermal_capabilities, to: 'qr_codes#thermal_capabilities'
       end
 
       # ==========================================
@@ -158,26 +188,37 @@ Rails.application.routes.draw do
       get 'packages/search', to: 'packages#search'
 
       # ==========================================
-      # 🖨️ PRINTING SYSTEM
+      # 🖨️ PRINTING SYSTEM - ENHANCED WITH THERMAL QR
       # ==========================================
       
       scope :printing do
-        # 📄 Label Generation
+        # 📄 Label Generation - ENHANCED
         post 'package/:package_code/label', to: 'printing#generate_label'
         post 'package/:package_code/print', to: 'printing#print_label'
+        post 'package/:package_code/thermal_label', to: 'printing#generate_thermal_label'  # 🖨️ NEW
+        post 'package/:package_code/thermal_print', to: 'printing#print_thermal_label'    # 🖨️ NEW
         
         # 📊 Print Management
         get 'package/:package_code/print_history', to: 'printing#print_history'
         get :print_queue, to: 'printing#print_queue'
         get :printer_status, to: 'printing#printer_status'
+        get :thermal_printer_status, to: 'printing#thermal_printer_status'  # 🖨️ NEW
         
         # ⚙️ Print Configuration
         get :print_settings, to: 'printing#print_settings'
         patch :update_settings, to: 'printing#update_print_settings'
+        get :thermal_settings, to: 'printing#thermal_print_settings'        # 🖨️ NEW
+        patch :update_thermal_settings, to: 'printing#update_thermal_settings' # 🖨️ NEW
         
-        # 📱 Bulk Printing
+        # 📱 Bulk Printing - ENHANCED
         post :bulk_print, to: 'printing#bulk_print'
+        post :bulk_thermal_print, to: 'printing#bulk_thermal_print'          # 🖨️ NEW
         get :bulk_print_status, to: 'printing#bulk_print_status'
+        
+        # 🔧 Thermal Printer Testing - NEW
+        post :test_thermal_qr, to: 'printing#test_thermal_qr_printing'
+        get :thermal_capabilities, to: 'printing#thermal_printer_capabilities'
+        post :validate_thermal_printer, to: 'printing#validate_thermal_printer'
       end
 
       # ==========================================
@@ -378,6 +419,11 @@ Rails.application.routes.draw do
         # 📈 Trend Analysis
         get :trends, to: 'analytics#trend_analysis'
         get :forecasting, to: 'analytics#delivery_forecasting'
+        
+        # 🎨 QR Code Analytics - NEW
+        get :qr_generation_stats, to: 'analytics#qr_generation_statistics'
+        get :thermal_qr_usage, to: 'analytics#thermal_qr_usage_analytics'
+        get :print_qr_comparison, to: 'analytics#print_vs_digital_qr_analytics'
       end
 
       # ==========================================
@@ -385,9 +431,11 @@ Rails.application.routes.draw do
       # ==========================================
       
       scope :settings do
-        # 🖨️ Print Settings
+        # 🖨️ Print Settings - ENHANCED
         get :print_configuration, to: 'settings#print_configuration'
         patch :update_print_config, to: 'settings#update_print_configuration'
+        get :thermal_print_configuration, to: 'settings#thermal_print_configuration'  # 🖨️ NEW
+        patch :update_thermal_config, to: 'settings#update_thermal_print_configuration' # 🖨️ NEW
         
         # 📱 Scanning Settings
         get :scan_configuration, to: 'settings#scan_configuration'
@@ -408,6 +456,12 @@ Rails.application.routes.draw do
         # 👥 Role Management Settings
         get :role_permissions, to: 'settings#role_permissions'
         patch :update_role_permissions, to: 'settings#update_role_permissions'
+        
+        # 🎨 QR Code Settings - NEW
+        get :qr_settings, to: 'settings#qr_code_settings'
+        patch :update_qr_settings, to: 'settings#update_qr_code_settings'
+        get :thermal_qr_settings, to: 'settings#thermal_qr_settings'
+        patch :update_thermal_qr_settings, to: 'settings#update_thermal_qr_settings'
       end
 
       # ==========================================
@@ -418,6 +472,7 @@ Rails.application.routes.draw do
         # 🏥 Health Checks
         get :health, to: 'system#health_check'
         get :printer_health, to: 'system#printer_health'
+        get :thermal_printer_health, to: 'system#thermal_printer_health'  # 🖨️ NEW
         get :database_health, to: 'system#database_health'
         
         # 📊 System Stats
@@ -427,11 +482,13 @@ Rails.application.routes.draw do
         # 🔄 Background Jobs
         get :job_status, to: 'system#background_job_status'
         get :sync_queue, to: 'system#sync_queue_status'
+        get :qr_generation_queue, to: 'system#qr_generation_queue_status'  # 🎨 NEW
         
         # 📝 System Logs
         get :logs, to: 'system#recent_logs'
         get :error_logs, to: 'system#error_logs'
         get :scan_logs, to: 'system#scanning_logs'
+        get :qr_generation_logs, to: 'system#qr_generation_logs'  # 🎨 NEW
       end
 
       # ==========================================
@@ -450,6 +507,7 @@ Rails.application.routes.draw do
         get :packages, to: 'packages#agent_packages'
         get :print_queue, to: 'printing#agent_print_queue'
         post :print_labels, to: 'scanning#bulk_scan' # Alias for bulk printing
+        post :print_thermal_labels, to: 'printing#bulk_thermal_print'  # 🖨️ NEW
         get :performance, to: 'analytics#agent_performance'
       end
 
@@ -469,6 +527,7 @@ Rails.application.routes.draw do
         post :process_packages, to: 'scanning#bulk_scan' # Alias for bulk processing
         get :inventory, to: 'packages#warehouse_inventory'
         get :performance, to: 'analytics#warehouse_performance'
+        post :print_thermal_batch, to: 'printing#warehouse_thermal_batch'  # 🖨️ NEW
       end
 
       # Admin-specific endpoints
@@ -478,6 +537,7 @@ Rails.application.routes.draw do
         get :user_management, to: 'users#admin_index'
         post :bulk_actions, to: 'scanning#admin_bulk_actions'
         get :audit_logs, to: 'system#audit_logs'
+        get :qr_generation_overview, to: 'analytics#qr_generation_overview'  # 🎨 NEW
       end
 
       # ==========================================
@@ -494,12 +554,14 @@ Rails.application.routes.draw do
   # 🌐 PUBLIC ENDPOINTS (No Authentication Required)
   # ==========================================
   
-  # Public package tracking
+  # Public package tracking - ENHANCED WITH QR SUPPORT
   scope :public do
     get 'track/:code', to: 'public/tracking#show', as: :public_package_tracking
     get 'track/:code/status', to: 'public/tracking#status'
     get 'track/:code/timeline', to: 'public/tracking#timeline'
     get 'track/:code/qr', to: 'public/tracking#qr_code'
+    get 'track/:code/qr/organic', to: 'public/tracking#organic_qr_code'     # 🎨 NEW
+    get 'track/:code/qr/thermal', to: 'public/tracking#thermal_qr_code'     # 🖨️ NEW
   end
 
   # Legacy public tracking (maintain compatibility)
@@ -518,13 +580,19 @@ Rails.application.routes.draw do
     post 'tracking/update', to: 'webhooks#tracking_update'
     post 'delivery/notification', to: 'webhooks#delivery_notification'
     
-    # Printer status webhooks
+    # Printer status webhooks - ENHANCED
     post 'printer/status', to: 'webhooks#printer_status_update'
     post 'printer/error', to: 'webhooks#printer_error'
+    post 'thermal_printer/status', to: 'webhooks#thermal_printer_status_update'  # 🖨️ NEW
+    post 'thermal_printer/error', to: 'webhooks#thermal_printer_error'           # 🖨️ NEW
     
     # Scanning system webhooks
     post 'scan/completed', to: 'webhooks#scan_completed'
     post 'bulk_scan/completed', to: 'webhooks#bulk_scan_completed'
+    
+    # QR Generation webhooks - NEW
+    post 'qr_generation/completed', to: 'webhooks#qr_generation_completed'
+    post 'thermal_qr/generated', to: 'webhooks#thermal_qr_generated'
   end
 
   # ==========================================
@@ -540,6 +608,7 @@ Rails.application.routes.draw do
       # 📱 Quick actions for mobile
       post 'quick_scan', to: 'mobile#quick_scan'
       post 'quick_print', to: 'mobile#quick_print'
+      post 'quick_thermal_print', to: 'mobile#quick_thermal_print'  # 🖨️ NEW
       
       # 🔄 Mobile sync
       post 'sync', to: 'mobile#sync_data'
@@ -552,6 +621,11 @@ Rails.application.routes.draw do
       # 📱 Role-specific mobile endpoints
       get 'role_dashboard', to: 'mobile#role_based_dashboard'
       get 'quick_actions', to: 'mobile#role_quick_actions'
+      
+      # 🎨 Mobile QR endpoints - NEW
+      get 'qr_codes/recent', to: 'mobile#recent_qr_codes'
+      post 'qr_codes/generate', to: 'mobile#generate_mobile_qr'
+      get 'thermal_print/status', to: 'mobile#thermal_print_status'
     end
   end
 
@@ -567,6 +641,8 @@ Rails.application.routes.draw do
   get "health/redis" => "health#redis", as: :redis_health_check if defined?(Redis)
   get "health/jobs" => "health#background_jobs", as: :jobs_health_check
   get "health/scanning" => "health#scanning_system", as: :scanning_health_check
+  get "health/qr_generation" => "health#qr_generation_system", as: :qr_generation_health_check  # 🎨 NEW
+  get "health/thermal_printing" => "health#thermal_printing_system", as: :thermal_printing_health_check  # 🖨️ NEW
   
   # ==========================================
   # 📱 PROGRESSIVE WEB APP SUPPORT
@@ -587,6 +663,7 @@ Rails.application.routes.draw do
   # API documentation (if you have one)
   get '/docs', to: 'documentation#index'
   get '/api/docs', to: 'documentation#api_docs'
+  get '/docs/qr_codes', to: 'documentation#qr_code_docs'  # 🎨 NEW
   
   # ==========================================
   # 🚫 CATCH-ALL (FIXED - Excludes Active Storage paths)
