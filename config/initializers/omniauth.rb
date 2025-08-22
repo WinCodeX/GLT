@@ -19,11 +19,8 @@ OmniAuth.config.logger = Rails.logger
 # 🔧 SECURITY CONFIGURATION  
 # ===========================================
 
-# CSRF Protection - Disable for API mode
+# CSRF Protection - Disable for API mode since we handle auth differently
 OmniAuth.config.request_validation_phase = nil
-
-# Path prefix for OmniAuth routes
-OmniAuth.config.path_prefix = '/api/v1/auth'
 
 # ===========================================
 # 🚫 FAILURE HANDLING
@@ -52,87 +49,7 @@ OmniAuth.config.on_failure = Proc.new do |env|
 end
 
 # ===========================================
-# 🔑 GOOGLE OAUTH PROVIDER CONFIGURATION
-# ===========================================
-
-Rails.application.config.middleware.use OmniAuth::Builder do
-  provider :google_oauth2,
-           ENV['GOOGLE_CLIENT_ID'] || Rails.application.credentials.dig(:google_oauth, :client_id),
-           ENV['GOOGLE_CLIENT_SECRET'] || Rails.application.credentials.dig(:google_oauth, :client_secret),
-           {
-             # ===========================================
-             # 🎯 BASIC CONFIGURATION
-             # ===========================================
-             name: 'google_oauth2',
-             scope: 'email,profile',
-             prompt: 'select_account',
-             
-             # ===========================================
-             # 🔒 SECURITY CONFIGURATION
-             # ===========================================
-             provider_ignores_state: false,
-             
-             # ===========================================
-             # 📱 API-SPECIFIC CONFIGURATION
-             # ===========================================
-             # Callback path for API
-             callback_path: '/api/v1/auth/google_oauth2/callback',
-             
-             # Authorization parameters
-             authorize_params: {
-               access_type: 'offline',
-               approval_prompt: '',
-               prompt: 'select_account'
-             },
-             
-             # ===========================================
-             # 🎨 UI CONFIGURATION
-             # ===========================================
-             image_aspect_ratio: 'square',
-             image_size: 150,
-             
-             # ===========================================
-             # 🔧 ADVANCED CONFIGURATION
-             # ===========================================
-             # Skip session requirement for API mode
-             client_options: {
-               ssl: { verify: Rails.env.production? }
-             },
-             
-             # ===========================================
-             # 🌐 ENVIRONMENT-SPECIFIC SETTINGS
-             # ===========================================
-             setup: lambda do |env|
-               request = Rack::Request.new(env)
-               
-               # Set redirect URI based on environment
-               if Rails.env.development?
-                 env['omniauth.strategy'].options[:redirect_uri] = 'http://localhost:3000/api/v1/auth/google_oauth2/callback'
-               elsif Rails.env.production?
-                 env['omniauth.strategy'].options[:redirect_uri] = "#{ENV['BASE_URL']}/api/v1/auth/google_oauth2/callback"
-               end
-               
-               Rails.logger.debug "🔐 OAuth setup for #{request.path} with redirect: #{env['omniauth.strategy'].options[:redirect_uri]}"
-             end
-           }
-end
-
-# ===========================================
-# 🔧 ADDITIONAL CONFIGURATIONS
-# ===========================================
-
-# Ensure OmniAuth works with ActionController::API
-module OmniAuth
-  module Strategy
-    def session
-      # Provide a fallback if session is not available
-      request.env['rack.session'] || {}
-    end
-  end
-end
-
-# ===========================================
-# 🧪 DEVELOPMENT/TEST HELPERS
+# 🔧 DEVELOPMENT/TEST HELPERS
 # ===========================================
 
 if Rails.env.development? || Rails.env.test?
@@ -156,7 +73,7 @@ end
 # Log OmniAuth events for debugging
 Rails.application.config.after_initialize do
   if defined?(OmniAuth)
-    Rails.logger.info "✅ OmniAuth initialized with providers: #{OmniAuth.strategies.map(&:name).join(', ')}"
+    Rails.logger.info "✅ OmniAuth initialized"
     Rails.logger.info "🔑 Google OAuth Client ID: #{ENV['GOOGLE_CLIENT_ID']&.first(10)}..." if ENV['GOOGLE_CLIENT_ID']
   end
 end
