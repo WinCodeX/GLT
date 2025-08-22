@@ -1,4 +1,4 @@
-# config/routes.rb - Enhanced with thermal QR support
+# config/routes.rb - Enhanced with Google OAuth support
 Rails.application.routes.draw do
   # ==========================================
   # 🔐 AUTHENTICATION (Devise) - Must be first
@@ -12,11 +12,41 @@ Rails.application.routes.draw do
     },
     controllers: {
       sessions: 'api/v1/sessions',
-      registrations: 'api/v1/registrations'
+      registrations: 'api/v1/registrations',
+      omniauth_callbacks: 'api/v1/omniauth_callbacks'
     }
   
   devise_scope :user do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
+  end
+
+  # ==========================================
+  # 🔐 GOOGLE OAUTH ROUTES (New)
+  # ==========================================
+  
+  namespace :api, defaults: { format: :json } do
+    namespace :v1 do
+      # Google OAuth endpoints
+      namespace :auth do
+        # Step 1: Initialize OAuth flow (for web)
+        get 'google_oauth2/init', to: 'sessions#google_oauth_init'
+        
+        # Step 2: OAuth callback (for web)
+        get 'google_oauth2/callback', to: 'sessions#google_oauth_callback'
+        post 'google_oauth2/callback', to: 'sessions#google_oauth_callback'
+        
+        # Step 3: Token validation (for mobile)
+        post 'google/login', to: 'sessions#google_login'
+        post 'google_login', to: 'sessions#google_login'
+        
+        # OAuth failure handler
+        get 'failure', to: 'sessions#oauth_failure'
+        post 'failure', to: 'sessions#oauth_failure'
+      end
+      
+      # Legacy Google login route (maintain compatibility)
+      post :google_login, to: 'sessions#google_login'
+    end
   end
 
   # ==========================================
@@ -51,7 +81,6 @@ Rails.application.routes.draw do
       post 'typing_status', to: 'typing_status#create'
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
-      post :google_login, to: 'sessions#google_login'
 
       # 📊 USER SCANNING ANALYTICS & STATS - Fixed routing
       get 'users/scanning_stats', to: 'users#scanning_stats'
@@ -593,6 +622,10 @@ Rails.application.routes.draw do
     # QR Generation webhooks - NEW
     post 'qr_generation/completed', to: 'webhooks#qr_generation_completed'
     post 'thermal_qr/generated', to: 'webhooks#thermal_qr_generated'
+    
+    # Google OAuth webhooks
+    post 'auth/google/success', to: 'webhooks#google_auth_success'
+    post 'auth/google/failure', to: 'webhooks#google_auth_failure'
   end
 
   # ==========================================
@@ -626,6 +659,10 @@ Rails.application.routes.draw do
       get 'qr_codes/recent', to: 'mobile#recent_qr_codes'
       post 'qr_codes/generate', to: 'mobile#generate_mobile_qr'
       get 'thermal_print/status', to: 'mobile#thermal_print_status'
+      
+      # 🔐 Mobile Google Auth - NEW
+      post 'auth/google', to: 'mobile#google_login'
+      post 'auth/refresh', to: 'mobile#refresh_token'
     end
   end
 
@@ -643,6 +680,7 @@ Rails.application.routes.draw do
   get "health/scanning" => "health#scanning_system", as: :scanning_health_check
   get "health/qr_generation" => "health#qr_generation_system", as: :qr_generation_health_check  # 🎨 NEW
   get "health/thermal_printing" => "health#thermal_printing_system", as: :thermal_printing_health_check  # 🖨️ NEW
+  get "health/google_oauth" => "health#google_oauth_system", as: :google_oauth_health_check  # 🔐 NEW
   
   # ==========================================
   # 📱 PROGRESSIVE WEB APP SUPPORT
@@ -664,6 +702,7 @@ Rails.application.routes.draw do
   get '/docs', to: 'documentation#index'
   get '/api/docs', to: 'documentation#api_docs'
   get '/docs/qr_codes', to: 'documentation#qr_code_docs'  # 🎨 NEW
+  get '/docs/google_auth', to: 'documentation#google_auth_docs'  # 🔐 NEW
   
   # ==========================================
   # 🚫 CATCH-ALL (FIXED - Excludes Active Storage paths)
