@@ -2,16 +2,18 @@
 
 class User < ApplicationRecord
   # ===========================================
-  # 🔐 DEVISE CONFIGURATION WITH JWT
+  # 🔐 DEVISE CONFIGURATION (SIMPLIFIED)
   # ===========================================
   
-  # Include Devise modules with JWT support
+  # Include Devise modules - simplified for now
   devise :database_authenticatable, :registerable,
          :recoverable, :rememberable, :validatable,
-         :jwt_authenticatable,  # This is crucial for JWT support
          :omniauthable,
-         jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
          omniauth_providers: [:google_oauth2]
+
+  # Add JWT support later once basic auth is working
+  # :jwt_authenticatable,
+  # jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
 
   # ActiveStorage for avatar
   has_one_attached :avatar
@@ -70,26 +72,21 @@ class User < ApplicationRecord
   scope :regular_users, -> { where(provider: nil) }
 
   # ===========================================
-  # 🔐 JWT METHODS (Required for devise-jwt)
-  # ===========================================
-
-  # JWT subject (required by devise-jwt)
-  def jwt_subject
-    id
-  end
-
-  # JWT payload (optional - add custom claims)
-  def jwt_payload
-    {
-      'role' => primary_role,
-      'email' => email,
-      'name' => full_name
-    }
-  end
-
-  # ===========================================
   # 🔐 GOOGLE OAUTH METHODS
   # ===========================================
+
+  # JWT methods will be added back when we re-enable JWT
+  # def jwt_subject
+  #   id
+  # end
+  #
+  # def jwt_payload
+  #   {
+  #     'role' => primary_role,
+  #     'email' => email,
+  #     'name' => full_name
+  #   }
+  # end
 
   # Main method called by Devise when Google OAuth succeeds
   def self.from_omniauth(auth)
