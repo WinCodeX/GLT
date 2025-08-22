@@ -1,4 +1,4 @@
-# app/controllers/application_controller.rb - Simplified for devise-jwt
+# app/controllers/application_controller.rb - Fixed for ActionController::API
 
 class ApplicationController < ActionController::API
   include ActionController::MimeResponds
@@ -8,8 +8,8 @@ class ApplicationController < ActionController::API
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :log_user_activity, if: :user_signed_in?
   
-  # CORS and security
-  protect_from_forgery with: :null_session, if: Proc.new { |c| c.request.format == 'application/json' }
+  # REMOVED: CSRF protection (not available in ActionController::API)
+  # protect_from_forgery is only available in ActionController::Base
   
   # Error handling
   rescue_from ActiveRecord::RecordNotFound, with: :not_found_response
@@ -167,22 +167,22 @@ class ApplicationController < ActionController::API
   end
 
   # ===========================================
-  # 🌐 CORS METHODS (if needed)
+  # 🌐 CORS METHODS (API-compatible)
   # ===========================================
 
-  # Set CORS headers
+  # Set CORS headers (API-compatible way)
   def set_cors_headers
-    headers['Access-Control-Allow-Origin'] = '*'
-    headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-    headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept, Authorization, Token'
-    headers['Access-Control-Max-Age'] = '1728000'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept, Authorization, Token'
+    response.headers['Access-Control-Max-Age'] = '1728000'
   end
 
-  # Handle preflight requests
-  def cors_preflight_check
+  # Handle preflight requests (for API)
+  def handle_cors_preflight
     if request.method == 'OPTIONS'
       set_cors_headers
-      render plain: '', status: :ok
+      head :ok
     end
   end
 
