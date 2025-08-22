@@ -12,8 +12,8 @@ class User < ApplicationRecord
          omniauth_providers: [:google_oauth2]
 
   # Add JWT support later once basic auth is working
-  # :jwt_authenticatable,
-  # jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
+    :jwt_authenticatable,
+     jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
 
   # ActiveStorage for avatar
   has_one_attached :avatar
