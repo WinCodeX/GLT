@@ -1,4 +1,4 @@
-# app/controllers/api/v1/sessions_controller.rb
+# app/controllers/api/v1/sessions_controller.rb - Fixed for devise-jwt
 
 module Api
   module V1
@@ -9,7 +9,7 @@ module Api
       skip_before_action :verify_authenticity_token, if: :json_request?
 
       # ===========================================
-      # 🔐 REGULAR LOGIN (Enhanced with better logging)
+      # 🔐 REGULAR LOGIN (Simplified for devise-jwt)
       # ===========================================
 
       def create
@@ -26,14 +26,16 @@ module Api
               }, status: :locked
             end
 
+            # Let devise-jwt handle the sign in and token generation
             sign_in(resource)
             resource.mark_online!
             resource.unlock_access! if resource.respond_to?(:unlock_access!)
             
+            # devise-jwt automatically generates the token - we just need to render the response
             render json: {
               status: 'success',
               message: 'Logged in successfully',
-              user: serialize_user(resource, include_token: true)
+              user: serialize_user(resource)
             }, status: :ok
           else
             render json: {
@@ -59,6 +61,7 @@ module Api
       def destroy
         if current_user
           current_user.mark_offline!
+          # devise-jwt handles token revocation automatically
           sign_out(current_user)
         end
         
@@ -69,7 +72,7 @@ module Api
       end
 
       # ===========================================
-      # 🔐 GOOGLE OAUTH METHODS (Enhanced)
+      # 🔐 GOOGLE OAUTH METHODS (Simplified)
       # ===========================================
 
       # Step 1: Initialize Google OAuth flow (for web clients)
@@ -107,7 +110,7 @@ module Api
         end
 
         begin
-          # Use our GoogleOauthService for token exchange
+          # Use GoogleOauthService for token exchange
           service = GoogleOauthService.new
           result = service.exchange_code_for_tokens(
             params[:code], 
@@ -122,13 +125,14 @@ module Api
               # Handle Google avatar
               handle_google_avatar(user, result[:user_info][:picture])
               
+              # Let devise-jwt handle sign in and token generation
               sign_in(user)
               user.mark_online!
               
               render json: {
                 status: 'success',
                 message: 'Successfully authenticated with Google',
-                user: serialize_user(user, include_token: true),
+                user: serialize_user(user),
                 auth_method: 'google_oauth2'
               }, status: :ok
             else
@@ -157,7 +161,6 @@ module Api
       end
 
       # Step 3: Handle Google token validation (for mobile apps)
-      # This replaces your previous google_login method
       def google_login
         Rails.logger.info "🔐 Google token login initiated"
         
@@ -174,7 +177,7 @@ module Api
         end
 
         begin
-          # Use our enhanced GoogleOauthService
+          # Use GoogleOauthService for token validation
           service = GoogleOauthService.new
           result = service.validate_id_token(token)
           
@@ -197,14 +200,14 @@ module Api
           # Extract user info from validation result
           user_info = result[:user_info]
           
-          # Find or create user with enhanced logic
+          # Find or create user
           user = find_or_create_google_user(user_info)
           
           if user.persisted?
-            # Handle Google avatar with your existing logic
+            # Handle Google avatar
             handle_google_avatar(user, user_info[:picture])
             
-            # Sign in user
+            # Let devise-jwt handle sign in and token generation
             sign_in(user)
             user.mark_online!
             
@@ -214,7 +217,7 @@ module Api
             render json: {
               status: 'success',
               message: 'Successfully signed in with Google',
-              user: serialize_user(user, include_token: true),
+              user: serialize_user(user),
               auth_method: 'google_token',
               is_new_user: user.created_at > 5.minutes.ago
             }, status: :ok
@@ -265,10 +268,8 @@ module Api
       # 🔧 GOOGLE USER MANAGEMENT
       # ===========================================
 
-      # Enhanced user finding/creation logic
       def find_or_create_google_user(user_info)
         email = user_info[:email]
-        google_id = user_info[:google_id]
         
         # First, try to find by email
         user = User.find_by(email: email)
@@ -326,7 +327,7 @@ module Api
       end
 
       # ===========================================
-      # 🎨 AVATAR HANDLING (Enhanced from your original)
+      # 🎨 AVATAR HANDLING
       # ===========================================
 
       def handle_google_avatar(user, google_avatar_url)
@@ -336,7 +337,6 @@ module Api
         attach_google_avatar(user, google_avatar_url)
       end
 
-      # Enhanced version of your original avatar attachment logic
       def attach_google_avatar(user, google_avatar_url)
         begin
           Rails.logger.info "🎨 Attempting to attach Google avatar for user #{user.email}"
@@ -369,7 +369,6 @@ module Api
         end
       end
 
-      # Enhanced filename extraction
       def extract_filename_from_url(url)
         uri = URI.parse(url)
         basename = File.basename(uri.path)
@@ -381,7 +380,6 @@ module Api
         nil
       end
 
-      # Determine content type from URL
       def determine_content_type_from_url(url)
         extension = File.extname(URI.parse(url).path).downcase
         case extension
@@ -404,14 +402,12 @@ module Api
       # 🔧 OAUTH HELPER METHODS
       # ===========================================
 
-      # Build Google OAuth authorization URL
       def build_google_oauth_url(state)
         service = GoogleOauthService.new
         redirect_uri = "#{request.base_url}/api/v1/auth/google_oauth2/callback"
         service.generate_auth_url(redirect_uri, state)
       end
 
-      # Verify OAuth state parameter for CSRF protection
       def verify_oauth_state(state)
         return false unless state.present? && session[:oauth_state].present?
         
@@ -422,7 +418,6 @@ module Api
         end
       end
 
-      # Build auth hash from service result for User.from_omniauth
       def build_auth_hash_from_service(service_result)
         user_info = service_result[:user_info]
         tokens = service_result[:tokens] || {}
@@ -445,7 +440,6 @@ module Api
         )
       end
 
-      # Handle OAuth service errors
       def handle_oauth_service_error(result)
         Rails.logger.error "❌ OAuth service error: #{result[:error]}"
         
@@ -456,7 +450,6 @@ module Api
         }, status: :bad_request
       end
 
-      # Handle OAuth callback errors
       def handle_oauth_error(error, description)
         Rails.logger.error "❌ OAuth Error: #{error} - #{description}"
         
@@ -481,61 +474,20 @@ module Api
         devise_parameter_sanitizer.permit(:sign_in, keys: [:email, :password])
       end
 
-      # Enhanced user serialization with optional token
-      def serialize_user(user, include_token: false)
-        # Use your existing UserSerializer or build response manually
-        result = if defined?(UserSerializer)
+      # Simplified user serialization - no manual token handling
+      def serialize_user(user)
+        # Use your existing UserSerializer
+        if defined?(UserSerializer)
           UserSerializer.new(user).as_json
         else
+          # Fallback if no serializer defined
           user.as_json(
-            include_role_details: true,
-            include_stats: false
+            only: [:id, :email, :first_name, :last_name, :phone_number, :created_at],
+            methods: [:full_name, :display_name, :primary_role, :google_user?, :needs_password?]
           )
-        end
-        
-        # Add additional Google OAuth specific fields
-        result.merge!(
-          'google_user' => user.google_user?,
-          'needs_password' => user.needs_password?,
-          'profile_complete' => profile_complete?(user),
-          'is_active' => user.active?,
-          'role_display' => user.role_display_name,
-          'available_actions' => user.available_actions
-        )
-        
-        if include_token
-          # Generate JWT token using existing method or Warden
-          token = generate_jwt_token(user)
-          result.merge!(
-            'token' => token,
-            'token_type' => 'Bearer'
-          )
-        end
-        
-        result
-      end
-
-      # Generate JWT token (compatible with your existing setup)
-      def generate_jwt_token(user)
-        if user.google_user?
-          User.generate_google_oauth_token(user)
-        else
-          # Use Warden JWT if available, otherwise generate manually
-          if defined?(Warden::JWTAuth::UserEncoder)
-            Warden::JWTAuth::UserEncoder.new.call(user, :user, nil).first
-          else
-            payload = {
-              user_id: user.id,
-              email: user.email,
-              exp: 24.hours.from_now.to_i,
-              iat: Time.current.to_i
-            }
-            JWT.encode(payload, Rails.application.secret_key_base, 'HS256')
-          end
         end
       end
 
-      # Check if user profile is complete
       def profile_complete?(user)
         user.first_name.present? && 
         user.last_name.present? && 
@@ -543,16 +495,16 @@ module Api
       end
 
       # ===========================================
-      # 🔧 DEVISE OVERRIDES (Enhanced)
+      # 🔧 DEVISE OVERRIDES (Simplified for devise-jwt)
       # ===========================================
 
-      # Enhanced respond_with for regular login
+      # Override respond_with for regular login - devise-jwt handles the token automatically
       def respond_with(resource, _opts = {})
         if resource.persisted?
           render json: {
             status: 'success',
             message: 'Logged in successfully',
-            user: serialize_user(resource, include_token: true)
+            user: serialize_user(resource)
           }, status: :ok
         else
           render json: {
