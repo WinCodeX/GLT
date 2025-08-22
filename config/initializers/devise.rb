@@ -122,37 +122,25 @@ Devise.setup do |config|
                   ENV['GOOGLE_CLIENT_ID'] || Rails.application.credentials.dig(:google_oauth, :client_id),
                   ENV['GOOGLE_CLIENT_SECRET'] || Rails.application.credentials.dig(:google_oauth, :client_secret),
                   {
-                    # ===========================================
-                    # 🎯 OAUTH SCOPE & PERMISSIONS
-                    # ===========================================
+                    # OAuth scope & permissions
                     scope: 'email,profile',
                     prompt: 'select_account',
                     access_type: 'offline',
                     
-                    # ===========================================
-                    # 📱 API-SPECIFIC OAUTH SETTINGS
-                    # ===========================================
-                    # Don't skip JWT for OAuth - we want JWT tokens after OAuth
+                    # API-specific OAuth settings
                     skip_jwt: false,
                     
                     # Callback configuration for API
                     callback_path: '/api/v1/auth/google_oauth2/callback',
-                    path_prefix: '/api/v1/auth',
                     
-                    # ===========================================
-                    # 🔒 SECURITY SETTINGS
-                    # ===========================================
+                    # Security settings
                     provider_ignores_state: false,
                     
-                    # ===========================================
-                    # 🎨 UI CUSTOMIZATION
-                    # ===========================================
+                    # UI customization
                     image_aspect_ratio: 'square',
                     image_size: 150,
                     
-                    # ===========================================
-                    # 🔧 CLIENT OPTIONS
-                    # ===========================================
+                    # Client options
                     client_options: {
                       ssl: { 
                         verify: Rails.env.production? 
@@ -161,34 +149,12 @@ Devise.setup do |config|
                   }
 
   # ===========================================
-  # 🎯 WARDEN CONFIGURATION FOR API
-  # ===========================================
-  
-  config.warden do |manager|
-    # Default strategies
-    manager.default_strategies(scope: :user).unshift :jwt_authenticatable
-    
-    # Failure app for API responses
-    manager.failure_app = lambda do |env|
-      # Return JSON error for API requests
-      result = [401, 
-                { 'Content-Type' => 'application/json' }, 
-                [{ 
-                  status: 'error',
-                  message: 'Authentication required',
-                  code: 'unauthenticated'
-                }.to_json]]
-      result
-    end
-  end
-
-  # ===========================================
   # 🔧 API-SPECIFIC OVERRIDES
   # ===========================================
   
   # Override default URL options for API
   config.sign_out_via = [:delete, :post]  # Allow both for API flexibility
-  
+
   # ===========================================
   # 🧪 DEVELOPMENT/TEST CONFIGURATION
   # ===========================================
