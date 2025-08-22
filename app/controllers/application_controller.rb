@@ -272,12 +272,14 @@ class ApplicationController < ActionController::API
   end
 
   # ===========================================
-  # 🎯 ROLE-BASED ACCESS CONTROL
+  # 🎯 ROLE-BASED ACCESS CONTROL (SAFE)
   # ===========================================
 
-  # Ensure user has required role
+  # Ensure user has required role (safe - won't trigger auth for public endpoints)
   def ensure_role!(required_role)
-    unless current_user_has_role?(required_role)
+    return true if skip_authentication? # Skip role checks for public endpoints
+    
+    unless current_user.present? && current_user_has_role?(required_role)
       error_response(
         "Access denied. #{required_role.to_s.humanize} role required.",
         'insufficient_role',
@@ -288,14 +290,16 @@ class ApplicationController < ActionController::API
     true
   end
 
-  # Ensure user is admin
+  # Ensure user is admin (safe)
   def ensure_admin!
     ensure_role!(:admin)
   end
 
-  # Ensure user is staff (agent, rider, warehouse, or admin)
+  # Ensure user is staff (safe)
   def ensure_staff!
-    unless current_user&.staff?
+    return true if skip_authentication? # Skip for public endpoints
+    
+    unless current_user.present? && current_user.staff?
       error_response(
         'Access denied. Staff role required.',
         'staff_access_required',
