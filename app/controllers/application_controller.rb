@@ -1,15 +1,17 @@
-# app/controllers/application_controller.rb - Fixed for ActionController::API
+# app/controllers/application_controller.rb
+# Fixed for API-only Rails with JWT + OAuth authentication
 
 class ApplicationController < ActionController::API
   include ActionController::MimeResponds
   
+  # ===========================================
+  # 🔐 AUTHENTICATION CONFIGURATION
+  # ===========================================
+  
   # Authentication (devise-jwt handles JWT automatically)
-  before_action :authenticate_user!
+  before_action :authenticate_user!, unless: :skip_authentication?
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :log_user_activity, if: :user_signed_in?
-  
-  # REMOVED: CSRF protection (not available in ActionController::API)
-  # protect_from_forgery is only available in ActionController::Base
   
   # Error handling
   rescue_from ActiveRecord::RecordNotFound, with: :not_found_response
@@ -17,12 +19,18 @@ class ApplicationController < ActionController::API
   rescue_from Pundit::NotAuthorizedError, with: :unauthorized_response if defined?(Pundit)
 
   # ===========================================
-  # 🔐 AUTHENTICATION OVERRIDE (for public endpoints)
+  # 🔐 AUTHENTICATION LOGIC (FIXED)
   # ===========================================
 
   def authenticate_user!
-    # Skip authentication for public endpoints
+    # Skip authentication for routes that don't need it
     return if skip_authentication?
+    
+    # Skip for OAuth routes - they handle their own auth flow
+    return if oauth_route?
+    
+    # Skip for public/health endpoints
+    return if public_endpoint?
     
     # Let devise-jwt handle the rest
     super
@@ -30,28 +38,53 @@ class ApplicationController < ActionController::API
 
   private
 
-  # Check if authentication should be skipped
+  # ===========================================
+  # 🚦 ROUTE CLASSIFICATION METHODS
+  # ===========================================
+
+  # Check if authentication should be skipped entirely
   def skip_authentication?
-    # Public endpoints that don't require authentication
-    public_endpoints = [
-      '/api/v1/ping',
-      '/api/v1/health', 
-      '/api/v1/status',
-      '/up',
-      '/health'
+    public_endpoint? || oauth_route? || health_check_route? || webhook_route?
+  end
+
+  # Check if this is an OAuth related route
+  def oauth_route?
+    oauth_patterns = [
+      %r{^/api/v1/auth/google},           # Google OAuth endpoints
+      %r{^/api/v1/auth/failure},          # OAuth failure
+      %r{^/auth/},                        # Legacy OAuth routes
+      %r{^/users/auth/}                   # Devise OAuth routes
     ]
     
-    # Skip for public tracking
-    return true if request.path.start_with?('/public/')
+    oauth_patterns.any? { |pattern| request.path.match?(pattern) }
+  end
+
+  # Check if this is a public endpoint
+  def public_endpoint?
+    public_patterns = [
+      %r{^/public/},                      # Public tracking pages
+      %r{^/api/v1/ping$},                 # API health check
+      %r{^/api/v1/status$},               # API status
+      %r{^/api/v1/track/}                 # Public package tracking
+    ]
     
-    # Skip for OAuth callbacks (they have their own auth flow)
-    return true if request.path.include?('/auth/')
+    public_patterns.any? { |pattern| request.path.match?(pattern) }
+  end
+
+  # Check if this is a health check route
+  def health_check_route?
+    health_patterns = [
+      %r{^/up$},                          # Rails health check
+      %r{^/health},                       # Custom health checks
+      %r{^/rails/health}                  # Rails health endpoint
+    ]
     
-    # Skip for webhooks (they should use different auth like API keys)
-    return true if request.path.start_with?('/webhooks/')
-    
-    # Check against public endpoints
-    public_endpoints.any? { |path| request.path.start_with?(path) }
+    health_patterns.any? { |pattern| request.path.match?(pattern) }
+  end
+
+  # Check if this is a webhook route
+  def webhook_route?
+    request.path.start_with?('/webhooks/')
   end
 
   # ===========================================
@@ -75,7 +108,6 @@ class ApplicationController < ActionController::API
     return false unless current_user
     return true if current_user.admin?
     
-    # Add resource-specific access logic here
     case resource.class.name
     when 'Package'
       current_user.can_access_package?(resource)
@@ -167,26 +199,6 @@ class ApplicationController < ActionController::API
   end
 
   # ===========================================
-  # 🌐 CORS METHODS (API-compatible)
-  # ===========================================
-
-  # Set CORS headers (API-compatible way)
-  def set_cors_headers
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept, Authorization, Token'
-    response.headers['Access-Control-Max-Age'] = '1728000'
-  end
-
-  # Handle preflight requests (for API)
-  def handle_cors_preflight
-    if request.method == 'OPTIONS'
-      set_cors_headers
-      head :ok
-    end
-  end
-
-  # ===========================================
   # 📊 ACTIVITY LOGGING
   # ===========================================
 
@@ -195,31 +207,18 @@ class ApplicationController < ActionController::API
     return unless current_user && user_signed_in?
     
     # Update last seen timestamp
-    current_user.update_column(:last_seen_at, Time.current) if current_user.respond_to?(:last_seen_at)
+    if current_user.respond_to?(:last_seen_at) && 
+       (current_user.last_seen_at.nil? || current_user.last_seen_at < 5.minutes.ago)
+      current_user.update_column(:last_seen_at, Time.current)
+    end
     
     # Mark user as online
     current_user.mark_online! if current_user.respond_to?(:mark_online!)
     
-    # Optional: Log the activity for analytics
-    Rails.logger.debug "User activity: #{current_user.email} - #{request.method} #{request.path}"
-  end
-
-  # ===========================================
-  # 🔒 SECURITY METHODS
-  # ===========================================
-
-  # Log security events
-  def log_security_event(event_type, details = {})
-    Rails.logger.warn "Security event: #{event_type} - User: #{current_user&.email} - IP: #{request.remote_ip} - Details: #{details}"
-  end
-
-  # Basic security checks
-  def security_check
-    # Add security checks here:
-    # - Rate limiting
-    # - IP allowlisting
-    # - Suspicious pattern detection
-    true
+    # Optional: Log the activity for analytics (only in development)
+    if Rails.env.development?
+      Rails.logger.debug "User activity: #{current_user.email} - #{request.method} #{request.path}"
+    end
   end
 
   # ===========================================
@@ -308,6 +307,24 @@ class ApplicationController < ActionController::API
   end
 
   # ===========================================
+  # 🔒 SECURITY METHODS
+  # ===========================================
+
+  # Log security events
+  def log_security_event(event_type, details = {})
+    Rails.logger.warn "Security event: #{event_type} - User: #{current_user&.email} - IP: #{request.remote_ip} - Details: #{details}"
+  end
+
+  # Basic security checks
+  def security_check
+    # Add security checks here:
+    # - Rate limiting
+    # - IP allowlisting  
+    # - Suspicious pattern detection
+    true
+  end
+
+  # ===========================================
   # 🔧 DEVISE OVERRIDES (for API)
   # ===========================================
 
@@ -341,7 +358,7 @@ class ApplicationController < ActionController::API
     '/login'
   end
 
-  # Override Devise's respond_with for API responses
+  # Override respond_with for API responses
   def respond_with(resource, _opts = {})
     # This method is called by Devise controllers
     # Since we're using API-only, we typically handle responses manually in controllers
