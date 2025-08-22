@@ -43,5 +43,66 @@ module GltApi
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # ===========================================
+    # 🔐 SESSION CONFIGURATION FOR OAUTH
+    # ===========================================
+    # Add sessions back for OAuth while keeping API-only mode
+    # Sessions will only be used for OAuth flow, JWT for everything else
+    
+    config.session_store :cookie_store, 
+      key: '_glt_api_session',
+      secure: Rails.env.production?,
+      httponly: true,
+      same_site: :lax
+
+    # Add session middleware back (required for OmniAuth)
+    config.middleware.use ActionDispatch::Cookies
+    config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
+
+    # ===========================================
+    # 🔧 MIDDLEWARE CONFIGURATION
+    # ===========================================
+    
+    # Insert OmniAuth middleware at the right position
+    # Place it AFTER session middleware but BEFORE Warden
+    config.middleware.insert_before Warden::Manager, OmniAuth::Builder
+
+    # ===========================================
+    # 🚫 DISABLE SESSIONS FOR API ROUTES
+    # ===========================================
+    
+    # Custom middleware to disable sessions for API routes
+    config.middleware.insert_before ActionDispatch::Session::CookieStore, 'ConditionalSessionMiddleware'
+    
+    # Autoload custom middleware
+    config.autoload_paths << Rails.root.join('app', 'middleware')
+
+    # ===========================================
+    # ⚙️ ADDITIONAL API CONFIGURATIONS
+    # ===========================================
+    
+    # CORS configuration
+    config.middleware.insert_before 0, Rack::Cors do
+      allow do
+        origins Rails.env.production? ? ['https://yourapp.com'] : '*'
+        resource '*', 
+          headers: :any,
+          methods: [:get, :post, :put, :patch, :delete, :options, :head],
+          credentials: true
+      end
+    end
+
+    # Force SSL in production
+    config.force_ssl = Rails.env.production?
+
+    # Configure generators for API
+    config.generators do |g|
+      g.test_framework :rspec
+      g.skip_routes true
+      g.skip_helper true
+      g.skip_views true
+      g.skip_assets true
+    end
   end
 end
