@@ -1,16 +1,14 @@
-# app/controllers/api/v1/registrations_controller.rb - Fixed for devise-jwt
+# app/controllers/api/v1/registrations_controller.rb - API-only version
 
 module Api
   module V1
     class RegistrationsController < Devise::RegistrationsController
       respond_to :json
-      protect_from_forgery with: :null_session
-      skip_before_action :verify_authenticity_token
       before_action :configure_sign_up_params, only: [:create]
       before_action :configure_account_update_params, only: [:update]
 
       # ===========================================
-      # 🔐 USER REGISTRATION (Enhanced)
+      # 🔐 USER REGISTRATION
       # ===========================================
 
       def create
@@ -36,7 +34,7 @@ module Api
           
           # User created successfully
           if resource.active_for_authentication?
-            # Auto-confirm for now (you can modify this behavior)
+            # Auto-confirm for API (adjust as needed)
             resource.update!(confirmed_at: Time.current) unless resource.confirmed_at
             
             # Let devise-jwt handle sign in and token generation
@@ -68,7 +66,7 @@ module Api
       end
 
       # ===========================================
-      # 🔄 ACCOUNT UPDATE (Enhanced for Google users)
+      # 🔄 ACCOUNT UPDATE
       # ===========================================
 
       def update
@@ -109,7 +107,6 @@ module Api
       # 🔐 GOOGLE USER PROFILE COMPLETION
       # ===========================================
 
-      # Complete profile for Google OAuth users
       def complete_google_profile
         unless current_user&.google_user?
           return render json: {
@@ -135,7 +132,6 @@ module Api
         end
       end
 
-      # Set password for Google OAuth users (optional)
       def set_password_for_google_user
         unless current_user&.google_user?
           return render json: {
@@ -184,7 +180,6 @@ module Api
       # 🔍 ACCOUNT INFORMATION & VALIDATION
       # ===========================================
 
-      # Get current user profile
       def show
         if current_user
           render json: {
@@ -200,7 +195,6 @@ module Api
         end
       end
 
-      # Check if email is available for registration
       def check_email_availability
         email = params[:email]
         
@@ -242,7 +236,6 @@ module Api
       # 🔐 ACCOUNT LINKING (Google OAuth Integration)
       # ===========================================
 
-      # Link Google account to existing email/password account
       def link_google_account
         google_token = params[:google_token]
         
@@ -298,7 +291,6 @@ module Api
         end
       end
 
-      # Unlink Google account
       def unlink_google_account
         unless current_user.google_user?
           return render json: {
@@ -339,9 +331,8 @@ module Api
       # 🔧 HELPER METHODS
       # ===========================================
 
-      # Update Google user with password
       def update_google_user_with_password
-        # For Google users, we need to handle password setting differently
+        # For Google users, handle password setting differently
         if account_update_params[:password].present?
           resource.password = account_update_params[:password]
           resource.password_confirmation = account_update_params[:password_confirmation]
@@ -354,39 +345,33 @@ module Api
         resource.save
       end
 
-      # Configure permitted parameters for sign up
       def configure_sign_up_params
         devise_parameter_sanitizer.permit(:sign_up, keys: [
           :first_name, :last_name, :phone_number
         ])
       end
 
-      # Configure permitted parameters for account update
       def configure_account_update_params
         devise_parameter_sanitizer.permit(:account_update, keys: [
           :first_name, :last_name, :phone_number
         ])
       end
 
-      # Parameters for Google profile completion
       def google_profile_params
         params.require(:user).permit(:first_name, :last_name, :phone_number)
       end
 
-      # Standard sign up parameters
       def sign_up_params
         params.require(:user).permit(:email, :password, :password_confirmation, :first_name, :last_name, :phone_number)
       end
 
-      # Standard account update parameters
       def account_update_params
         params.require(:user).permit(:first_name, :last_name, :phone_number, :password, :password_confirmation, :current_password)
       end
 
-      # Serialize user for JSON response (no manual token handling)
+      # Serialize user for JSON response
       def serialize_user(user, include_sensitive: false)
         if defined?(UserSerializer)
-          # Use your existing UserSerializer
           serializer = UserSerializer.new(
             user,
             include_sensitive_info: include_sensitive
@@ -421,7 +406,6 @@ module Api
         end
       end
 
-      # Check if user profile is complete
       def profile_complete?(user)
         user.first_name.present? && 
         user.last_name.present? && 
@@ -429,10 +413,9 @@ module Api
       end
 
       # ===========================================
-      # 🔧 DEVISE OVERRIDES (Simplified for devise-jwt)
+      # 🔧 DEVISE OVERRIDES
       # ===========================================
 
-      # Override respond_with for registration - devise-jwt handles tokens automatically
       def respond_with(resource, _opts = {})
         if resource.persisted?
           render json: {
@@ -451,7 +434,6 @@ module Api
       end
 
       def respond_to_on_destroy
-        # Handle account deletion response
         render json: {
           status: 'success',
           message: 'Account deleted successfully'
