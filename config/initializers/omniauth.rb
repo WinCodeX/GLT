@@ -29,7 +29,6 @@ OmniAuth.config.request_validation_phase = nil
 # Custom failure handling for API responses
 OmniAuth.config.on_failure = Proc.new do |env|
   # Extract error information
-  message_key = env['omniauth.error.type']
   error_type = env['omniauth.error.type'] || 'unknown_error'
   description = env['omniauth.error']&.message || 'OAuth authentication failed'
   
@@ -55,11 +54,11 @@ end
 if Rails.env.development? || Rails.env.test?
   # Add test credentials if environment variables are not set
   unless ENV['GOOGLE_CLIENT_ID'].present?
-    Rails.logger.warn "⚠️  GOOGLE_CLIENT_ID not set. Using development defaults."
+    Rails.logger.warn "⚠️  GOOGLE_CLIENT_ID not set. Set this environment variable for Google OAuth to work."
   end
   
   unless ENV['GOOGLE_CLIENT_SECRET'].present?
-    Rails.logger.warn "⚠️  GOOGLE_CLIENT_SECRET not set. Using development defaults."
+    Rails.logger.warn "⚠️  GOOGLE_CLIENT_SECRET not set. Set this environment variable for Google OAuth to work."
   end
   
   # Enable detailed logging in development
@@ -74,6 +73,8 @@ end
 Rails.application.config.after_initialize do
   if defined?(OmniAuth)
     Rails.logger.info "✅ OmniAuth initialized"
-    Rails.logger.info "🔑 Google OAuth Client ID: #{ENV['GOOGLE_CLIENT_ID']&.first(10)}..." if ENV['GOOGLE_CLIENT_ID']
+    if ENV['GOOGLE_CLIENT_ID'].present?
+      Rails.logger.info "🔑 Google OAuth Client ID configured: #{ENV['GOOGLE_CLIENT_ID']&.first(10)}..."
+    end
   end
 end
