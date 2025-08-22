@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_14_055146) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_22_094654) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -178,6 +178,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_14_055146) do
     t.datetime "updated_at", null: false
     t.string "code", null: false
     t.integer "route_sequence"
+    t.text "delivery_location"
     t.index ["code"], name: "idx_packages_code", unique: true
     t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
     t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
@@ -235,9 +236,17 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_14_055146) do
     t.string "phone_number"
     t.boolean "online", default: false
     t.datetime "last_seen_at"
+    t.string "provider"
+    t.string "uid"
+    t.string "google_image_url"
+    t.datetime "confirmed_at"
+    t.index ["confirmed_at"], name: "index_users_on_confirmed_at"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["online"], name: "index_users_on_online"
+    t.index ["provider", "uid"], name: "index_users_on_provider_and_uid", unique: true
+    t.index ["provider"], name: "index_users_on_provider"
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
+    t.index ["uid"], name: "index_users_on_uid"
   end
 
   create_table "users_roles", id: false, force: :cascade do |t|
