@@ -64,54 +64,35 @@ Devise.setup do |config|
   config.sign_out_via = :delete
 
   # ===========================================
-  # 🔐 JWT CONFIGURATION (FIXED)
+  # 🔐 JWT CONFIGURATION (TEMPORARILY DISABLED)
   # ===========================================
   
-  config.jwt do |jwt|
-    # Use environment variable or Rails credentials for JWT secret
-    jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 
-                 Rails.application.credentials.jwt_secret_key || 
-                 Rails.application.secret_key_base
-
-    # ===========================================
-    # 📍 JWT DISPATCH ROUTES (Which routes get JWT tokens)
-    # ===========================================
-    jwt.dispatch_requests = [
-      # Regular authentication
-      ['POST', %r{^/api/v1/login$}],
-      ['POST', %r{^/api/v1/signup$}],
-      
-      # Google OAuth - these routes will also get JWT tokens
-      ['GET', %r{^/api/v1/auth/google_oauth2/callback$}],
-      ['POST', %r{^/api/v1/auth/google_oauth2/callback$}],
-      ['POST', %r{^/api/v1/auth/google/login$}],
-      ['POST', %r{^/api/v1/google_login$}],
-      
-      # Mobile auth endpoints
-      ['POST', %r{^/mobile/v1/auth/google$}]
-    ]
-    
-    # ===========================================
-    # 🚪 JWT REVOCATION ROUTES (Logout endpoints)  
-    # ===========================================
-    jwt.revocation_requests = [
-      ['DELETE', %r{^/api/v1/logout$}],
-      ['POST', %r{^/api/v1/logout$}]  # Allow POST for logout compatibility
-    ]
-    
-    # ===========================================
-    # ⏰ JWT TOKEN CONFIGURATION
-    # ===========================================
-    jwt.expiration_time = 24.hours.to_i
-    jwt.algorithm = 'HS256'
-    
-    # ===========================================
-    # 🔄 JWT REVOCATION STRATEGY
-    # ===========================================
-    # Using Null strategy for simplicity - tokens expire naturally
-    # You can switch to JTIMatcher for immediate revocation if needed
-    # jwt.revocation_strategy = Devise::JWT::RevocationStrategies::JTIMatcher
-  end
+  # JWT configuration temporarily disabled until basic auth works
+  # Will re-enable once the server starts successfully
+  
+  # config.jwt do |jwt|
+  #   jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 
+  #                Rails.application.credentials.jwt_secret_key || 
+  #                Rails.application.secret_key_base
+  #
+  #   jwt.dispatch_requests = [
+  #     ['POST', %r{^/api/v1/login$}],
+  #     ['POST', %r{^/api/v1/signup$}],
+  #     ['GET', %r{^/api/v1/auth/google_oauth2/callback$}],
+  #     ['POST', %r{^/api/v1/auth/google_oauth2/callback$}],
+  #     ['POST', %r{^/api/v1/auth/google/login$}],
+  #     ['POST', %r{^/api/v1/google_login$}],
+  #     ['POST', %r{^/mobile/v1/auth/google$}]
+  #   ]
+  #   
+  #   jwt.revocation_requests = [
+  #     ['DELETE', %r{^/api/v1/logout$}],
+  #     ['POST', %r{^/api/v1/logout$}]
+  #   ]
+  #   
+  #   jwt.expiration_time = 24.hours.to_i
+  #   jwt.algorithm = 'HS256'
+  # end
 
   # ===========================================
   # 🔐 GOOGLE OAUTH CONFIGURATION (FIXED)
