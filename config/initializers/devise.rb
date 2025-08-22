@@ -24,25 +24,52 @@ Devise.setup do |config|
   # Configure the e-mail address which will be shown in Devise::Mailer,
   # note that it will be overwritten if you use your own mailer class
   # with default "from" parameter.
-  config.mailer_sender = 'please-change-me-at-config-initializers-devise@example.com'
+  config.mailer_sender = 'noreply@packagedelivery.com' # Updated from default
 
-
-config.omniauth :google_oauth2, 
+  # ===========================================
+  # 🔐 ENHANCED GOOGLE OAUTH CONFIGURATION
+  # ===========================================
+  
+  # Enhanced Google OAuth2 configuration with better security and functionality
+  config.omniauth :google_oauth2, 
                   Rails.application.credentials.dig(:google_oauth, :client_id),
                   Rails.application.credentials.dig(:google_oauth, :client_secret),
                   {
+                    # OAuth scopes - minimal required permissions
                     scope: 'email,profile',
-                    prompt: 'select_account',
+                    
+                    # Security settings
+                    prompt: 'select_account',           # Always show account selector
+                    access_type: 'offline',             # Get refresh token
+                    approval_prompt: '',                # Don't force approval screen
+                    
+                    # UI customization
                     image_aspect_ratio: 'square',
                     image_size: 50,
-                    access_type: 'offline',
-                    approval_prompt: '',
+                    
+                    # Provider configuration
                     name: 'google_oauth2',
-                    skip_jwt: true,
-                    strategy_class: OmniAuth::Strategies::GoogleOauth2
+                    provider_ignores_state: false,      # Enable CSRF protection
+                    
+                    # API configuration
+                    skip_jwt: true,                     # We handle JWT ourselves
+                    strategy_class: OmniAuth::Strategies::GoogleOauth2,
+                    
+                    # Callback URL configuration
+                    callback_path: '/api/v1/auth/google_oauth2/callback',
+                    
+                    # Additional security options
+                    authorize_params: {
+                      access_type: 'offline',
+                      approval_prompt: '',
+                      prompt: 'select_account'
+                    },
+                    
+                    # Client options for API endpoints
+                    client_options: {
+                      ssl: { ca_file: Rails.root.join("config/ca-bundle.crt").to_s }
+                    }
                   }
-
-
 
   # Configure the class responsible to send e-mails.
   # config.mailer = 'Devise::Mailer'
@@ -161,7 +188,7 @@ config.omniauth :google_oauth2,
   # without confirming their account.
   # Default is 0.days, meaning the user cannot access the website without
   # confirming their account.
-  # config.allow_unconfirmed_access_for = 2.days
+  config.allow_unconfirmed_access_for = 0.days  # Require email confirmation
 
   # A period that the user is allowed to confirm their account before their
   # token becomes invalid. For example, if set to 3.days, the user can confirm
@@ -169,7 +196,7 @@ config.omniauth :google_oauth2,
   # their account can't be confirmed with the token any more.
   # Default is nil, meaning there is no restriction on how long a user can take
   # before confirming their account.
-  # config.confirm_within = 3.days
+  config.confirm_within = 3.days
 
   # If true, requires any email changes to be confirmed (exactly the same way as
   # initial account confirmation) to be applied. Requires additional unconfirmed_email
@@ -192,11 +219,15 @@ config.omniauth :google_oauth2,
 
   # Options to be passed to the created cookie. For instance, you can set
   # secure: true in order to force SSL only cookies.
-  # config.rememberable_options = {}
+  config.rememberable_options = {
+    secure: Rails.env.production?,  # Secure cookies in production
+    httponly: true,                 # Prevent XSS attacks
+    same_site: :lax                 # CSRF protection
+  }
 
   # ==> Configuration for :validatable
   # Range for password length.
-  config.password_length = 6..128
+  config.password_length = 8..128  # Increased minimum for better security
 
   # Email regex used to validate email formats. It simply asserts that
   # one (and only one) @ exists in the given string. This is mainly
@@ -206,13 +237,13 @@ config.omniauth :google_oauth2,
   # ==> Configuration for :timeoutable
   # The time you want to timeout the user session without activity. After this
   # time the user will be asked for credentials again. Default is 30 minutes.
-  # config.timeout_in = 30.minutes
+  config.timeout_in = 24.hours  # Extended for mobile app usage
 
   # ==> Configuration for :lockable
   # Defines which strategy will be used to lock an account.
   # :failed_attempts = Locks an account after a number of failed attempts to sign in.
   # :none            = No lock strategy. You should handle locking by yourself.
-  # config.lock_strategy = :failed_attempts
+  config.lock_strategy = :failed_attempts
 
   # Defines which key will be used when locking and unlocking an account
   # config.unlock_keys = [:email]
@@ -222,17 +253,17 @@ config.omniauth :google_oauth2,
   # :time  = Re-enables login after a certain amount of time (see :unlock_in below)
   # :both  = Enables both strategies
   # :none  = No unlock strategy. You should handle unlocking by yourself.
-  # config.unlock_strategy = :both
+  config.unlock_strategy = :both
 
   # Number of authentication tries before locking an account if lock_strategy
   # is failed attempts.
-  # config.maximum_attempts = 20
+  config.maximum_attempts = 5  # Reasonable security vs usability
 
   # Time interval to unlock the account if :time is enabled as unlock_strategy.
-  # config.unlock_in = 1.hour
+  config.unlock_in = 1.hour
 
   # Warn on the last attempt before the account is locked.
-  # config.last_attempt_warning = true
+  config.last_attempt_warning = true
 
   # ==> Configuration for :recoverable
   #
@@ -281,7 +312,7 @@ config.omniauth :google_oauth2,
   # should add them to the navigational formats lists.
   #
   # The "*/*" below is required to match Internet Explorer requests.
-  # config.navigational_formats = ['*/*', :html, :turbo_stream]
+  config.navigational_formats = ['*/*', :html, :turbo_stream]
 
   # The default HTTP method used to sign out a resource. Default is :delete.
   config.sign_out_via = :delete
@@ -325,22 +356,52 @@ config.omniauth :google_oauth2,
 
   # ==> Configuration for :registerable
 
+  # ===========================================
+  # 🔐 ENHANCED JWT CONFIGURATION
+  # ===========================================
+  
+  # Enhanced JWT configuration with better security and Google OAuth integration
+  config.jwt do |jwt|
+    # Use environment variable or Rails credentials for JWT secret
+    jwt.secret = Rails.application.credentials.jwt_secret_key || 
+                 ENV['DEVISE_JWT_SECRET_KEY'] || 
+                 Rails.application.secret_key_base
 
-
-
-
-config.jwt do |jwt|
-  jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 'your_secret_here'
-  jwt.dispatch_requests = [
-    ['POST', %r{^/api/v1/login$}]
-  ]
-  jwt.revocation_requests = [
-    ['DELETE', %r{^/api/v1/logout$}]
-  ]
-  jwt.expiration_time = 1.day.to_i
-end
+    # Define when JWT tokens should be dispatched (created)
+    jwt.dispatch_requests = [
+      ['POST', %r{^/api/v1/login$}],                    # Regular login
+      ['POST', %r{^/api/v1/signup$}],                   # Registration
+      ['POST', %r{^/api/v1/auth/google/login$}],        # Google token login
+      ['GET', %r{^/api/v1/auth/google_oauth2/callback$}] # Google OAuth callback
+    ]
+    
+    # Define when JWT tokens should be revoked (destroyed)
+    jwt.revocation_requests = [
+      ['DELETE', %r{^/api/v1/logout$}]
+    ]
+    
+    # JWT token expiration time
+    jwt.expiration_time = 24.hours.to_i  # 24 hours for mobile apps
+    
+    # Algorithm for JWT encoding
+    jwt.algorithm = 'HS256'
+  end
 
   # When set to false, does not sign a user in automatically after their password is
   # changed. Defaults to true, so a user is signed in automatically after changing a password.
-  # config.sign_in_after_change_password = true
+  config.sign_in_after_change_password = true
+  
+  # ===========================================
+  # 🔒 ADDITIONAL SECURITY CONFIGURATIONS
+  # ===========================================
+  
+  # Enable paranoid mode for better security
+  config.paranoid = true
+  
+  # Sign out all scopes when signing out
+  config.sign_out_all_scopes = true
+  
+  # Case insensitive and stripped keys for better UX
+  config.case_insensitive_keys = [:email]
+  config.strip_whitespace_keys = [:email]
 end
