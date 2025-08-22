@@ -48,7 +48,7 @@ module GltApi
     # 🔐 SESSION CONFIGURATION FOR OAUTH
     # ===========================================
     # Add sessions back for OAuth while keeping API-only mode
-    # Sessions will only be used for OAuth flow, JWT for everything else
+    # Sessions will be used for OAuth flow, JWT for everything else
     
     config.session_store :cookie_store, 
       key: '_glt_api_session',
@@ -59,24 +59,6 @@ module GltApi
     # Add session middleware back (required for OmniAuth)
     config.middleware.use ActionDispatch::Cookies
     config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
-
-    # ===========================================
-    # 🔧 MIDDLEWARE CONFIGURATION
-    # ===========================================
-    
-    # Insert OmniAuth middleware at the right position
-    # Place it AFTER session middleware but BEFORE Warden
-    config.middleware.insert_before Warden::Manager, OmniAuth::Builder
-
-    # ===========================================
-    # 🚫 DISABLE SESSIONS FOR API ROUTES
-    # ===========================================
-    
-    # Custom middleware to disable sessions for API routes
-    config.middleware.insert_before ActionDispatch::Session::CookieStore, 'ConditionalSessionMiddleware'
-    
-    # Autoload custom middleware
-    config.autoload_paths << Rails.root.join('app', 'middleware')
 
     # ===========================================
     # ⚙️ ADDITIONAL API CONFIGURATIONS
