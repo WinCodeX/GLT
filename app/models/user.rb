@@ -1,9 +1,12 @@
-# app/models/user.rb - Integrated with Rolify and scanning functionality
+# app/models/user.rb - Enhanced with Google OAuth
+
 class User < ApplicationRecord
-  # Include default devise modules + JWT
+  # Include default devise modules + JWT + Omniauth
   devise :database_authenticatable, :registerable,
          :recoverable, :rememberable, :validatable,
-         :jwt_authenticatable, jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null
+         :jwt_authenticatable, :omniauthable,
+         jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
+         omniauth_providers: [:google_oauth2]
 
   # ActiveStorage for avatar
   has_one_attached :avatar
@@ -36,6 +39,10 @@ class User < ApplicationRecord
   validates :first_name, presence: true, length: { minimum: 2, maximum: 100 }
   validates :phone_number, format: { with: /\A\+?[0-9\s\-\(\)]+\z/, message: "Invalid phone format" }, allow_blank: true
 
+  # Google OAuth fields validation
+  validates :provider, inclusion: { in: [nil, 'google_oauth2'] }
+  validates :uid, uniqueness: { scope: :provider }, allow_nil: true
+
   # Callbacks
   after_create :assign_default_role
   before_validation :normalize_phone
@@ -45,6 +52,127 @@ class User < ApplicationRecord
   scope :inactive, -> { where(last_seen_at: nil).or(where('last_seen_at <= ?', 30.days.ago)) }
   scope :with_scanning_activity, -> { joins(:package_tracking_events).distinct }
   scope :recent_scanners, -> { joins(:package_tracking_events).where(package_tracking_events: { created_at: 1.week.ago.. }).distinct }
+  scope :google_users, -> { where(provider: 'google_oauth2') }
+  scope :regular_users, -> { where(provider: nil) }
+
+  # ===========================================
+  # 🔐 GOOGLE OAUTH METHODS
+  # ===========================================
+
+  # Main method called by Devise when Google OAuth succeeds
+  def self.from_omniauth(auth)
+    Rails.logger.info "Google OAuth callback received for email: #{auth.info.email}"
+    
+    # Find existing user by email or create new one
+    user = find_by(email: auth.info.email)
+    
+    if user
+      # Update existing user with Google info
+      user.update_google_oauth_info(auth)
+      Rails.logger.info "Updated existing user: #{user.email}"
+    else
+      # Create new user from Google OAuth
+      user = create_from_google_oauth(auth)
+      Rails.logger.info "Created new user from Google OAuth: #{user.email}"
+    end
+    
+    user
+  end
+
+  # Create new user from Google OAuth data
+  def self.create_from_google_oauth(auth)
+    password = Devise.friendly_token[0, 20]
+    
+    user = create!(
+      email: auth.info.email,
+      password: password,
+      password_confirmation: password,
+      first_name: auth.info.first_name || auth.info.name&.split&.first || 'Google',
+      last_name: auth.info.last_name || auth.info.name&.split&.last || 'User',
+      provider: auth.provider,
+      uid: auth.uid,
+      confirmed_at: Time.current, # Auto-confirm Google users
+      google_image_url: auth.info.image
+    )
+    
+    # Attach Google profile image if available
+    user.attach_google_avatar(auth.info.image) if auth.info.image.present?
+    
+    user
+  end
+
+  # Update existing user with Google OAuth info
+  def update_google_oauth_info(auth)
+    update!(
+      provider: auth.provider,
+      uid: auth.uid,
+      google_image_url: auth.info.image,
+      # Update names only if they're currently blank
+      first_name: first_name.present? ? first_name : (auth.info.first_name || auth.info.name&.split&.first),
+      last_name: last_name.present? ? last_name : (auth.info.last_name || auth.info.name&.split&.last),
+      confirmed_at: confirmed_at || Time.current # Confirm if not already confirmed
+    )
+    
+    # Update avatar only if user doesn't have one
+    attach_google_avatar(auth.info.image) if auth.info.image.present? && !avatar.attached?
+  end
+
+  # Check if user signed up via Google OAuth
+  def google_user?
+    provider == 'google_oauth2' && uid.present?
+  end
+
+  # Check if user can sign in with password (not Google-only)
+  def password_required?
+    return false if google_user? && encrypted_password.blank?
+    super
+  end
+
+  # Check if user needs to set a password
+  def needs_password?
+    google_user? && encrypted_password.blank?
+  end
+
+  # Allow Google users to set password later
+  def set_password(password, password_confirmation)
+    return false unless needs_password?
+    
+    self.password = password
+    self.password_confirmation = password_confirmation
+    save
+  end
+
+  # Attach Google profile image as avatar
+  def attach_google_avatar(image_url)
+    return unless image_url.present?
+    
+    begin
+      require 'open-uri'
+      downloaded_image = URI.open(image_url)
+      avatar.attach(
+        io: downloaded_image,
+        filename: "google_avatar_#{id}.jpg",
+        content_type: 'image/jpeg'
+      )
+      Rails.logger.info "Attached Google avatar for user: #{email}"
+    rescue => e
+      Rails.logger.error "Failed to attach Google avatar for user #{email}: #{e.message}"
+    end
+  end
+
+  # Generate secure token for Google OAuth
+  def self.generate_google_oauth_token(user)
+    payload = {
+      user_id: user.id,
+      email: user.email,
+      provider: 'google_oauth2',
+      exp: 24.hours.from_now.to_i,
+      iat: Time.current.to_i,
+      google_user: true
+    }
+    
+    JWT.encode(payload, Rails.application.secret_key_base, 'HS256')
+  end
 
   # EXISTING: Messaging system methods
   def mark_online!
@@ -410,7 +538,9 @@ class User < ApplicationRecord
       'full_name' => full_name,
       'display_name' => display_name,
       'initials' => initials,
-      'roles' => roles.pluck(:name)
+      'roles' => roles.pluck(:name),
+      'google_user' => google_user?,
+      'needs_password' => needs_password?
     )
     
     # Include role-specific details if requested
