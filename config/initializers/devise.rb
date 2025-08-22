@@ -208,18 +208,20 @@ Devise.setup do |config|
   # 🔍 LOGGING AND DEBUGGING
   # ===========================================
   
-  # Log JWT configuration
+  # Log Devise configuration (Fixed - removed problematic JWT access)
   Rails.application.config.after_initialize do
-    if defined?(Devise) && defined?(Devise::JWT)
-      Rails.logger.info "✅ Devise JWT initialized"
-      Rails.logger.info "🔐 JWT Algorithm: #{Devise.jwt.algorithm}"
-      Rails.logger.info "⏰ JWT Expiration: #{Devise.jwt.expiration_time} seconds"
-      Rails.logger.info "📍 JWT Dispatch Routes: #{Devise.jwt.dispatch_requests.size} routes"
-      Rails.logger.info "🚪 JWT Revocation Routes: #{Devise.jwt.revocation_requests.size} routes"
-    end
-    
-    if defined?(Devise.omniauth_providers)
-      Rails.logger.info "🔐 OmniAuth Providers: #{Devise.omniauth_providers.join(', ')}"
+    if defined?(Devise)
+      Rails.logger.info "✅ Devise initialized"
+      
+      # Check if JWT is available
+      if defined?(Devise::JWT)
+        Rails.logger.info "🔐 Devise JWT is available"
+      end
+      
+      # Check OmniAuth providers
+      if Devise.respond_to?(:omniauth_providers) && Devise.omniauth_providers.any?
+        Rails.logger.info "🔐 OmniAuth Providers: #{Devise.omniauth_providers.join(', ')}"
+      end
     end
   end
 end
