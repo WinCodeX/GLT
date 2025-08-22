@@ -64,35 +64,32 @@ Devise.setup do |config|
   config.sign_out_via = :delete
 
   # ===========================================
-  # 🔐 JWT CONFIGURATION (TEMPORARILY DISABLED)
+  # 🔐 JWT CONFIGURATION (RE-ENABLED - SIMPLIFIED)
   # ===========================================
   
-  # JWT configuration temporarily disabled until basic auth works
-  # Will re-enable once the server starts successfully
-  
-  # config.jwt do |jwt|
-  #   jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 
-  #                Rails.application.credentials.jwt_secret_key || 
-  #                Rails.application.secret_key_base
-  #
-  #   jwt.dispatch_requests = [
-  #     ['POST', %r{^/api/v1/login$}],
-  #     ['POST', %r{^/api/v1/signup$}],
-  #     ['GET', %r{^/api/v1/auth/google_oauth2/callback$}],
-  #     ['POST', %r{^/api/v1/auth/google_oauth2/callback$}],
-  #     ['POST', %r{^/api/v1/auth/google/login$}],
-  #     ['POST', %r{^/api/v1/google_login$}],
-  #     ['POST', %r{^/mobile/v1/auth/google$}]
-  #   ]
-  #   
-  #   jwt.revocation_requests = [
-  #     ['DELETE', %r{^/api/v1/logout$}],
-  #     ['POST', %r{^/api/v1/logout$}]
-  #   ]
-  #   
-  #   jwt.expiration_time = 24.hours.to_i
-  #   jwt.algorithm = 'HS256'
-  # end
+  config.jwt do |jwt|
+    # Use environment variable or Rails credentials for JWT secret
+    jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 
+                 Rails.application.credentials.jwt_secret_key || 
+                 Rails.application.secret_key_base
+
+    # JWT dispatch routes - simplified
+    jwt.dispatch_requests = [
+      ['POST', %r{^/api/v1/login$}],
+      ['POST', %r{^/api/v1/signup$}],
+      ['POST', %r{^/api/v1/google_login$}]
+    ]
+    
+    # JWT revocation routes
+    jwt.revocation_requests = [
+      ['DELETE', %r{^/api/v1/logout$}],
+      ['POST', %r{^/api/v1/logout$}]
+    ]
+    
+    # JWT token configuration
+    jwt.expiration_time = 24.hours.to_i
+    jwt.algorithm = 'HS256'
+  end
 
   # ===========================================
   # 🔐 GOOGLE OAUTH CONFIGURATION (FIXED)
