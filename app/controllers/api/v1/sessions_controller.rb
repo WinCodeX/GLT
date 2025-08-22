@@ -1,15 +1,12 @@
-# app/controllers/api/v1/sessions_controller.rb - Fixed for devise-jwt
+# app/controllers/api/v1/sessions_controller.rb - API-only version
 
 module Api
   module V1
     class SessionsController < Devise::SessionsController
       respond_to :json
-      before_action :configure_sign_in_params, only: [:create]
-      protect_from_forgery with: :null_session
-      skip_before_action :verify_authenticity_token, if: :json_request?
 
       # ===========================================
-      # 🔐 REGULAR LOGIN (Simplified for devise-jwt)
+      # 🔐 REGULAR LOGIN
       # ===========================================
 
       def create
@@ -31,7 +28,6 @@ module Api
             resource.mark_online!
             resource.unlock_access! if resource.respond_to?(:unlock_access!)
             
-            # devise-jwt automatically generates the token - we just need to render the response
             render json: {
               status: 'success',
               message: 'Logged in successfully',
@@ -72,13 +68,15 @@ module Api
       end
 
       # ===========================================
-      # 🔐 GOOGLE OAUTH METHODS (Simplified)
+      # 🔐 GOOGLE OAUTH METHODS
       # ===========================================
 
-      # Step 1: Initialize Google OAuth flow (for web clients)
+      # Step 1: Initialize Google OAuth flow
       def google_oauth_init
         state = SecureRandom.urlsafe_base64(32)
-        session[:oauth_state] = state
+        
+        # Store state in cache instead of session for API
+        Rails.cache.write("oauth_state_#{state}", true, expires_in: 10.minutes)
         
         redirect_url = build_google_oauth_url(state)
         
@@ -90,7 +88,7 @@ module Api
         }, status: :ok
       end
 
-      # Step 2: Handle Google OAuth callback (from web OAuth flow)
+      # Step 2: Handle Google OAuth callback
       def google_oauth_callback
         Rails.logger.info "🔐 Google OAuth callback initiated"
         
@@ -409,12 +407,15 @@ module Api
       end
 
       def verify_oauth_state(state)
-        return false unless state.present? && session[:oauth_state].present?
+        return false unless state.present?
         
-        # Constant time comparison to prevent timing attacks
-        ActiveSupport::SecurityUtils.secure_compare(state, session[:oauth_state]).tap do
-          # Clear the state after verification
-          session.delete(:oauth_state)
+        # Check if state exists in cache (API-friendly approach)
+        cache_key = "oauth_state_#{state}"
+        if Rails.cache.exist?(cache_key)
+          Rails.cache.delete(cache_key)  # Use once and delete
+          true
+        else
+          false
         end
       end
 
@@ -466,17 +467,12 @@ module Api
       # 🔧 UTILITY METHODS
       # ===========================================
 
-      def json_request?
-        request.format.json?
-      end
-
       def configure_sign_in_params
         devise_parameter_sanitizer.permit(:sign_in, keys: [:email, :password])
       end
 
-      # Simplified user serialization - no manual token handling
+      # User serialization - no manual token handling needed with devise-jwt
       def serialize_user(user)
-        # Use your existing UserSerializer
         if defined?(UserSerializer)
           UserSerializer.new(user).as_json
         else
@@ -495,10 +491,9 @@ module Api
       end
 
       # ===========================================
-      # 🔧 DEVISE OVERRIDES (Simplified for devise-jwt)
+      # 🔧 DEVISE OVERRIDES
       # ===========================================
 
-      # Override respond_with for regular login - devise-jwt handles the token automatically
       def respond_with(resource, _opts = {})
         if resource.persisted?
           render json: {
