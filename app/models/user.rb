@@ -2,13 +2,13 @@
 
 class User < ApplicationRecord
   # ===========================================
-  # 🔐 DEVISE CONFIGURATION WITH JWT
+  # 🔐 DEVISE CONFIGURATION (JWT RE-ENABLED)
   # ===========================================
   
   # Include Devise modules with JWT support
   devise :database_authenticatable, :registerable,
          :recoverable, :rememberable, :validatable,
-         :jwt_authenticatable,  # This is crucial for JWT support
+         :jwt_authenticatable,  # Re-enabled JWT
          :omniauthable,
          jwt_revocation_strategy: Devise::JWT::RevocationStrategies::Null,
          omniauth_providers: [:google_oauth2]
@@ -70,7 +70,7 @@ class User < ApplicationRecord
   scope :regular_users, -> { where(provider: nil) }
 
   # ===========================================
-  # 🔐 JWT METHODS (Required for devise-jwt)
+  # 🔐 JWT METHODS (Re-enabled)
   # ===========================================
 
   # JWT subject (required by devise-jwt)
