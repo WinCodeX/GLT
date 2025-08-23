@@ -4,13 +4,12 @@
 module Api
   module V1
     class OmniauthCallbacksController < ApplicationController
-      # Skip CSRF for OAuth callbacks
-      skip_before_action :verify_authenticity_token, only: [:google_oauth2, :failure]
+      # Inherit from ApplicationController - keep your existing architecture
       
       respond_to :json
 
       # ===========================================
-      # 🚀 OAUTH INITIALIZATION (for state parameter)
+      # 🚀 OAUTH INITIALIZATION (for mobile state parameter)
       # ===========================================
 
       def init
@@ -54,7 +53,7 @@ module Api
             # Mark user as online
             @user.mark_online! if @user.respond_to?(:mark_online!)
             
-            # Generate JWT token using Devise-JWT
+            # Generate JWT token for the user
             token = generate_jwt_token(@user)
             
             # Log successful authentication
@@ -138,26 +137,23 @@ module Api
         session[:mobile_oauth] == true || params[:mobile] == 'true'
       end
 
-      # Generate JWT token for the user
+      # Generate JWT token for the user (adapt to your JWT setup)
       def generate_jwt_token(user)
         # If using devise-jwt, you can generate token like this:
         if defined?(Warden::JWTAuth::UserEncoder)
           # Generate JWT token using devise-jwt
           token, _payload = Warden::JWTAuth::UserEncoder.new.call(user, :user, nil)
           token
-        elsif user.respond_to?(:generate_jwt)
-          # If you have a custom JWT method
-          user.generate_jwt
         else
-          # Fallback - you'll need to implement this based on your JWT setup
-          JWT.encode(
-            {
-              user_id: user.id,
-              email: user.email,
-              exp: 30.days.from_now.to_i
-            },
-            Rails.application.secrets.secret_key_base || Rails.application.secret_key_base
-          )
+          # Fallback JWT generation - adjust based on your setup
+          payload = {
+            user_id: user.id,
+            email: user.email,
+            exp: 30.days.from_now.to_i
+          }
+          
+          secret = Rails.application.secrets.secret_key_base || Rails.application.secret_key_base
+          JWT.encode(payload, secret, 'HS256')
         end
       end
 
@@ -202,16 +198,21 @@ module Api
         if mobile_request?
           redirect_to_mobile_error(message, code)
         else
-          render json: {
-            status: 'error',
-            message: message,
-            code: code,
-            **additional_data
-          }, status: :unprocessable_entity
+          render_oauth_error(message, code, additional_data)
         end
       end
 
-      # Serialize user data for JSON response
+      # Render standardized OAuth error response (your original method)
+      def render_oauth_error(message, code, additional_data = {})
+        render json: {
+          status: 'error',
+          message: message,
+          code: code,
+          **additional_data
+        }, status: :unprocessable_entity
+      end
+
+      # Serialize user data for JSON response (your original method)
       def serialize_user(user)
         # Use UserSerializer if available, otherwise fallback to basic serialization
         if defined?(UserSerializer)
@@ -231,7 +232,7 @@ module Api
         end
       end
 
-      # Check if user profile is complete
+      # Check if user profile is complete (your original method)
       def profile_complete?(user)
         user.first_name.present? && 
         user.last_name.present? && 
