@@ -23,7 +23,7 @@ Rails.application.configure do
   end
 
   # ==========================================
-  # 🗄️ STORAGE CONFIGURATION - FIXED
+  # 🗄️ STORAGE CONFIGURATION - FIXED FOR R2
   # ==========================================
   
   # Use Cloudflare R2 storage in production
@@ -81,29 +81,6 @@ Rails.application.configure do
   }
 
   # ==========================================
-  # 📱 CORS CONFIGURATION (for Expo Go/React Native)
-  # ==========================================
-  
-  # Enable CORS for mobile app access
-  config.middleware.insert_before 0, Rack::Cors do
-    allow do
-      # In production, be more specific about origins
-      origins ENV['ALLOWED_ORIGINS']&.split(',') || [
-        'http://localhost:8081',           # Expo Go default
-        'exp://192.168.100.73:8081',       # Expo Go with your IP
-        /^https:\/\/.*\.expo\.dev$/,       # Expo hosted apps
-        /^https:\/\/.*\.exp\.direct$/      # Expo direct URLs
-      ]
-      
-      resource '*',
-        headers: :any,
-        methods: [:get, :post, :put, :patch, :delete, :options, :head],
-        expose: ['Authorization'],
-        credentials: false
-    end
-  end
-
-  # ==========================================
   # 📝 LOGGING CONFIGURATION
   # ==========================================
   
@@ -144,4 +121,6 @@ Rails.application.configure do
 
   # Compress responses using gzip
   config.middleware.use Rack::Deflater
+
+  # NOTE: CORS is handled in config/initializers/cors.rb - DO NOT add duplicate CORS here
 end
