@@ -37,11 +37,11 @@ Rails.application.configure do
   # config.action_dispatch.x_sendfile_header = "X-Accel-Redirect" # for NGINX
 
   # ==========================================
-  # 🗄️ CLOUDFLARE R2 STORAGE CONFIGURATION
+  # 🗄️ STORAGE CONFIGURATION
   # ==========================================
   
-  # Use Cloudflare R2 for file storage in production
-  config.active_storage.service = :cloudflare
+  # Use local storage service (we handle R2 manually in controller)
+  config.active_storage.service = :local
 
   # ==========================================
   # 🔧 URL & HOST CONFIGURATION
