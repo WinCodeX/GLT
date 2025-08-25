@@ -160,6 +160,14 @@ GEM
       net-http (>= 0.5.0)
     fast_jsonapi (1.5)
       activesupport (>= 4.2)
+    ffi (1.17.2-aarch64-linux-gnu)
+    ffi (1.17.2-aarch64-linux-musl)
+    ffi (1.17.2-arm-linux-gnu)
+    ffi (1.17.2-arm-linux-musl)
+    ffi (1.17.2-arm64-darwin)
+    ffi (1.17.2-x86_64-darwin)
+    ffi (1.17.2-x86_64-linux-gnu)
+    ffi (1.17.2-x86_64-linux-musl)
     globalid (1.2.1)
       activesupport (>= 6.1)
     google-id-token (1.4.2)
@@ -168,6 +176,9 @@ GEM
     hiredis (0.6.3)
     i18n (1.14.7)
       concurrent-ruby (~> 1.0)
+    image_processing (1.14.0)
+      mini_magick (>= 4.9.5, < 6)
+      ruby-vips (>= 2.0.17, < 3)
     io-console (0.8.1)
     irb (1.15.2)
       pp (>= 0.6.0)
@@ -324,6 +335,9 @@ GEM
       chunky_png (~> 1.0)
       rqrcode_core (~> 1.0)
     rqrcode_core (1.2.0)
+    ruby-vips (2.2.5)
+      ffi (~> 1.12)
+      logger
     securerandom (0.4.1)
     snaky_hash (2.0.3)
       hashie (>= 0.1.0, < 6)
@@ -362,7 +376,7 @@ PLATFORMS
 DEPENDENCIES
   active_model_serializers
   active_storage_validations
-  aws-sdk-s3 (~> 1.0)
+  aws-sdk-s3
   bootsnap
   cancancan
   chunky_png
@@ -373,6 +387,7 @@ DEPENDENCIES
   fast_jsonapi
   google-id-token
   hiredis
+  image_processing (~> 1.2)
   mini_magick
   omniauth (~> 2.1)
   omniauth-google-oauth2 (~> 1.2)
