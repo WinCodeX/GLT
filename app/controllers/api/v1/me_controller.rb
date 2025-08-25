@@ -1,21 +1,20 @@
-# app/controllers/api/v1/me_controller.rb - Updated to use Rails URLs
+# app/controllers/api/v1/me_controller.rb
 module Api
   module V1
     class MeController < ApplicationController
+      include AvatarHelper
+      
       before_action :authenticate_user!
 
       def show
         render json: { 
           id: current_user.id, 
           email: current_user.email,
-          avatar_url: rails_avatar_url
+          avatar_url: avatar_api_url(current_user)
         }
       end
 
       def update_avatar
-        # Keep your existing update_avatar method exactly as it is
-        # The upload part stays the same, only URL generation changes
-        
         unless params[:avatar].present?
           return render json: { 
             success: false,
@@ -31,7 +30,7 @@ module Api
           # Remove existing avatar
           current_user.avatar.purge if current_user.avatar.attached?
           
-          # Upload to R2 via Active Storage (same as before)
+          # Upload to R2 via Active Storage (now using cloudflare service)
           current_user.avatar.attach(
             io: avatar_file.tempfile,
             filename: avatar_file.original_filename || 'avatar.jpg',
@@ -44,13 +43,16 @@ module Api
             raise "Avatar attachment failed"
           end
           
+          # Generate the proper avatar URL
+          new_avatar_url = avatar_api_url(current_user)
+          
           Rails.logger.info "✅ Avatar uploaded successfully"
-          Rails.logger.info "🔗 Avatar will be served at: #{rails_avatar_url}"
+          Rails.logger.info "🔗 Avatar URL: #{new_avatar_url}"
           
           render json: {
             success: true,
             message: 'Avatar updated successfully',
-            avatar_url: rails_avatar_url  # Now returns Rails URL instead of R2
+            avatar_url: new_avatar_url
           }
           
         rescue => e
@@ -71,16 +73,6 @@ module Api
           message: 'Avatar deleted',
           avatar_url: nil
         }
-      end
-
-      private
-
-      def rails_avatar_url
-        return nil unless current_user.avatar.attached?
-        
-        # Generate Rails URL that will serve the image
-        base_url = Rails.env.production? ? 'https://glt-53x8.onrender.com' : 'http://192.168.100.73:3000'
-        "#{base_url}/api/v1/users/#{current_user.id}/avatar"
       end
     end
   end
