@@ -97,15 +97,30 @@ module Api
         
         begin
           if Rails.env.production?
-            # TODO: Use R2 URL when ready
-            rails_blob_url(current_user.avatar)
+            # Production: Generate R2 public URL
+            public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL']
+            
+            if public_base.blank?
+              Rails.logger.error "CLOUDFLARE_R2_PUBLIC_URL not configured!"
+              return nil
+            end
+            
+            # Get the blob key that was just uploaded
+            blob_key = current_user.avatar.blob.key
+            Rails.logger.info "🔗 Generating R2 URL with key: #{blob_key}"
+            
+            url = "#{public_base}/#{blob_key}"
+            Rails.logger.info "🔗 Final avatar URL: #{url}"
+            return url
+            
           else
             # Development: simple Rails URL
             base_url = "#{request.protocol}#{request.host_with_port}"
             "#{base_url}#{rails_blob_path(current_user.avatar)}"
           end
         rescue => e
-          Rails.logger.error "Avatar URL generation failed: #{e.message}"
+          Rails.logger.error "❌ Avatar URL generation failed: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.first(5).join("\n")
           nil
         end
       end
