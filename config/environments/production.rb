@@ -41,7 +41,7 @@ Rails.application.configure do
   # ==========================================
   
   # Use local storage service (we handle R2 manually in controller)
-  config.active_storage.service = :local
+  config.active_storage.service = :cloudflare
 
   # ==========================================
   # 🔧 URL & HOST CONFIGURATION
