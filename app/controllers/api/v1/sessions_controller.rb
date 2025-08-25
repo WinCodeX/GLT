@@ -7,9 +7,7 @@ module Api
     class SessionsController < Devise::SessionsController
       respond_to :json
       
-      # Force JSON format for all actions
-      before_action :force_json_format
-
+      
       # ===========================================
       # 🔐 REGULAR LOGIN (Fixed)
       # ===========================================
