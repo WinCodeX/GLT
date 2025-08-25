@@ -2,7 +2,7 @@
 module Api
   module V1
     class MeController < ApplicationController
-      include AvatarHelper  # Include our new avatar helper
+      include AvatarHelper  # Include our avatar helper
       
       before_action :authenticate_user!
 
@@ -10,8 +10,10 @@ module Api
         render json: { 
           id: current_user.id, 
           email: current_user.email,
-          avatar_url: avatar_url(current_user, variant: :medium) # Uses AvatarHelper
-        }
+          avatar_url: avatar_url(current_user, variant: :medium), # Fixed: Use AvatarHelper
+          # Add debug info in development
+          debug: Rails.env.development? ? avatar_debug_info : nil
+        }.compact # Remove debug key if nil
       end
 
       def update_avatar
@@ -89,46 +91,46 @@ module Api
       end
 
       # Debug endpoint to test storage configuration
-      def storage_debug
+      def avatar_debug
         return head :forbidden unless Rails.env.development?
         
-        storage_info = {
+        debug_info = {
           environment: Rails.env,
-          active_storage_service: Rails.application.config.active_storage.service,
+          storage_service: Rails.application.config.active_storage.service,
+          user_id: current_user.id,
+          avatar_attached: current_user.avatar.attached?,
+          avatar_info: current_user.avatar.attached? ? {
+            filename: current_user.avatar.filename.to_s,
+            content_type: current_user.avatar.content_type,
+            byte_size: current_user.avatar.byte_size,
+            blob_key: current_user.avatar.blob.key,
+            service_name: current_user.avatar.blob.service_name
+          } : nil,
+          generated_url: current_user.avatar.attached? ? avatar_url(current_user, variant: :medium) : nil,
           host_info: host_debug_info, # From UrlHostHelper
           r2_config: {
             bucket: ENV['CLOUDFLARE_R2_BUCKET'],
             account_id: ENV['CLOUDFLARE_R2_ACCOUNT_ID'],
             public_url: ENV['CLOUDFLARE_R2_PUBLIC_URL'],
-            has_credentials: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'].present?
-          },
-          user_avatar: {
-            attached: current_user.avatar.attached?,
-            url: current_user.avatar.attached? ? avatar_url(current_user) : nil
+            has_access_key: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'].present?,
+            has_secret_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'].present?
           }
         }
         
-        render json: storage_info
+        render json: debug_info
       end
 
       private
 
-      # Optional: Keep your simple method as backup
-      def avatar_url_simple_backup
-        return nil unless current_user.avatar.attached?
+      # Debug info for avatar generation
+      def avatar_debug_info
+        return nil unless Rails.env.development?
         
-        begin
-          if Rails.env.production?
-            # In production, this should use R2 URLs
-            avatar_url(current_user, variant: :medium)
-          else
-            # Development: use the original simple approach
-            base_url = "#{request.protocol}#{request.host_with_port}"
-            "#{base_url}/rails/active_storage/blobs/#{current_user.avatar.signed_id}/#{current_user.avatar.filename}"
-          end
-        rescue
-          nil
-        end
+        {
+          attached: current_user.avatar.attached?,
+          storage_service: Rails.application.config.active_storage.service,
+          generated_url: current_user.avatar.attached? ? avatar_url(current_user, variant: :medium) : nil
+        }
       end
     end
   end
