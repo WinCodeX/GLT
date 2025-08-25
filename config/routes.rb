@@ -71,9 +71,18 @@ Rails.application.routes.draw do
       # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
-      get 'me', to: 'me#show', defaults: { format: :json }
-      put 'me/avatar', to: 'me#update_avatar'
-      delete 'me/avatar', to: 'me#destroy_avatar'
+     #get 'me', to: 'me#show', defaults: { format: :json }
+
+       resource :me, only: [:show, :update] do
+        patch :update_avatar, on: :collection
+        delete :destroy_avatar, on: :collection
+      end
+      get 'users/:user_id/avatar', to: 'avatars#show'
+      
+
+      #put 'me/avatar', to: 'me#update_avatar'
+     # delete 'me/avatar', to: 'me#destroy_avatar'
+
       get 'ping', to: 'status#ping', defaults: { format: :json }
       get 'users/search', to: 'users#search'
       post 'typing_status', to: 'typing_status#create'
