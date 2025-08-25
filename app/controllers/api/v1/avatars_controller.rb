@@ -1,11 +1,9 @@
-# app/controllers/api/v1/avatars_controller.rb - Fixed to bypass authentication
+# app/controllers/api/v1/avatars_controller.rb
 module Api
   module V1
     class AvatarsController < ApplicationController
       # Skip authentication for public avatar access
       skip_before_action :authenticate_user!, only: [:show]
-      # If you have other auth callbacks, skip them too:
-      # skip_before_action :verify_authenticity_token, only: [:show]
       
       def show
         user = User.find_by(id: params[:user_id])
@@ -20,18 +18,16 @@ module Api
           # Set proper caching headers
           expires_in 1.hour, public: true
           
-          # Get image data from R2
-          image_data = if Rails.env.production?
-            get_image_from_r2(blob.key)
+          # Since we now use cloudflare storage, we should redirect to the public URL
+          if Rails.env.production?
+            redirect_to_r2_url(user)
           else
-            blob.download  # Local storage in development
+            # Development: serve directly
+            send_data blob.download,
+              type: blob.content_type || 'image/jpeg',
+              disposition: 'inline',
+              filename: blob.filename.to_s
           end
-          
-          # Send image with proper headers
-          send_data image_data,
-            type: blob.content_type || 'image/jpeg',
-            disposition: 'inline',
-            filename: blob.filename.to_s
             
         rescue => e
           Rails.logger.error "❌ Error serving avatar for user #{params[:user_id]}: #{e.message}"
@@ -41,36 +37,24 @@ module Api
       
       private
       
-      def get_image_from_r2(blob_key)
-        require 'aws-sdk-s3'
-        
-        # Create R2 client
-        client = Aws::S3::Client.new(
-          access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
-          secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
-          region: 'auto',
-          endpoint: "https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com",
-          force_path_style: true
-        )
-        
-        # Get the file from R2
-        response = client.get_object(
-          bucket: ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp',
-          key: blob_key
-        )
-        
-        response.body.read
+      def redirect_to_r2_url(user)
+        # Try to get the R2 public URL
+        begin
+          # Use rails_blob_url which should now work with cloudflare service
+          avatar_url = rails_blob_url(user.avatar, host: 'https://glt-53x8.onrender.com')
+          redirect_to avatar_url, allow_other_host: true
+        rescue => e
+          Rails.logger.error "Failed to generate R2 URL: #{e.message}"
+          send_default_avatar
+        end
       end
       
       def send_default_avatar
-        # Send a default generated avatar or 404
+        # Send a default generated avatar with proper redirect permission
         user_id = params[:user_id] || 'user'
         
-        # Option 1: Redirect to default avatar service
-        redirect_to "https://ui-avatars.com/api/?name=#{user_id}&size=150&background=6366f1&color=ffffff"
-        
-        # Option 2: Return 404 (uncomment this and comment above if preferred)
-        # head :not_found
+        redirect_to "https://ui-avatars.com/api/?name=#{user_id}&size=150&background=6366f1&color=ffffff", 
+                   allow_other_host: true
       end
     end
   end
