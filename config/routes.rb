@@ -71,7 +71,7 @@ Rails.application.routes.draw do
       # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
-     #get 'me', to: 'me#show', defaults: { format: :json }
+     get 'me', to: 'me#show', defaults: { format: :json }
 
        resource :me, only: [:show, :update] do
         patch :update_avatar, on: :collection
