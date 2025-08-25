@@ -13,7 +13,7 @@ cloudflare:
   secret_access_key: <%= ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'] %>
   region: auto
   bucket: gltapp
-  endpoint: https://92fd9199e9a7d6076.r2.cloudflarestorage.com
+  endpoint: https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com
   public: true
   force_path_style: true
 
