@@ -80,8 +80,8 @@ Rails.application.routes.draw do
       get 'users/:user_id/avatar', to: 'avatars#show'
       
 
-      #put 'me/avatar', to: 'me#update_avatar'
-     # delete 'me/avatar', to: 'me#destroy_avatar'
+      put 'me/avatar', to: 'me#update_avatar'
+      delete 'me/avatar', to: 'me#destroy_avatar'
 
       get 'ping', to: 'status#ping', defaults: { format: :json }
       get 'users/search', to: 'users#search'
