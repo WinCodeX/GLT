@@ -1,4 +1,4 @@
-# app/controllers/api/v1/me_controller.rb - SIMPLE WORKING VERSION
+# app/controllers/api/v1/me_controller.rb - ORIGINAL + R2 URL GENERATION
 module Api
   module V1
     class MeController < ApplicationController
@@ -8,10 +8,8 @@ module Api
         render json: { 
           id: current_user.id, 
           email: current_user.email,
-          avatar_url: simple_avatar_url,
-          avatar_attached: current_user.avatar.attached?,
-          debug_info: Rails.env.development? ? debug_avatar_info : nil
-        }.compact
+          avatar_url: avatar_url_simple
+        }
       end
 
       def update_avatar
@@ -29,127 +27,82 @@ module Api
           Rails.logger.info "📄 File: #{avatar_file.original_filename}, Size: #{avatar_file.size} bytes"
           Rails.logger.info "🗄️ Storage: #{Rails.application.config.active_storage.service}"
           
-          # Simple approach - let Rails handle everything
+          # Remove existing avatar
           current_user.avatar.purge if current_user.avatar.attached?
+          
+          # Use simple attach method (let the initializer handle R2 compatibility)
           current_user.avatar.attach(avatar_file)
           
-          # Force reload to ensure attachment is saved
+          # Verify attachment
           current_user.reload
-          
           unless current_user.avatar.attached?
-            raise "Avatar attachment failed - not attached after save"
+            raise "Avatar attachment failed"
           end
           
-          Rails.logger.info "✅ Avatar attached successfully"
-          Rails.logger.info "🔗 Generated URL: #{simple_avatar_url}"
+          avatar_url = avatar_url_simple
+          Rails.logger.info "✅ Avatar uploaded successfully"
+          Rails.logger.info "🔗 Avatar URL: #{avatar_url}"
           
           render json: {
             success: true,
             message: 'Avatar updated successfully',
-            avatar_url: simple_avatar_url,
-            avatar_attached: current_user.avatar.attached?
+            avatar_url: avatar_url
           }
           
         rescue => e
           Rails.logger.error "❌ Avatar upload error: #{e.class} - #{e.message}"
-          Rails.logger.error e.backtrace.first(10).join("\n")
+          Rails.logger.error e.backtrace.first(5).join("\n")
           
           render json: { 
             success: false,
-            error: "Upload failed: #{e.message}",
-            error_class: e.class.to_s
+            error: "Upload failed: #{e.message}"
           }, status: :unprocessable_entity
         end
       end
 
       def destroy_avatar
-        begin
-          current_user.avatar.purge if current_user.avatar.attached?
-          current_user.reload
-          
-          Rails.logger.info "🗑️ Avatar deleted for user #{current_user.id}"
-          
-          render json: { 
-            success: true, 
-            message: 'Avatar deleted',
-            avatar_url: nil
-          }
-        rescue => e
-          Rails.logger.error "❌ Avatar deletion error: #{e.message}"
-          render json: { 
-            success: false, 
-            error: 'Deletion failed' 
-          }, status: :unprocessable_entity
-        end
-      end
-
-      # Debug endpoint
-      def avatar_debug
-        return head :forbidden unless Rails.env.development?
-        
-        render json: debug_avatar_info
+        current_user.avatar.purge if current_user.avatar.attached?
+        render json: { success: true, message: 'Avatar deleted' }
       end
 
       private
 
-      def simple_avatar_url
+      def avatar_url_simple
         return nil unless current_user.avatar.attached?
         
         begin
           if Rails.env.production?
-            # Production: Generate R2 public URL
+            # Production: Use R2 public URL
             public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL']
             
             if public_base.blank?
-              Rails.logger.error "CLOUDFLARE_R2_PUBLIC_URL not configured!"
-              return nil
+              Rails.logger.error "❌ CLOUDFLARE_R2_PUBLIC_URL not configured!"
+              return fallback_to_rails_url
             end
             
-            # Get the blob key that was just uploaded
             blob_key = current_user.avatar.blob.key
-            Rails.logger.info "🔗 Generating R2 URL with key: #{blob_key}"
-            
-            url = "#{public_base}/#{blob_key}"
-            Rails.logger.info "🔗 Final avatar URL: #{url}"
+            url = "#{public_base.chomp('/')}/#{blob_key}"
+            Rails.logger.info "🔗 Generated R2 URL: #{url}"
             return url
             
           else
-            # Development: simple Rails URL
+            # Development: Use Rails URLs
             base_url = "#{request.protocol}#{request.host_with_port}"
-            "#{base_url}#{rails_blob_path(current_user.avatar)}"
+            "#{base_url}/rails/active_storage/blobs/#{current_user.avatar.signed_id}/#{current_user.avatar.filename}"
           end
         rescue => e
-          Rails.logger.error "❌ Avatar URL generation failed: #{e.class} - #{e.message}"
-          Rails.logger.error e.backtrace.first(5).join("\n")
-          nil
+          Rails.logger.error "❌ Avatar URL generation failed: #{e.message}"
+          fallback_to_rails_url
         end
       end
-
-      def debug_avatar_info
-        {
-          user_id: current_user.id,
-          environment: Rails.env,
-          storage_service: Rails.application.config.active_storage.service,
-          avatar_attached: current_user.avatar.attached?,
-          avatar_details: current_user.avatar.attached? ? {
-            filename: current_user.avatar.filename.to_s,
-            content_type: current_user.avatar.content_type,
-            byte_size: current_user.avatar.byte_size,
-            blob_key: current_user.avatar.blob.key,
-            service_name: current_user.avatar.blob.service_name,
-            created_at: current_user.avatar.created_at
-          } : "No avatar attached",
-          generated_url: simple_avatar_url,
-          request_info: {
-            protocol: request.protocol,
-            host_with_port: request.host_with_port,
-            base_url: "#{request.protocol}#{request.host_with_port}"
-          },
-          active_storage_config: {
-            service: Rails.application.config.active_storage.service,
-            routes_enabled: Rails.application.config.active_storage.draw_routes
-          }
-        }
+      
+      def fallback_to_rails_url
+        begin
+          base_url = "https://glt-53x8.onrender.com"
+          "#{base_url}/rails/active_storage/blobs/#{current_user.avatar.signed_id}/#{current_user.avatar.filename}"
+        rescue
+          nil
+        end
       end
     end
   end
