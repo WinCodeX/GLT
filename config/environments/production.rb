@@ -51,7 +51,7 @@ Rails.application.configure do
   # 📸 AVATAR HOSTS CONFIGURATION (Updated for R2)
   config.x.avatar_hosts = [
     'https://glt-53x8.onrender.com',
-    ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
+    ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-6361267c2d64075820ce8724feff.r2.dev'
   ]
 
   # ==========================================
