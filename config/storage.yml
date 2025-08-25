@@ -6,7 +6,7 @@ local:
   service: Disk
   root: <%= Rails.root.join("storage") %>
 
-# Cloudflare R2 Storage Configuration
+# Cloudflare R2 Storage Configuration (R2 Compatible)
 cloudflare:
   service: S3
   access_key_id: <%= ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'] %>
@@ -14,8 +14,9 @@ cloudflare:
   region: auto
   bucket: gltapp
   endpoint: https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com
-  public: true
   force_path_style: true
+  # Minimal config to avoid R2 conflicts
+  public: true
 
 # Use bin/rails credentials:edit to set the AWS secrets (as aws:access_key_id|secret_access_key)
 # amazon:
