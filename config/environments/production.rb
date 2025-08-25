@@ -36,17 +36,22 @@ Rails.application.configure do
   # config.action_dispatch.x_sendfile_header = "X-Sendfile" # for Apache
   # config.action_dispatch.x_sendfile_header = "X-Accel-Redirect" # for NGINX
 
-  # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
+  # ==========================================
+  # 🗄️ CLOUDFLARE R2 STORAGE CONFIGURATION
+  # ==========================================
+  
+  # Use Cloudflare R2 for file storage in production
+  config.active_storage.service = :cloudflare
 
   # ==========================================
   # 🔧 URL & HOST CONFIGURATION
   # ==========================================
   Rails.application.routes.default_url_options[:host] = 'https://glt-53x8.onrender.com'
 
-  # 📸 AVATAR HOSTS CONFIGURATION (Fix for avatar URL generation)
+  # 📸 AVATAR HOSTS CONFIGURATION (Updated for R2)
   config.x.avatar_hosts = [
-    'https://glt-53x8.onrender.com'
+    'https://glt-53x8.onrender.com',
+    ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-6361267c2d64075820ce8724feff.r2.dev'
   ]
 
   # ==========================================
@@ -67,7 +72,7 @@ Rails.application.configure do
     expires_in: 1.hour 
   }
 
-  # Enable Active Storage optimizations
+  # Enable Active Storage optimizations for R2
   config.active_storage.variant_processor = :mini_magick
   config.active_storage.draw_routes = false # Disable if using custom routes
 
