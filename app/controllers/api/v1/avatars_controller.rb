@@ -1,9 +1,11 @@
-
-# app/controllers/api/v1/avatars_controller.rb - Serve images from R2 via Rails
+# app/controllers/api/v1/avatars_controller.rb - Fixed to bypass authentication
 module Api
   module V1
     class AvatarsController < ApplicationController
-      # No authentication required - public avatar access
+      # Skip authentication for public avatar access
+      skip_before_action :authenticate_user!, only: [:show]
+      # If you have other auth callbacks, skip them too:
+      # skip_before_action :verify_authenticity_token, only: [:show]
       
       def show
         user = User.find_by(id: params[:user_id])
@@ -61,9 +63,14 @@ module Api
       end
       
       def send_default_avatar
-        # Send a default generated avatar
+        # Send a default generated avatar or 404
         user_id = params[:user_id] || 'user'
+        
+        # Option 1: Redirect to default avatar service
         redirect_to "https://ui-avatars.com/api/?name=#{user_id}&size=150&background=6366f1&color=ffffff"
+        
+        # Option 2: Return 404 (uncomment this and comment above if preferred)
+        # head :not_found
       end
     end
   end
