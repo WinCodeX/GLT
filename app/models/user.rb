@@ -197,12 +197,12 @@ class User < ApplicationRecord
   # ===========================================
 
   def mark_online!
-    update!(online: true, last_seen_at: Time.current)
-  end
+  update_columns(online: true, last_seen_at: Time.current)  # ✅ BYPASSES VALIDATIONS
+end
 
-  def mark_offline!
-    update!(online: false, last_seen_at: Time.current)
-  end
+def mark_offline!
+  update_columns(online: false, last_seen_at: Time.current)  # ✅ BYPASSES VALIDATIONS
+end
 
   def full_name
     if first_name.present? || last_name.present?
