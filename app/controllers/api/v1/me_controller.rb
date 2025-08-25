@@ -1,4 +1,4 @@
-# app/controllers/api/v1/me_controller.rb - DIRECT R2 UPLOAD
+# app/controllers/api/v1/me_controller.rb - PROPER Active Storage + R2
 module Api
   module V1
     class MeController < ApplicationController
@@ -8,7 +8,7 @@ module Api
         render json: { 
           id: current_user.id, 
           email: current_user.email,
-          avatar_url: avatar_url_simple
+          avatar_url: avatar_url_for_api
         }
       end
 
@@ -23,48 +23,46 @@ module Api
         avatar_file = params[:avatar]
 
         begin
-          Rails.logger.info "🖼️ Starting DIRECT R2 avatar upload for user #{current_user.id}"
+          Rails.logger.info "🖼️ Starting Active Storage + R2 upload for user #{current_user.id}"
           Rails.logger.info "📄 File: #{avatar_file.original_filename}, Size: #{avatar_file.size} bytes"
+          Rails.logger.info "🗄️ Storage: #{Rails.application.config.active_storage.service}"
           
-          # Remove existing avatar first
+          # Remove existing avatar
           current_user.avatar.purge if current_user.avatar.attached?
           
-          # Upload directly to R2 without Active Storage's upload process
-          uploaded_key = upload_directly_to_r2(avatar_file)
-          
-          # Create the Active Storage records manually
-          blob = ActiveStorage::Blob.create!(
-            key: uploaded_key,
+          # Let Active Storage handle the upload to R2 (this should work with our R2 setup)
+          current_user.avatar.attach(
+            io: avatar_file.tempfile,
             filename: avatar_file.original_filename || 'avatar.jpg',
-            content_type: avatar_file.content_type || 'image/jpeg',
-            byte_size: avatar_file.size,
-            checksum: nil, # Don't store checksum to avoid conflicts
-            service_name: 'cloudflare'
+            content_type: avatar_file.content_type || 'image/jpeg'
           )
           
-          # Create the attachment
-          ActiveStorage::Attachment.create!(
-            name: 'avatar',
-            record_type: 'User',
-            record_id: current_user.id,
-            blob_id: blob.id
-          )
-          
+          # Verify attachment
           current_user.reload
-          avatar_url = avatar_url_simple
+          unless current_user.avatar.attached?
+            raise "Avatar attachment failed"
+          end
           
-          Rails.logger.info "✅ Avatar uploaded directly to R2 successfully"
+          avatar_url = avatar_url_for_api
+          
+          Rails.logger.info "✅ Avatar uploaded via Active Storage to R2"
           Rails.logger.info "🔗 Avatar URL: #{avatar_url}"
           
           render json: {
             success: true,
             message: 'Avatar updated successfully',
-            avatar_url: avatar_url
+            avatar_url: avatar_url,
+            # Additional info for debugging
+            blob_info: {
+              key: current_user.avatar.blob.key,
+              service_name: current_user.avatar.blob.service_name,
+              filename: current_user.avatar.filename.to_s
+            }
           }
           
         rescue => e
-          Rails.logger.error "❌ Direct R2 upload error: #{e.class} - #{e.message}"
-          Rails.logger.error e.backtrace.first(5).join("\n")
+          Rails.logger.error "❌ Active Storage upload error: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.first(10).join("\n")
           
           render json: { 
             success: false,
@@ -75,75 +73,47 @@ module Api
 
       def destroy_avatar
         current_user.avatar.purge if current_user.avatar.attached?
-        render json: { success: true, message: 'Avatar deleted' }
+        current_user.reload
+        
+        render json: { 
+          success: true, 
+          message: 'Avatar deleted',
+          avatar_url: nil
+        }
       end
 
       private
 
-      def upload_directly_to_r2(file)
-        # Generate a unique key for the file
-        key = "avatars/#{SecureRandom.uuid}/#{file.original_filename}"
-        
-        # Get R2 client directly - ensure AWS SDK is loaded
-        require 'aws-sdk-s3'
-        
-        client = Aws::S3::Client.new(
-          access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
-          secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
-          region: 'auto',
-          endpoint: "https://#{ENV['CLOUDFLARE_R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
-          force_path_style: true
-        )
-        
-        # Upload with minimal options to avoid checksum conflicts
-        client.put_object(
-          bucket: ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp',
-          key: key,
-          body: file.tempfile,
-          content_type: file.content_type
-          # No checksum parameters at all
-        )
-        
-        Rails.logger.info "📤 File uploaded directly to R2 with key: #{key}"
-        return key
-      end
-
-      def avatar_url_simple
+      def avatar_url_for_api
         return nil unless current_user.avatar.attached?
         
         begin
           if Rails.env.production?
-            # Production: Use R2 public URL
-            public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL']
-            
-            if public_base.blank?
-              Rails.logger.error "❌ CLOUDFLARE_R2_PUBLIC_URL not configured!"
-              return fallback_to_rails_url
-            end
-            
-            blob_key = current_user.avatar.blob.key
-            url = "#{public_base.chomp('/')}/#{blob_key}"
-            Rails.logger.info "🔗 Generated R2 URL: #{url}"
-            return url
-            
+            # Production: Generate R2 public URL
+            generate_r2_public_url
           else
-            # Development: Use Rails URLs
-            base_url = "#{request.protocol}#{request.host_with_port}"
-            "#{base_url}/rails/active_storage/blobs/#{current_user.avatar.signed_id}/#{current_user.avatar.filename}"
+            # Development: Use Rails URL helpers
+            url_for(current_user.avatar)
           end
         rescue => e
           Rails.logger.error "❌ Avatar URL generation failed: #{e.message}"
-          fallback_to_rails_url
-        end
-      end
-      
-      def fallback_to_rails_url
-        begin
-          base_url = "https://glt-53x8.onrender.com"
-          "#{base_url}/rails/active_storage/blobs/#{current_user.avatar.signed_id}/#{current_user.avatar.filename}"
-        rescue
           nil
         end
+      end
+
+      def generate_r2_public_url
+        # Get R2 public URL base
+        public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
+        
+        # Get the blob key from Active Storage
+        blob_key = current_user.avatar.blob.key
+        url = "#{public_base.chomp('/')}/#{blob_key}"
+        
+        Rails.logger.debug "🔗 Generated R2 URL: #{url}"
+        return url
+      rescue => e
+        Rails.logger.error "❌ R2 URL generation failed: #{e.message}"
+        nil
       end
     end
   end
