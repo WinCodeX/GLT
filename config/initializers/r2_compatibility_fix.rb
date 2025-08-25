@@ -1,19 +1,18 @@
 # config/initializers/r2_compatibility_fix.rb
-# Fixed R2 compatibility - loads after Active Storage is initialized
+# Fixed R2 compatibility with valid AWS SDK options only
 
 Rails.application.configure do
   if config.active_storage.service == :cloudflare
     Rails.logger.info "🔧 Configuring R2 compatibility..."
     
-    # Configure AWS SDK globally for R2 compatibility
+    # Configure AWS SDK globally for R2 compatibility (only valid options)
     config.to_prepare do
       Aws.config.update(
-        # Disable automatic checksum computation that conflicts with R2
-        compute_checksums: false,
-        validate_checksums: false,
+        # Only use options that exist in this AWS SDK version
         force_path_style: true,
-        # Disable SSL peer verification issues some users face
-        ssl_verify_peer: true
+        ssl_verify_peer: true,
+        # Remove invalid options: compute_checksums, validate_checksums
+        signature_version: 'v4'
       )
       
       # Only patch after Active Storage is loaded
