@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_22_094654) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_26_122543) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -179,12 +179,39 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_22_094654) do
     t.string "code", null: false
     t.integer "route_sequence"
     t.text "delivery_location"
+    t.string "shop_name"
+    t.string "shop_contact"
+    t.text "collection_address"
+    t.text "items_to_collect"
+    t.decimal "item_value", precision: 10, scale: 2
+    t.text "item_description"
+    t.string "payment_method", default: "mpesa"
+    t.string "payment_status", default: "pending"
+    t.string "payment_reference"
+    t.text "special_instructions"
+    t.string "priority_level", default: "normal"
+    t.boolean "special_handling", default: false
+    t.boolean "requires_payment_advance", default: false
+    t.string "collection_type"
+    t.decimal "pickup_latitude", precision: 10, scale: 6
+    t.decimal "pickup_longitude", precision: 10, scale: 6
+    t.decimal "delivery_latitude", precision: 10, scale: 6
+    t.decimal "delivery_longitude", precision: 10, scale: 6
+    t.datetime "payment_deadline"
+    t.datetime "collection_scheduled_at"
+    t.datetime "collected_at"
     t.index ["code"], name: "idx_packages_code", unique: true
+    t.index ["collection_scheduled_at"], name: "index_packages_on_collection_scheduled_at"
+    t.index ["collection_type"], name: "index_packages_on_collection_type"
+    t.index ["delivery_type", "state"], name: "index_packages_on_delivery_type_and_state"
     t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
     t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
     t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
     t.index ["origin_area_id", "destination_area_id", "route_sequence"], name: "idx_packages_route_seq"
     t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
+    t.index ["payment_status", "state"], name: "index_packages_on_payment_status_and_state"
+    t.index ["payment_status"], name: "index_packages_on_payment_status"
+    t.index ["priority_level"], name: "index_packages_on_priority_level"
     t.index ["user_id"], name: "index_packages_on_user_id"
   end
 
