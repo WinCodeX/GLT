@@ -10,7 +10,7 @@ class Package < ApplicationRecord
   has_many :tracking_events, class_name: 'PackageTrackingEvent', dependent: :destroy
   has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
 
-  # FIXED: Complete enum definitions
+  # FIXED: Complete enum definitions with conflict resolution
   enum delivery_type: { 
     doorstep: 'doorstep', 
     agent: 'agent', 
@@ -28,7 +28,16 @@ class Package < ApplicationRecord
     rejected: 'rejected'
   }
 
-  # ADDED: Missing enums for collection fields
+  # FIXED: Using suffix to avoid method conflicts with state enum
+  # Available methods: payment_pending?, payment_processing?, payment_completed?, payment_failed?, payment_refunded?
+  enum payment_status: {
+    payment_pending: 'pending',
+    payment_processing: 'processing', 
+    payment_completed: 'completed',
+    payment_failed: 'failed',
+    payment_refunded: 'refunded'
+  }, _suffix: true
+  
   enum payment_method: { 
     mpesa: 'mpesa', 
     card: 'card', 
@@ -36,20 +45,13 @@ class Package < ApplicationRecord
     bank_transfer: 'bank_transfer' 
   }
   
-  enum payment_status: {
-    pending: 'pending',
-    processing: 'processing', 
-    completed: 'completed',
-    failed: 'failed',
-    refunded: 'refunded'
-  }
-  
+  # Available methods: low_priority?, normal_priority?, high_priority?, urgent_priority?
   enum priority_level: {
-    low: 'low',
-    normal: 'normal',
-    high: 'high', 
-    urgent: 'urgent'
-  }
+    low_priority: 'low',
+    normal_priority: 'normal',
+    high_priority: 'high', 
+    urgent_priority: 'urgent'
+  }, _suffix: true
   
   enum collection_type: {
     pickup_only: 'pickup_only',
@@ -77,7 +79,7 @@ class Package < ApplicationRecord
   validate :collection_package_requirements, if: :collection?
   validate :fragile_package_requirements, if: :fragile?
   
-  # ADDED: Enum validations
+  # FIXED: Enum validations with correct method names
   validates :payment_method, inclusion: { in: payment_methods.keys }, allow_nil: true
   validates :payment_status, inclusion: { in: payment_statuses.keys }, allow_nil: true
   validates :priority_level, inclusion: { in: priority_levels.keys }, allow_nil: true
@@ -90,7 +92,7 @@ class Package < ApplicationRecord
   after_create :generate_qr_code_files
   before_save :update_package_metadata
 
-  # Scopes
+  # Scopes with corrected enum references
   scope :by_route, ->(origin_id, destination_id) { 
     where(origin_area_id: origin_id, destination_area_id: destination_id) 
   }
@@ -212,7 +214,7 @@ class Package < ApplicationRecord
   def update_package_metadata
     if fragile?
       if respond_to?(:priority_level=)
-        self.priority_level = 'high' if priority_level.blank? || priority_level == 'normal'
+        self.priority_level = 'high' if priority_level.blank? || normal_priority?
       end
       if respond_to?(:special_handling=)
         self.special_handling = true
@@ -296,9 +298,26 @@ class Package < ApplicationRecord
     base_cost + pickup_fee + handling_fee + insurance_fee
   end
 
+  # Helper methods for cleaner enum access
+  def payment_completed?
+    respond_to?(:payment_completed?) && super
+  end
+
+  def payment_pending_status?
+    respond_to?(:payment_pending?) && payment_pending?
+  end
+
+  def high_or_urgent_priority?
+    high_priority? || urgent_priority?
+  end
+
+  def is_express_collection?
+    express_collection?
+  end
+
   # Status helper methods
   def paid?
-    !pending_unpaid?
+    !pending_unpaid? && (payment_completed? || !respond_to?(:payment_status))
   end
 
   def trackable?
@@ -319,15 +338,15 @@ class Package < ApplicationRecord
 
   def needs_priority_handling?
     fragile? || collection? || is_high_value? || 
-    (respond_to?(:priority_level) && ['high', 'urgent'].include?(priority_level))
+    (respond_to?(:high_priority?) && (high_priority? || urgent_priority?))
   end
 
   def estimated_delivery_time
     case delivery_type
     when 'fragile'
-      priority_level == 'urgent' ? "Same day" : "Next day"
+      urgent_priority? ? "Same day" : "Next day"
     when 'collection'
-      collection_type == 'express_collection' ? "Same day" : "1-2 business days"
+      express_collection? ? "Same day" : "1-2 business days"
     when 'doorstep'
       intra_area_shipment? ? "Same day" : "1-2 business days"
     when 'agent'
