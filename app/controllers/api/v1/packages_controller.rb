@@ -258,9 +258,11 @@ module Api
       end
 
       def set_package
-        @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                   origin_area: :location, destination_area: :location, :user)
-                         .find_by(code: params[:id])
+        @package = Package.includes(
+          :origin_area, :destination_area, :origin_agent, :destination_agent, :user,
+          origin_area: :location,
+          destination_area: :location
+        ).find_by(code: params[:id])
         
         unless @package
           render json: { 
