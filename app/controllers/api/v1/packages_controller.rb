@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - ROBUST: Minimal dependencies, maximum compatibility
+# app/controllers/api/v1/packages_controller.rb - FIXED: Pricing integration, code generation, flexible phone validation
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -78,7 +78,7 @@ module Api
         end
       end
 
-      # FIXED: Ultra-robust package creation with minimal dependencies
+      # FIXED: Integrated pricing system and removed phone validation restrictions
       def create
         unless can_create_packages?
           return render json: {
@@ -94,7 +94,7 @@ module Api
           creation_params = extract_package_params
           Rails.logger.info "📦 Extracted params: #{creation_params.inspect}"
           
-          # Validate only the absolute essentials
+          # Validate only the absolute essentials (removed phone format validation)
           validation_errors = validate_essential_fields(creation_params)
           if validation_errors.any?
             Rails.logger.error "❌ Essential validation failed: #{validation_errors}"
@@ -111,13 +111,22 @@ module Api
           # Set area IDs from agents (if agents exist)
           set_area_ids_safely(package)
           
-          # Set defaults that Package model needs
+          # Set initial state - let Package model handle code generation via callbacks
           package.state = 'pending_unpaid'
+          
+          # FIXED: Calculate cost using Price model/controller
+          calculated_cost = calculate_package_price(package)
+          if calculated_cost
+            package.cost = calculated_cost
+            Rails.logger.info "💰 Package cost calculated: KES #{calculated_cost}"
+          else
+            Rails.logger.warn "⚠️ Could not calculate cost, using default"
+          end
           
           Rails.logger.info "🆕 Attempting to save package with: #{package.attributes.inspect}"
 
           if package.save
-            Rails.logger.info "✅ Package created successfully: #{package.code || package.id}"
+            Rails.logger.info "✅ Package created successfully with code: #{package.code || package.id}"
             
             render json: {
               success: true,
@@ -154,6 +163,19 @@ module Api
 
           filtered_params = package_update_params
           set_area_ids_safely(@package, filtered_params)
+
+          # Recalculate cost if relevant fields changed
+          if should_recalculate_cost?(filtered_params)
+            # Create a temporary package with new values to calculate cost
+            temp_package = @package.dup
+            filtered_params.each { |key, value| temp_package.send("#{key}=", value) if temp_package.respond_to?("#{key}=") }
+            
+            new_cost = calculate_package_price(temp_package)
+            if new_cost
+              filtered_params[:cost] = new_cost
+              Rails.logger.info "💰 Recalculated package cost: KES #{new_cost}"
+            end
+          end
 
           if filtered_params[:state] && filtered_params[:state] != @package.state
             unless valid_state_transition?(@package.state, filtered_params[:state])
@@ -376,6 +398,103 @@ module Api
 
       private
 
+      # FIXED: Integrated pricing system using Price model
+      def calculate_package_price(package)
+        return nil unless package.origin_area && package.destination_area && package.delivery_type
+        
+        Rails.logger.info "💰 Calculating price for: origin=#{package.origin_area_id}, destination=#{package.destination_area_id}, delivery=#{package.delivery_type}"
+        
+        begin
+          # Try to use the package's own pricing method first
+          if package.respond_to?(:calculate_delivery_cost)
+            cost = package.calculate_delivery_cost
+            if cost && cost > 0
+              Rails.logger.info "💰 Package model calculated cost: KES #{cost}"
+              return cost
+            end
+          end
+          
+          # Use Price model to find exact pricing
+          price_record = Price.find_by(
+            origin_area_id: package.origin_area_id,
+            destination_area_id: package.destination_area_id,
+            delivery_type: package.delivery_type
+          )
+          
+          if price_record
+            Rails.logger.info "💰 Found price record: KES #{price_record.cost}"
+            return price_record.cost
+          end
+          
+          # Try with agent-specific pricing if available
+          if package.origin_agent_id.present? || package.destination_agent_id.present?
+            agent_price = Price.find_by(
+              origin_area_id: package.origin_area_id,
+              destination_area_id: package.destination_area_id,
+              origin_agent_id: package.origin_agent_id,
+              destination_agent_id: package.destination_agent_id,
+              delivery_type: package.delivery_type
+            )
+            
+            if agent_price
+              Rails.logger.info "💰 Found agent-specific price: KES #{agent_price.cost}"
+              return agent_price.cost
+            end
+          end
+          
+          # Fallback to calculated pricing based on location logic
+          calculated_cost = calculate_fallback_pricing(package)
+          Rails.logger.info "💰 Fallback pricing calculated: KES #{calculated_cost}"
+          return calculated_cost
+          
+        rescue => e
+          Rails.logger.error "💰 Pricing calculation error: #{e.message}"
+          return calculate_fallback_pricing(package)
+        end
+      end
+
+      # FIXED: Fallback pricing logic based on your frontend modal logic
+      def calculate_fallback_pricing(package)
+        return 200 unless package.origin_area && package.destination_area
+        
+        # Check if same area
+        is_intra_area = package.origin_area_id == package.destination_area_id
+        
+        # Check if same location
+        origin_location_id = package.origin_area.location&.id
+        destination_location_id = package.destination_area.location&.id
+        is_intra_location = origin_location_id && destination_location_id && (origin_location_id == destination_location_id)
+        
+        base_cost = case package.delivery_type
+        when 'agent'
+          if is_intra_area
+            120
+          elsif is_intra_location
+            150
+          else
+            180
+          end
+        when 'doorstep', 'mixed'
+          if is_intra_area
+            250
+          elsif is_intra_location
+            300
+          else
+            380
+          end
+        else
+          200
+        end
+        
+        Rails.logger.info "💰 Fallback pricing: intra_area=#{is_intra_area}, intra_location=#{is_intra_location}, delivery=#{package.delivery_type}, cost=#{base_cost}"
+        base_cost
+      end
+
+      def should_recalculate_cost?(params)
+        cost_affecting_fields = [:origin_area_id, :destination_area_id, :delivery_type, :origin_agent_id, :destination_agent_id]
+        cost_affecting_fields.any? { |field| params.key?(field) }
+      end
+
       # FIXED: Safe user role detection
       def get_user_role
         return 'admin' if current_user.respond_to?(:admin?) && current_user.admin?
@@ -477,7 +596,7 @@ module Api
         '+254700000000'
       end
 
-      # FIXED: Minimal essential validation
+      # FIXED: Removed strict phone format validation
       def validate_essential_fields(params)
         errors = []
         
@@ -486,14 +605,8 @@ module Api
         errors << 'Origin agent is required' if params[:origin_agent_id].blank?
         errors << 'Delivery type is required' if params[:delivery_type].blank?
         
-        # Phone format validation (only if present)
-        if params[:receiver_phone].present? && !params[:receiver_phone].match?(/^\+254\d{9}$/)
-          errors << 'Receiver phone must be in format +254XXXXXXXXX'
-        end
-        
-        if params[:sender_phone].present? && !params[:sender_phone].match?(/^\+254\d{9}$/)
-          errors << 'Sender phone must be in format +254XXXXXXXXX'
-        end
+        # REMOVED: Strict phone format validation
+        # Now allows any phone format as requested
         
         # Delivery-specific requirements
         if params[:delivery_type] == 'agent' && params[:destination_agent_id].blank?
@@ -653,7 +766,7 @@ module Api
 
       def set_package
         @package = Package.find_by!(code: params[:id])
-        ensure_package_has_code(@package) if @package
+        # Don't manually generate code - let Package model handle it via callbacks
       rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
@@ -663,27 +776,12 @@ module Api
 
       def set_package_for_authenticated_user
         @package = get_user_packages.find_by!(code: params[:id])
-        ensure_package_has_code(@package) if @package
+        # Don't manually generate code - let Package model handle it via callbacks
       rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
           message: 'Package not found or access denied' 
         }, status: :not_found
-      end
-
-      def ensure_package_has_code(package)
-        return if package.code.present?
-        
-        if defined?(PackageCodeGenerator)
-          begin
-            package.update!(code: PackageCodeGenerator.new(package).generate)
-          rescue => e
-            Rails.logger.error "PackageCodeGenerator failed: #{e.message}"
-            package.update!(code: "PKG#{SecureRandom.hex(4).upcase}")
-          end
-        else
-          package.update!(code: "PKG#{SecureRandom.hex(4).upcase}")
-        end
       end
 
       # Serialization methods with safe field access
@@ -812,7 +910,7 @@ module Api
         permitted_fields = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
           :destination_area_id, :destination_agent_id, :delivery_type, :state,
-          :origin_agent_id, :delivery_location
+          :origin_agent_id, :delivery_location, :cost
         ]
         
         # Add optional fields that exist in Package model
