@@ -59,7 +59,7 @@ class Package < ApplicationRecord
     express_collection: 'express_collection'
   }
 
-  # FIXED: Proper validation order and conditions
+  # FIXED: Conditional validations that don't break existing packages
   validates :delivery_type, :state, presence: true
   validates :code, presence: true, uniqueness: true, on: :update # Only validate uniqueness on update
   validates :receiver_name, :receiver_phone, presence: true
@@ -71,13 +71,20 @@ class Package < ApplicationRecord
     message: "Package sequence must be unique for this route"
   }, if: -> { origin_area_id.present? && destination_area_id.present? }
 
-  # Conditional validations
-  validates :destination_agent_id, presence: true, if: -> { delivery_type == 'agent' }
-  validates :delivery_location, presence: true, if: -> { ['doorstep', 'fragile'].include?(delivery_type) }
+  # FIXED: Only validate destination_agent for new agent deliveries
+  validates :destination_agent_id, presence: true, if: -> { 
+    delivery_type == 'agent' && (new_record? || delivery_type_changed?) 
+  }
   
-  # Collection and fragile specific validations
-  validate :collection_package_requirements, if: :collection?
-  validate :fragile_package_requirements, if: :fragile?
+  # FIXED: Only validate delivery_location for new packages or when delivery_type changes
+  validates :delivery_location, presence: true, if: -> { 
+    ['doorstep', 'fragile', 'collection'].include?(delivery_type) && 
+    (new_record? || delivery_type_changed? || delivery_location_changed?)
+  }
+  
+  # Collection and fragile specific validations (only for new records or when relevant fields change)
+  validate :collection_package_requirements, if: -> { collection? && (new_record? || collection_fields_changed?) }
+  validate :fragile_package_requirements, if: -> { fragile? && (new_record? || delivery_type_changed?) }
   
   # FIXED: Enum validations with correct method names
   validates :payment_method, inclusion: { in: payment_methods.keys }, allow_nil: true
@@ -182,9 +189,12 @@ class Package < ApplicationRecord
     allowed_states.include?(new_state)
   end
 
-  # FIXED: Collection package validations with better error handling
+  # FIXED: Collection package validations - only for new records or changed fields
   def collection_package_requirements
     return unless collection?
+    
+    # Only validate if this is a new record or collection fields are being changed
+    return unless new_record? || collection_fields_changed?
     
     if respond_to?(:collection_address) && collection_address.blank?
       errors.add(:collection_address, "is required for collection packages")
@@ -206,9 +216,22 @@ class Package < ApplicationRecord
   def fragile_package_requirements
     return unless fragile?
     
+    # Only validate if this is a new record or delivery_type just changed to fragile
+    return unless new_record? || delivery_type_changed?
+    
     if delivery_location.blank?
       errors.add(:delivery_location, "is required for fragile packages")
     end
+  end
+  
+  # Helper method to check if collection-specific fields have changed
+  def collection_fields_changed?
+    return false unless respond_to?(:collection_address) && respond_to?(:shop_name)
+    
+    collection_address_changed? || shop_name_changed? || 
+    (respond_to?(:items_to_collect_changed?) && items_to_collect_changed?) ||
+    (respond_to?(:item_value_changed?) && item_value_changed?) ||
+    delivery_type_changed?
   end
 
   def update_package_metadata
