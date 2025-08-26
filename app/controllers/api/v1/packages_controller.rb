@@ -111,7 +111,7 @@ module Api
           # Set area IDs from agents (if agents exist)
           set_area_ids_safely(package)
           
-          # Set initial state - let Package model handle code generation via callbacks
+          # Set initial state
           package.state = 'pending_unpaid'
           
           # FIXED: Calculate cost using Price model/controller
@@ -121,6 +121,30 @@ module Api
             Rails.logger.info "💰 Package cost calculated: KES #{calculated_cost}"
           else
             Rails.logger.warn "⚠️ Could not calculate cost, using default"
+            package.cost = 200 # Set a default cost to prevent validation errors
+          end
+          
+          # FIXED: Generate code and route_sequence using PackageCodeGenerator service
+          if defined?(PackageCodeGenerator)
+            begin
+              code_generator = PackageCodeGenerator.new(package)
+              generated_code = code_generator.generate
+              package.code = generated_code
+              Rails.logger.info "🔢 Package code generated: #{generated_code}"
+              Rails.logger.info "📊 Route sequence set: #{package.route_sequence}"
+            rescue => e
+              Rails.logger.error "❌ PackageCodeGenerator failed: #{e.message}"
+              Rails.logger.error e.backtrace.join("\n")
+              # Set fallback values
+              package.code = "PKG#{SecureRandom.hex(4).upcase}"
+              package.route_sequence = 1
+              Rails.logger.info "🔄 Using fallback code: #{package.code}"
+            end
+          else
+            # Fallback if service not available
+            package.code = "PKG#{SecureRandom.hex(4).upcase}"
+            package.route_sequence = 1
+            Rails.logger.info "⚠️ PackageCodeGenerator not available, using fallback: #{package.code}"
           end
           
           Rails.logger.info "🆕 Attempting to save package with: #{package.attributes.inspect}"
