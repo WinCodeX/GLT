@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - Complete Fixed Version
+# app/controllers/api/v1/packages_controller.rb - Complete Fixed Version (Syntax Fixed)
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -334,43 +334,46 @@ module Api
 
       def serialize_package_basic(package)
         {
-          'id' => package.id.to_s,
-          'code' => package.code || "PKG#{package.id.to_s.rjust(6, '0')}",
-          'state' => package.state,
-          'state_display' => package.state&.humanize || 'Unknown',
-          'delivery_type' => package.delivery_type,
-          'delivery_type_display' => package.delivery_type&.humanize || 'Standard',
-          'cost' => package.cost.to_f,
-          'sender_name' => package.sender_name,
-          'receiver_name' => package.receiver_name,
-          'created_at' => package.created_at,
-          'updated_at' => package.updated_at,
-          'route_sequence' => package.respond_to?(:route_sequence) ? package.route_sequence : nil,
-          'intra_area' => package.respond_to?(:intra_area_shipment?) ? package.intra_area_shipment? : false,
-          'is_paid' => package.state != 'pending_unpaid'
+          id: package.id.to_s,
+          code: package.code || "PKG#{package.id.to_s.rjust(6, '0')}",
+          state: package.state,
+          state_display: package.state&.humanize || 'Unknown',
+          delivery_type: package.delivery_type,
+          delivery_type_display: package.delivery_type&.humanize || 'Standard',
+          cost: package.cost.to_f,
+          sender_name: package.sender_name,
+          receiver_name: package.receiver_name,
+          created_at: package.created_at,
+          updated_at: package.updated_at,
+          route_sequence: package.respond_to?(:route_sequence) ? package.route_sequence : nil,
+          intra_area: package.respond_to?(:intra_area_shipment?) ? package.intra_area_shipment? : false,
+          is_paid: package.state != 'pending_unpaid'
         }
       end
 
       def serialize_package_with_complete_info(package)
         data = serialize_package_basic(package)
         
-        data.merge!(
-          'sender_phone' => get_sender_phone(package),
-          'sender_email' => get_sender_email(package),
-          'receiver_email' => get_receiver_email(package),
-          'receiver_phone' => package.receiver_phone,
-          'business_name' => get_business_name(package),
-          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil,
-          'origin_area' => serialize_area(package.origin_area),
-          'destination_area' => serialize_area(package.destination_area)
-        )
+        additional_info = {
+          sender_phone: get_sender_phone(package),
+          sender_email: get_sender_email(package),
+          receiver_email: get_receiver_email(package),
+          receiver_phone: package.receiver_phone,
+          business_name: get_business_name(package),
+          delivery_location: package.respond_to?(:delivery_location) ? package.delivery_location : nil,
+          origin_area: serialize_area(package.origin_area),
+          destination_area: serialize_area(package.destination_area)
+        }
+        
+        data.merge!(additional_info)
         
         unless current_user.client?
-          data.merge!(
-            'access_reason' => get_access_reason(package),
-            'user_can_scan' => current_user.can_scan_packages?,
-            'available_actions' => get_available_scanning_actions(package).map { |a| a[:action] }
-          )
+          staff_info = {
+            access_reason: get_access_reason(package),
+            user_can_scan: current_user.can_scan_packages?,
+            available_actions: get_available_scanning_actions(package).map { |a| a[:action] }
+          }
+          data.merge!(staff_info)
         end
         
         data
@@ -379,40 +382,46 @@ module Api
       def serialize_package_complete(package)
         data = serialize_package_basic(package)
         
-        additional_data = {
-          'sender_phone' => get_sender_phone(package),
-          'sender_email' => get_sender_email(package),
-          'receiver_email' => get_receiver_email(package),
-          'receiver_phone' => package.receiver_phone,
-          'business_name' => get_business_name(package),
-          'origin_area' => serialize_area(package.origin_area),
-          'destination_area' => serialize_area(package.destination_area),
-          'origin_agent' => serialize_agent(package.origin_agent),
-          'destination_agent' => serialize_agent(package.destination_agent),
-          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil,
-          'tracking_url' => package_tracking_url(package.code),
-          'created_by' => serialize_user_basic(package.user),
-          'is_editable' => can_edit_package?(package),
-          'is_deletable' => can_delete_package?(package),
-          'available_scanning_actions' => get_available_scanning_actions(package)
+        complete_info = {
+          sender_phone: get_sender_phone(package),
+          sender_email: get_sender_email(package),
+          receiver_email: get_receiver_email(package),
+          receiver_phone: package.receiver_phone,
+          business_name: get_business_name(package),
+          origin_area: serialize_area(package.origin_area),
+          destination_area: serialize_area(package.destination_area),
+          origin_agent: serialize_agent(package.origin_agent),
+          destination_agent: serialize_agent(package.destination_agent),
+          delivery_location: package.respond_to?(:delivery_location) ? package.delivery_location : nil,
+          tracking_url: package_tracking_url(package.code),
+          created_by: serialize_user_basic(package.user),
+          is_editable: can_edit_package?(package),
+          is_deletable: can_delete_package?(package),
+          available_scanning_actions: get_available_scanning_actions(package)
         }
         
-        data.merge!(additional_data)
+        data.merge!(complete_info)
         data
       end
 
       def serialize_area(area)
         return nil unless area
         
+        location_data = if area.location
+          {
+            id: area.location.id.to_s,
+            name: area.location.name,
+            initials: area.location.respond_to?(:initials) ? area.location.initials : nil
+          }
+        else
+          nil
+        end
+        
         {
-          'id' => area.id.to_s,
-          'name' => area.name,
-          'initials' => area.initials,
-          'location' => area.location ? {
-            'id' => area.location.id.to_s,
-            'name' => area.location.name,
-            'initials' => area.location.respond_to?(:initials) ? area.location.initials : nil
-          } : nil
+          id: area.id.to_s,
+          name: area.name,
+          initials: area.initials,
+          location: location_data
         }
       end
 
@@ -420,11 +429,11 @@ module Api
         return nil unless agent
         
         {
-          'id' => agent.id.to_s,
-          'name' => agent.name,
-          'phone' => agent.phone,
-          'active' => agent.respond_to?(:active) ? agent.active : true,
-          'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
+          id: agent.id.to_s,
+          name: agent.name,
+          phone: agent.phone,
+          active: agent.respond_to?(:active) ? agent.active : true,
+          area: agent.respond_to?(:area) ? serialize_area(agent.area) : nil
         }
       end
 
@@ -444,10 +453,10 @@ module Api
         end
         
         {
-          'id' => user.id.to_s,
-          'name' => name,
-          'email' => user.email,
-          'role' => user.respond_to?(:primary_role) ? user.primary_role : 'client'
+          id: user.id.to_s,
+          name: name,
+          email: user.email,
+          role: user.respond_to?(:primary_role) ? user.primary_role : 'client'
         }
       end
 
@@ -587,13 +596,11 @@ module Api
       end
 
       def set_area_ids_from_agents(package)
-        # Set origin_area_id from origin_agent_id if not present
         if package.origin_agent_id.present? && package.origin_area_id.blank?
           agent = Agent.find_by(id: package.origin_agent_id)
           package.origin_area_id = agent&.area_id
         end
 
-        # Set destination_area_id from destination_agent_id if not present
         if package.destination_agent_id.present? && package.destination_area_id.blank?
           agent = Agent.find_by(id: package.destination_agent_id)
           package.destination_area_id = agent&.area_id
@@ -601,13 +608,12 @@ module Api
       end
 
       def calculate_package_cost(package)
-        # Simple cost calculation - you can make this more sophisticated
-        base_cost = 100.0 # Base cost in your currency
+        base_cost = 100.0
         
         if package.origin_area_id == package.destination_area_id
-          base_cost # Same area
+          base_cost
         else
-          base_cost * 1.5 # Different areas
+          base_cost * 1.5
         end
       end
 
@@ -622,7 +628,6 @@ module Api
           :delivery_type
         ]
         
-        # Add optional fields if they exist in the Package model
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
           base_params << field if Package.column_names.include?(field.to_s)
@@ -636,7 +641,6 @@ module Api
                       :destination_area_id, :destination_agent_id, :delivery_type, :state,
                       :origin_agent_id]
         
-        # Add optional fields if they exist in the Package model
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
           base_params << field if Package.column_names.include?(field.to_s)
@@ -663,7 +667,6 @@ module Api
         
         filtered_params = params.require(:package).permit(*permitted_params)
         
-        # Validate state transitions if state is being changed
         if filtered_params[:state].present?
           unless valid_state_transition?(@package.state, filtered_params[:state])
             filtered_params.delete(:state)
@@ -674,7 +677,6 @@ module Api
       end
 
       def valid_state_transition?(current_state, new_state)
-        # Define valid state transitions
         valid_transitions = {
           'pending_unpaid' => ['pending', 'rejected'],
           'pending' => ['submitted', 'rejected'],
