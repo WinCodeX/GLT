@@ -1,54 +1,47 @@
-# app/models/package.rb - UPDATED: Origin agent is optional
+# app/models/package.rb - Updated with collection state
 class Package < ApplicationRecord
   belongs_to :user
   belongs_to :origin_area, class_name: 'Area', optional: true
   belongs_to :destination_area, class_name: 'Area', optional: true
-  belongs_to :origin_agent, class_name: 'Agent', optional: true # UPDATED: Made optional
+  belongs_to :origin_agent, class_name: 'Agent', optional: true
   belongs_to :destination_agent, class_name: 'Agent', optional: true
 
-  # Enhanced tracking associations (add these if you create the tracking models)
+  # Enhanced tracking associations
   has_many :tracking_events, class_name: 'PackageTrackingEvent', dependent: :destroy
   has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
 
-  enum delivery_type: { doorstep: 'doorstep', agent: 'agent', fragile: 'fragile' }
+  enum delivery_type: { 
+    doorstep: 'doorstep', 
+    agent: 'agent', 
+    fragile: 'fragile',
+    collection: 'collection' # ADDED: Collection delivery type
+  }
+  
   enum state: {
     pending_unpaid: 'pending_unpaid',
     pending: 'pending',
     submitted: 'submitted',
     in_transit: 'in_transit',
     delivered: 'delivered',
-    collected: 'collected',
+    collected: 'collected', # ADDED: Collection state
     rejected: 'rejected'
   }
 
-  # UPDATED: Origin agent is optional but available
-  validates :delivery_type, :state, presence: true
-  validates :code, presence: true, uniqueness: true, on: :update
-  validates :receiver_name, :receiver_phone, presence: true
-  validates :sender_name, :sender_phone, presence: true
-  
-  # Only validate route_sequence if origin_area and destination_area are present
+  validates :delivery_type, :state, :cost, presence: true
+  validates :code, presence: true, uniqueness: true
   validates :route_sequence, presence: true, uniqueness: { 
     scope: [:origin_area_id, :destination_area_id],
     message: "Package sequence must be unique for this route"
-  }, if: -> { origin_area_id.present? && destination_area_id.present? }
+  }
 
-  # Delivery type specific validations
-  validates :destination_agent_id, presence: true, if: -> { delivery_type == 'agent' }
-  validates :delivery_location, presence: true, if: -> { ['doorstep', 'fragile'].include?(delivery_type) }
-
-  # Additional validation for fragile packages
+  # ADDED: Collection-specific validations
+  validate :collection_package_requirements, if: :collection?
   validate :fragile_package_requirements, if: :fragile?
-  
-  # Collection service validations
-  validates :shop_name, :shop_contact, :collection_address, :items_to_collect, :item_value, 
-            presence: true, if: -> { collection_type.present? }
 
   # Callbacks
   before_create :generate_package_code_and_sequence
   after_create :generate_qr_code_files
-  before_save :update_fragile_metadata, if: :fragile?
-  before_save :set_default_cost
+  before_save :update_package_metadata
 
   # Scopes
   scope :by_route, ->(origin_id, destination_id) { 
@@ -57,9 +50,9 @@ class Package < ApplicationRecord
   scope :intra_area, -> { where('origin_area_id = destination_area_id') }
   scope :inter_area, -> { where('origin_area_id != destination_area_id') }
   scope :fragile_packages, -> { where(delivery_type: 'fragile') }
+  scope :collection_packages, -> { where(delivery_type: 'collection') }
   scope :standard_packages, -> { where(delivery_type: ['doorstep', 'agent']) }
-  scope :requiring_special_handling, -> { fragile_packages }
-  scope :collection_services, -> { where.not(collection_type: nil) }
+  scope :requiring_special_handling, -> { where(delivery_type: ['fragile', 'collection']) }
 
   # Class methods
   def self.find_by_code_or_id(identifier)
@@ -75,229 +68,243 @@ class Package < ApplicationRecord
   end
 
   def self.next_sequence_for_route(origin_area_id, destination_area_id)
-    return 1 if origin_area_id.blank? || destination_area_id.blank?
-    
     by_route(origin_area_id, destination_area_id).maximum(:route_sequence).to_i + 1
+  end
+
+  def self.packages_needing_collection
+    collection_packages.where(state: ['submitted', 'in_transit'])
   end
 
   def self.fragile_packages_in_transit
     fragile_packages.where(state: ['submitted', 'in_transit'])
   end
 
-  def self.fragile_packages_needing_special_attention
-    fragile_packages.where(state: ['submitted', 'in_transit'])
-                    .joins(:tracking_events)
-                    .where(tracking_events: { created_at: 2.hours.ago.. })
-                    .group('packages.id')
-                    .having('COUNT(package_tracking_events.id) = 0')
-  end
-
   # Instance methods
   def intra_area_shipment?
-    origin_area_id.present? && destination_area_id.present? && 
     origin_area_id == destination_area_id
   end
 
-  def inter_area_shipment?
-    origin_area_id.present? && destination_area_id.present? && 
-    origin_area_id != destination_area_id
+  def collection?
+    delivery_type == 'collection'
   end
 
-  def requires_agent_pickup?
-    # Origin agent is used when package needs to be picked up from a specific agent location
-    # This is optional - packages can be created without origin agents for direct customer submissions
-    origin_agent_id.present?
+  def fragile?
+    delivery_type == 'fragile'
   end
 
-  def requires_agent_delivery?
-    delivery_type == 'agent' && destination_agent_id.present?
+  def requires_special_handling?
+    collection? || fragile?
   end
 
-  def is_collection_service?
-    collection_type.present?
+  def can_be_collected?
+    delivered? && !collected?
   end
 
-  def estimated_delivery_time
+  def collection_ready?
+    collection? && ['submitted', 'in_transit'].include?(state)
+  end
+
+  # ADDED: Enhanced state transition with collection support
+  def valid_state_transition?(new_state)
+    current_state = state.to_s
+    
+    case current_state
+    when 'pending_unpaid'
+      ['pending', 'rejected'].include?(new_state)
+    when 'pending'
+      ['submitted', 'rejected'].include?(new_state)
+    when 'submitted'
+      ['in_transit', 'rejected'].include?(new_state)
+    when 'in_transit'
+      ['delivered', 'collected', 'rejected'].include?(new_state)
+    when 'delivered'
+      collection? ? ['collected'].include?(new_state) : false
+    when 'collected', 'rejected'
+      false # Final states
+    else
+      false
+    end
+  end
+
+  # ADDED: Collection package validations
+  def collection_package_requirements
+    return unless collection?
+    
+    errors.add(:collection_address, "can't be blank") if respond_to?(:collection_address) && collection_address.blank?
+    errors.add(:shop_name, "can't be blank") if respond_to?(:shop_name) && shop_name.blank?
+    errors.add(:item_value, "must be present and greater than 0") if respond_to?(:item_value) && (!item_value || item_value <= 0)
+  end
+
+  def fragile_package_requirements
+    return unless fragile?
+    
+    if cost && cost < 100
+      errors.add(:cost, 'cannot be less than 100 KES for fragile packages due to special handling requirements')
+    end
+  end
+
+  def update_package_metadata
+    if fragile?
+      self.priority_level = 'high' if respond_to?(:priority_level=)
+      self.special_handling = true if respond_to?(:special_handling=)
+    end
+    
+    if collection?
+      self.requires_payment_advance = true if respond_to?(:requires_payment_advance=)
+      self.collection_type = 'pickup_and_deliver' if respond_to?(:collection_type=)
+    end
+  end
+
+  # Enhanced cost calculation
+  def calculate_delivery_cost
+    return 0 unless origin_area && destination_area
+
+    # Try to find exact price first
+    price = Price.find_by(
+      origin_area_id: origin_area_id,
+      destination_area_id: destination_area_id,
+      delivery_type: delivery_type
+    )
+
+    base_cost = price&.cost || calculate_default_cost
+    
+    # Apply surcharges
     case delivery_type
     when 'fragile'
-      return "Same day" if priority_level == 'urgent'
-      return "Next day" if priority_level == 'high'
-      "1-2 business days"
-    when 'doorstep'
-      return intra_area_shipment? ? "Same day" : "1-2 business days"
-    when 'agent'
-      return intra_area_shipment? ? "2-4 hours" : "Next business day"
+      apply_fragile_surcharge(base_cost)
+    when 'collection'
+      apply_collection_surcharge(base_cost)
     else
-      "1-3 business days"
+      base_cost
     end
   end
 
-  def display_route
-    if origin_area.present? && destination_area.present?
-      "#{origin_area.name} → #{destination_area.name}"
-    elsif destination_area.present?
-      "GLT Service → #{destination_area.name}"
+  def calculate_default_cost
+    if intra_area_shipment?
+      case delivery_type
+      when 'doorstep' then 150
+      when 'agent' then 100
+      when 'fragile' then 200
+      when 'collection' then 250 # Higher base for collection service
+      else 100
+      end
     else
-      "Direct Delivery"
+      case delivery_type
+      when 'doorstep' then 300
+      when 'agent' then 200
+      when 'fragile' then 400
+      when 'collection' then 450 # Higher base for inter-area collection
+      else 200
+      end
     end
   end
 
-  def display_status
-    case state
-    when 'pending_unpaid'
-      'Awaiting Payment'
-    when 'pending'
-      'Payment Confirmed'
-    when 'submitted'
-      'Ready for Pickup'
-    when 'in_transit'
-      'In Transit'
-    when 'delivered'
-      'Delivered'
-    when 'collected'
-      'Collected'
-    when 'rejected'
-      'Cancelled'
-    else
-      state.humanize
-    end
+  def apply_fragile_surcharge(base_cost)
+    surcharge = (base_cost * 0.3).round # 30% surcharge for fragile handling
+    base_cost + [surcharge, 50].max # Minimum 50 KES surcharge
+  end
+
+  def apply_collection_surcharge(base_cost)
+    # Collection service includes pickup + delivery
+    pickup_fee = 100
+    handling_fee = 50
+    base_cost + pickup_fee + handling_fee
+  end
+
+  # Status helper methods
+  def paid?
+    !pending_unpaid?
+  end
+
+  def trackable?
+    submitted? || in_transit? || delivered? || collected?
   end
 
   def can_be_cancelled?
-    ['pending_unpaid', 'pending'].include?(state)
+    pending_unpaid? || pending?
   end
 
-  def can_be_edited?
-    ['pending_unpaid', 'pending'].include?(state)
+  def final_state?
+    delivered? || collected? || rejected?
   end
 
-  def requires_payment?
-    ['pending_unpaid'].include?(state) || requires_payment_advance?
+  def needs_priority_handling?
+    fragile? || collection? || (cost && cost > 1000)
   end
 
-  def payment_amount
-    return cost if cost.present? && cost > 0
-    calculate_cost
-  end
-
-  def is_high_value?
-    item_value.present? && item_value > 10000
-  end
-
-  def tracking_summary
-    {
-      code: code,
-      state: state,
-      display_status: display_status,
-      route: display_route,
-      estimated_delivery: estimated_delivery_time,
-      last_update: updated_at,
-      requires_payment: requires_payment?,
-      payment_amount: payment_amount
-    }
-  end
-
-  private
-
-  def fragile_package_requirements
-    if fragile? && delivery_location.blank?
-      errors.add(:delivery_location, "is required for fragile deliveries")
-    end
-    
-    if fragile? && special_instructions.blank?
-      errors.add(:special_instructions, "should include handling instructions for fragile items")
-    end
-  end
-
+  # Generate package code and route sequence
   def generate_package_code_and_sequence
-    self.code = generate_unique_code if code.blank?
+    return if code.present? # Don't regenerate if already set
     
-    # Only set route sequence if we have area information
-    if origin_area_id.present? && destination_area_id.present?
-      self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
+    # Generate code using the PackageCodeGenerator service
+    options = {}
+    options[:fragile] = true if fragile?
+    options[:collection] = true if collection?
+    
+    if defined?(PackageCodeGenerator)
+      begin
+        self.code = PackageCodeGenerator.new(self, options).generate
+      rescue => e
+        Rails.logger.error "PackageCodeGenerator failed: #{e.message}"
+        self.code = "PKG#{SecureRandom.hex(4).upcase}"
+      end
     else
-      self.route_sequence = 1 # Default for packages without area routing
-    end
-  end
-
-  def generate_unique_code
-    prefix = case delivery_type
-    when 'fragile'
-      'FRG'
-    when 'agent'
-      'AGT'  
-    when 'doorstep'
-      'DST'
-    else
-      'PKG'
+      self.code = "PKG#{SecureRandom.hex(4).upcase}"
     end
     
-    # Add collection service prefix
-    prefix = "COL-#{prefix}" if collection_type.present?
-    
-    loop do
-      # Format: PREFIX-YYYYMMDD-XXXX
-      date_part = Time.current.strftime('%Y%m%d')
-      random_part = SecureRandom.hex(2).upcase
-      code = "#{prefix}-#{date_part}-#{random_part}"
-      
-      break code unless self.class.exists?(code: code)
-    end
+    # Set route sequence
+    self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
   end
 
   def generate_qr_code_files
-    # Generate QR code for package tracking
-    # Implementation would depend on your QR code generation setup
-    Rails.logger.info "📱 QR code generation for package #{code}"
-  end
-
-  def update_fragile_metadata
-    if fragile?
-      self.special_handling = true
-      self.priority_level = 'high' if priority_level.blank? || priority_level == 'normal'
+    job_options = {}
+    job_options[:priority] = 'high' if fragile? || collection?
+    job_options[:fragile] = true if fragile?
+    job_options[:collection] = true if collection?
+    
+    begin
+      if defined?(GenerateQrCodeJob)
+        GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
+        
+        if defined?(GenerateThermalQrCodeJob)
+          GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal'))
+        end
+      end
+    rescue => e
+      Rails.logger.error "Failed to generate QR codes for package #{id}: #{e.message}"
     end
   end
 
-  def set_default_cost
-    self.cost = calculate_cost if cost.blank? || cost.zero?
+  # JSON serialization with collection support
+  def as_json(options = {})
+    result = super(options)
+    
+    # Always include these computed fields
+    result.merge!(
+      'state_display' => state&.humanize,
+      'route_description' => route_description,
+      'is_paid' => paid?,
+      'is_trackable' => trackable?,
+      'can_be_cancelled' => can_be_cancelled?,
+      'final_state' => final_state?,
+      'requires_special_handling' => requires_special_handling?,
+      'can_be_collected' => can_be_collected?,
+      'collection_ready' => collection_ready?
+    )
+    
+    result
   end
 
-  def calculate_cost
-    base_cost = case delivery_type
-    when 'fragile'
-      300
-    when 'agent'
-      150
-    when 'doorstep'
-      200
+  def route_description
+    return "Unknown route" unless origin_area && destination_area
+    
+    origin_name = origin_area.location&.name || origin_area.name
+    destination_name = destination_area.location&.name || destination_area.name
+    
+    if intra_area_shipment?
+      "#{origin_name} (#{delivery_type.humanize})"
     else
-      200
+      "#{origin_name} → #{destination_name} (#{delivery_type.humanize})"
     end
-
-    # Add collection service cost
-    base_cost += 150 if collection_type == 'pickup_and_deliver'
-
-    # Distance-based pricing (if we have area information)
-    if origin_area_id.present? && destination_area_id.present?
-      base_cost += 50 unless intra_area_shipment?
-    end
-
-    # Priority surcharge
-    case priority_level
-    when 'high'
-      base_cost += 50
-    when 'urgent'
-      base_cost += 100
-    end
-
-    # Special handling surcharge
-    base_cost += 75 if special_handling?
-
-    # High-value item surcharge
-    if is_high_value?
-      base_cost += [item_value * 0.01, 200].min.to_i
-    end
-
-    base_cost
   end
 end
