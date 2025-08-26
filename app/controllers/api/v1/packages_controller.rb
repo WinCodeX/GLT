@@ -477,7 +477,7 @@ module Api
         end
       end
 
-      # FIXED: Fallback pricing logic based on your frontend modal logic
+      # FIXED: Enhanced pricing with collection and fragile support
       def calculate_fallback_pricing(package)
         return 200 unless package.origin_area && package.destination_area
         
@@ -505,6 +505,32 @@ module Api
             300
           else
             380
+          end
+        when 'fragile'
+          # Fragile packages cost more due to special handling
+          base = if is_intra_area
+            350
+          elsif is_intra_location
+            420
+          else
+            580
+          end
+          base + 120 # Special handling surcharge
+        when 'collection'
+          # Collection service includes pickup + delivery + handling
+          base = if is_intra_area
+            400
+          elsif is_intra_location
+            500
+          else
+            650
+          end
+          
+          # Add value-based fee for high-value items
+          if package.respond_to?(:item_value) && package.item_value.to_f > 5000
+            base + 100 # High-value item fee
+          else
+            base
           end
         else
           200
@@ -569,7 +595,7 @@ module Api
         # Try different parameter structures the frontend might send
         package_data = params[:package] || params || {}
         
-        {
+        base_params = {
           # Apply smart defaults like PackageHelper does
           sender_name: extract_with_default(package_data, :sender_name, get_default_sender_name),
           sender_phone: extract_with_default(package_data, :sender_phone, get_default_sender_phone),
@@ -592,7 +618,41 @@ module Api
           sender_email: extract_value(package_data, :sender_email),
           receiver_email: extract_value(package_data, :receiver_email),
           business_name: extract_value(package_data, :business_name)
-        }.compact_blank
+        }
+        
+        # ADDED: Collection-specific fields
+        if package_data[:delivery_type] == 'collection' || package_data['delivery_type'] == 'collection'
+          collection_params = {
+            shop_name: extract_value(package_data, :shop_name),
+            shop_contact: extract_value(package_data, :shop_contact),
+            collection_address: extract_value(package_data, :collection_address),
+            items_to_collect: extract_value(package_data, :items_to_collect),
+            item_value: extract_value(package_data, :item_value),
+            item_description: extract_value(package_data, :item_description),
+            special_instructions: extract_value(package_data, :special_instructions),
+            payment_method: extract_with_default(package_data, :payment_method, 'mpesa'),
+            pickup_latitude: extract_value(package_data, :pickup_latitude),
+            pickup_longitude: extract_value(package_data, :pickup_longitude),
+            delivery_latitude: extract_value(package_data, :delivery_latitude),
+            delivery_longitude: extract_value(package_data, :delivery_longitude)
+          }
+          base_params.merge!(collection_params)
+        end
+        
+        # ADDED: Fragile-specific fields
+        if package_data[:delivery_type] == 'fragile' || package_data['delivery_type'] == 'fragile'
+          fragile_params = {
+            item_description: extract_value(package_data, :item_description),
+            special_instructions: extract_value(package_data, :special_instructions),
+            pickup_latitude: extract_value(package_data, :pickup_latitude),
+            pickup_longitude: extract_value(package_data, :pickup_longitude),
+            delivery_latitude: extract_value(package_data, :delivery_latitude),
+            delivery_longitude: extract_value(package_data, :delivery_longitude)
+          }
+          base_params.merge!(fragile_params)
+        end
+        
+        base_params.compact_blank
       end
 
       def extract_value(data, key)
@@ -620,7 +680,7 @@ module Api
         '+254700000000'
       end
 
-      # FIXED: Removed strict phone format validation
+      # FIXED: Enhanced validation for collection and fragile packages
       def validate_essential_fields(params)
         errors = []
         
@@ -629,16 +689,32 @@ module Api
         errors << 'Origin agent is required' if params[:origin_agent_id].blank?
         errors << 'Delivery type is required' if params[:delivery_type].blank?
         
-        # REMOVED: Strict phone format validation
-        # Now allows any phone format as requested
-        
         # Delivery-specific requirements
-        if params[:delivery_type] == 'agent' && params[:destination_agent_id].blank?
-          errors << 'Destination agent is required for agent delivery'
-        end
-        
-        if ['doorstep', 'fragile'].include?(params[:delivery_type]) && params[:delivery_location].blank?
-          errors << 'Delivery location is required for doorstep/fragile delivery'
+        case params[:delivery_type]
+        when 'agent'
+          errors << 'Destination agent is required for agent delivery' if params[:destination_agent_id].blank?
+        when 'doorstep'
+          errors << 'Delivery location is required for doorstep delivery' if params[:delivery_location].blank?
+        when 'fragile'
+          errors << 'Delivery location is required for fragile delivery' if params[:delivery_location].blank?
+          errors << 'Item description is required for fragile items' if params[:item_description].blank?
+        when 'collection'
+          # Collection-specific validations
+          errors << 'Shop name is required for collection service' if params[:shop_name].blank?
+          errors << 'Shop contact is required for collection service' if params[:shop_contact].blank?
+          errors << 'Collection address is required' if params[:collection_address].blank?
+          errors << 'Items to collect description is required' if params[:items_to_collect].blank?
+          errors << 'Item value is required for collection service' if params[:item_value].blank?
+          
+          # Validate item value is numeric and positive
+          if params[:item_value].present?
+            begin
+              value = params[:item_value].to_f
+              errors << 'Item value must be greater than 0' if value <= 0
+            rescue
+              errors << 'Item value must be a valid number'
+            end
+          end
         end
         
         errors
@@ -738,12 +814,14 @@ module Api
 
       def valid_state_transition?(from_state, to_state)
         valid_transitions = {
-          'pending_unpaid' => ['pending'],
-          'pending' => ['submitted'],
-          'submitted' => ['in_transit'],
-          'in_transit' => ['delivered', 'returned'],
-          'delivered' => [],
-          'returned' => []
+          'pending_unpaid' => ['pending', 'rejected'],
+          'pending' => ['submitted', 'rejected'],
+          'submitted' => ['in_transit', 'rejected'],
+          'in_transit' => ['delivered', 'collected', 'returned'],
+          'delivered' => ['collected'], # For collection packages
+          'collected' => [], # Final state
+          'returned' => [],
+          'rejected' => []
         }
         
         valid_transitions[from_state]&.include?(to_state) || false
