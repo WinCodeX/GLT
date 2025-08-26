@@ -35,33 +35,8 @@ class Api::V1::PackagesController < ApplicationController
     
     @package = current_user.packages.build(package_params)
     
-    # FIXED: Handle priority_level parameter properly to avoid enum method errors
-    if params.dig(:package, :priority_level).present?
-      priority_value = params.dig(:package, :priority_level).to_s.downcase
-      # Ensure priority_level is a valid enum value before setting
-      if Package.respond_to?(:priority_levels) && Package.priority_levels.key?(priority_value)
-        @package.priority_level = priority_value
-      else
-        # Default to normal if invalid value provided
-        @package.priority_level = 'normal'
-      end
-    else
-      # Set default priority level
-      @package.priority_level = 'normal'
-    end
-
-    # FIXED: Set additional fragile package parameters properly
-    if @package.fragile?
-      @package.special_handling = params.dig(:package, :special_handling) || true
-      @package.handling_instructions = params.dig(:package, :special_instructions) || "Fragile - Handle with care"
-      
-      # Set payment and collection parameters for fragile packages
-      @package.payment_method = params.dig(:package, :payment_method) || 'mpesa'
-      @package.requires_payment_advance = params.dig(:package, :requires_payment_advance) || false
-    end
-
-    # Set additional parameters from the request
-    set_additional_package_parameters
+    # Set additional parameters safely without trying to assign to computed methods
+    set_additional_package_parameters_safely
 
     # Calculate cost before saving to ensure proper validation
     begin
@@ -71,7 +46,7 @@ class Api::V1::PackagesController < ApplicationController
       @package.cost = 0 # Set default cost to avoid validation errors
     end
 
-    # FIXED: Wrap in transaction and handle callback errors gracefully
+    # Wrap in transaction and handle callback errors gracefully
     Package.transaction do
       if @package.save
         # Generate QR codes after successful save
@@ -107,17 +82,7 @@ class Api::V1::PackagesController < ApplicationController
   end
 
   def update
-    # FIXED: Handle priority_level updates properly
     update_params = package_update_params
-    
-    if update_params[:priority_level].present?
-      priority_value = update_params[:priority_level].to_s.downcase
-      if Package.respond_to?(:priority_levels) && Package.priority_levels.key?(priority_value)
-        update_params[:priority_level] = priority_value
-      else
-        update_params.delete(:priority_level) # Remove invalid priority level
-      end
-    end
 
     if @package.update(update_params)
       render json: {
@@ -212,44 +177,94 @@ class Api::V1::PackagesController < ApplicationController
     end
   end
 
-  # FIXED: Set additional package parameters safely
-  def set_additional_package_parameters
-    # Payment method
-    if params.dig(:package, :payment_method).present?
-      @package.payment_method = params.dig(:package, :payment_method)
+  # FIXED: Set additional package parameters safely without assigning to computed methods
+  def set_additional_package_parameters_safely
+    # Only set attributes that exist as database columns, not computed methods
+    
+    # Check if the package has these attributes before setting them
+    safe_attributes = {}
+    
+    # Payment and delivery details (only if columns exist)
+    if @package.respond_to?(:payment_method=) && params.dig(:package, :payment_method).present?
+      safe_attributes[:payment_method] = params.dig(:package, :payment_method)
+    end
+    
+    if @package.respond_to?(:special_instructions=) && params.dig(:package, :special_instructions).present?
+      safe_attributes[:special_instructions] = params.dig(:package, :special_instructions)
+    end
+    
+    if @package.respond_to?(:special_handling=)
+      safe_attributes[:special_handling] = params.dig(:package, :special_handling) || @package.fragile?
+    end
+    
+    if @package.respond_to?(:requires_payment_advance=)
+      safe_attributes[:requires_payment_advance] = params.dig(:package, :requires_payment_advance) || false
+    end
+    
+    # Collection and shop details (only if columns exist)
+    if @package.respond_to?(:shop_name=) && params.dig(:package, :shop_name).present?
+      safe_attributes[:shop_name] = params.dig(:package, :shop_name)
+    end
+    
+    if @package.respond_to?(:shop_contact=) && params.dig(:package, :shop_contact).present?
+      safe_attributes[:shop_contact] = params.dig(:package, :shop_contact)
+    end
+    
+    if @package.respond_to?(:collection_address=) && params.dig(:package, :collection_address).present?
+      safe_attributes[:collection_address] = params.dig(:package, :collection_address)
+    end
+    
+    if @package.respond_to?(:items_to_collect=) && params.dig(:package, :items_to_collect).present?
+      safe_attributes[:items_to_collect] = params.dig(:package, :items_to_collect)
     end
 
-    # Delivery location and special instructions
-    @package.delivery_location = params.dig(:package, :delivery_location) if params.dig(:package, :delivery_location).present?
-    @package.special_instructions = params.dig(:package, :special_instructions) if params.dig(:package, :special_instructions).present?
-
-    # Collection parameters for shop deliveries
-    if params.dig(:package, :shop_name).present?
-      @package.shop_name = params.dig(:package, :shop_name)
-      @package.shop_contact = params.dig(:package, :shop_contact)
-      @package.collection_address = params.dig(:package, :collection_address)
-      @package.items_to_collect = params.dig(:package, :items_to_collect)
+    # Item value and description (only if columns exist)
+    if @package.respond_to?(:item_value=) && params.dig(:package, :item_value).present?
+      safe_attributes[:item_value] = params.dig(:package, :item_value)
+    end
+    
+    if @package.respond_to?(:item_description=) && params.dig(:package, :item_description).present?
+      safe_attributes[:item_description] = params.dig(:package, :item_description)
     end
 
-    # Item value and description
-    @package.item_value = params.dig(:package, :item_value) if params.dig(:package, :item_value).present?
-    @package.item_description = params.dig(:package, :item_description) if params.dig(:package, :item_description).present?
+    # Payment deadline (only if column exists)
+    if @package.respond_to?(:payment_deadline=) && params.dig(:package, :payment_deadline).present?
+      safe_attributes[:payment_deadline] = params.dig(:package, :payment_deadline)
+    end
 
-    # Advanced payment options
-    @package.requires_payment_advance = params.dig(:package, :requires_payment_advance) || false
-    @package.payment_deadline = params.dig(:package, :payment_deadline) if params.dig(:package, :payment_deadline).present?
+    # Scheduling (only if column exists)
+    if @package.respond_to?(:collection_scheduled_at=) && params.dig(:package, :collection_scheduled_at).present?
+      safe_attributes[:collection_scheduled_at] = params.dig(:package, :collection_scheduled_at)
+    end
 
-    # Scheduling
-    @package.collection_scheduled_at = params.dig(:package, :collection_scheduled_at) if params.dig(:package, :collection_scheduled_at).present?
+    # Coordinates for mapping (only if columns exist)
+    if @package.respond_to?(:pickup_latitude=) && params.dig(:package, :pickup_latitude).present?
+      safe_attributes[:pickup_latitude] = params.dig(:package, :pickup_latitude)
+    end
+    
+    if @package.respond_to?(:pickup_longitude=) && params.dig(:package, :pickup_longitude).present?
+      safe_attributes[:pickup_longitude] = params.dig(:package, :pickup_longitude)
+    end
+    
+    if @package.respond_to?(:delivery_latitude=) && params.dig(:package, :delivery_latitude).present?
+      safe_attributes[:delivery_latitude] = params.dig(:package, :delivery_latitude)
+    end
+    
+    if @package.respond_to?(:delivery_longitude=) && params.dig(:package, :delivery_longitude).present?
+      safe_attributes[:delivery_longitude] = params.dig(:package, :delivery_longitude)
+    end
 
-    # Coordinates for mapping
-    @package.pickup_latitude = params.dig(:package, :pickup_latitude) if params.dig(:package, :pickup_latitude).present?
-    @package.pickup_longitude = params.dig(:package, :pickup_longitude) if params.dig(:package, :pickup_longitude).present?
-    @package.delivery_latitude = params.dig(:package, :delivery_latitude) if params.dig(:package, :delivery_latitude).present?
-    @package.delivery_longitude = params.dig(:package, :delivery_longitude) if params.dig(:package, :delivery_longitude).present?
+    # Collection type (only if column exists)
+    if @package.respond_to?(:collection_type=) && params.dig(:package, :collection_type).present?
+      safe_attributes[:collection_type] = params.dig(:package, :collection_type)
+    end
+
+    # Apply all safe attributes at once
+    @package.assign_attributes(safe_attributes) unless safe_attributes.empty?
+    
+    Rails.logger.info "Set safe attributes: #{safe_attributes.keys.join(', ')}" unless safe_attributes.empty?
   end
 
-  # FIXED: Safer cost calculation method
   def calculate_package_cost(package)
     return 0 unless package.origin_area_id && package.destination_area_id
 
@@ -269,7 +284,7 @@ class Api::V1::PackagesController < ApplicationController
       base_cost = calculate_default_cost(package)
     end
 
-    # Add fragile handling surcharge if applicable
+    # Add fragile handling surcharge if applicable (use the computed method)
     if package.fragile?
       fragile_surcharge = (base_cost * 0.15).round # 15% surcharge for fragile items
       base_cost += fragile_surcharge
@@ -311,10 +326,11 @@ class Api::V1::PackagesController < ApplicationController
       'sender_phone' => package.sender_phone,
       'receiver_phone' => package.receiver_phone,
       'delivery_location' => package.delivery_location,
-      'special_instructions' => package.special_instructions,
-      'priority_level' => package.respond_to?(:priority_level) ? package.priority_level : 'normal',
+      'special_instructions' => package.respond_to?(:special_instructions) ? package.special_instructions : nil,
+      'priority_level' => package.priority_level, # Use computed method
+      'handling_instructions' => package.handling_instructions, # Use computed method
       'payment_method' => package.respond_to?(:payment_method) ? package.payment_method : nil,
-      'special_handling' => package.respond_to?(:special_handling) ? package.special_handling : false,
+      'special_handling' => package.respond_to?(:special_handling) ? package.special_handling : package.fragile?,
       'requires_payment_advance' => package.respond_to?(:requires_payment_advance) ? package.requires_payment_advance : false,
       'origin_agent' => serialize_agent(package.origin_agent),
       'destination_agent' => serialize_agent(package.destination_agent),
@@ -424,32 +440,50 @@ class Api::V1::PackagesController < ApplicationController
     end
   end
 
+  # FIXED: Expanded strong parameters to accept all legitimate frontend fields
   def package_params
+    # Base required parameters
     base_params = [
       :sender_name, :sender_phone, :receiver_name, :receiver_phone,
       :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
       :delivery_type, :delivery_location
     ]
     
-    # Add optional fields if they exist in the Package model
-    optional_fields = [:sender_email, :receiver_email, :business_name, :special_instructions]
-    optional_fields.each do |field|
-      base_params << field if Package.column_names.include?(field.to_s)
+    # Extended parameters that the frontend legitimately sends
+    extended_params = [
+      :sender_email, :receiver_email, :business_name, :special_instructions,
+      :shop_name, :shop_contact, :collection_address, :items_to_collect,
+      :item_value, :item_description, :payment_method, :special_handling,
+      :requires_payment_advance, :collection_type, :pickup_latitude,
+      :pickup_longitude, :delivery_latitude, :delivery_longitude,
+      :payment_deadline, :collection_scheduled_at
+    ]
+    
+    # Only include parameters for columns that actually exist in the database
+    all_params = base_params + extended_params.select do |field|
+      Package.column_names.include?(field.to_s)
     end
     
-    params.require(:package).permit(*base_params)
+    Rails.logger.info "Permitting parameters: #{all_params.join(', ')}"
+    
+    params.require(:package).permit(*all_params)
   end
 
   def package_update_params
     base_params = [
       :sender_name, :sender_phone, :receiver_name, :receiver_phone, 
       :destination_area_id, :destination_agent_id, :delivery_type, :state,
-      :origin_agent_id, :delivery_location, :priority_level
+      :origin_agent_id, :delivery_location
     ]
     
-    optional_fields = [:sender_email, :receiver_email, :business_name, :special_instructions]
-    optional_fields.each do |field|
-      base_params << field if Package.column_names.include?(field.to_s)
+    # Add extended update parameters
+    extended_params = [
+      :sender_email, :receiver_email, :business_name, :special_instructions,
+      :payment_method, :special_handling, :requires_payment_advance
+    ]
+    
+    all_params = base_params + extended_params.select do |field|
+      Package.column_names.include?(field.to_s)
     end
     
     permitted_params = []
@@ -460,14 +494,15 @@ class Api::V1::PackagesController < ApplicationController
         permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                            :destination_area_id, :destination_agent_id, :delivery_location,
                            :sender_email, :receiver_email, :business_name, :special_instructions].select do |field|
-          base_params.include?(field)
+          all_params.include?(field)
         end
       end
     when 'admin'
-      permitted_params = base_params
+      permitted_params = all_params
     when 'agent', 'rider', 'warehouse'
-      permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location, :priority_level].select do |field|
-        base_params.include?(field)
+      permitted_params = [:state, :destination_area_id, :destination_agent_id, 
+                         :delivery_location, :special_instructions].select do |field|
+        all_params.include?(field)
       end
     end
     
