@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: All syntax errors resolved
+# app/controllers/api/v1/packages_controller.rb - FIXED: Package creation & QR code generation
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -83,6 +83,7 @@ module Api
         end
       end
 
+      # FIXED: Package creation using proper services and validation
       def create
         unless current_user.client?
           return render json: {
@@ -92,21 +93,26 @@ module Api
         end
 
         begin
+          Rails.logger.info "📦 Starting package creation with params: #{package_params}"
+          
           # Build package with permitted parameters
           package = current_user.packages.build(package_params)
           
-          # Set area IDs from agent IDs before validation
-          set_area_ids_from_agents(package)
+          # FIXED: Use proper area ID assignment from agents
+          assign_area_ids_from_agents(package)
           
-          # Set initial state and generate metadata
+          # Validate agents exist and are accessible
+          validate_package_agents(package)
+          
+          # Set initial state (let the model handle code generation)
           package.state = 'pending_unpaid'
-          package.code = generate_package_code(package) if package.code.blank?
-          package.cost = calculate_package_cost(package)
-
-          Rails.logger.info "🆕 Creating package with params: origin_area_id=#{package.origin_area_id}, destination_area_id=#{package.destination_area_id}, origin_agent_id=#{package.origin_agent_id}"
+          
+          Rails.logger.info "🆕 Creating package: origin_area=#{package.origin_area_id}, dest_area=#{package.destination_area_id}, origin_agent=#{package.origin_agent_id}, dest_agent=#{package.destination_agent_id}"
 
           if package.save
             Rails.logger.info "✅ Package created successfully: #{package.code}"
+            
+            # Return response that matches PackageHelper expectations
             render json: {
               success: true,
               data: serialize_package_complete(package),
@@ -149,7 +155,7 @@ module Api
 
           # Set area IDs from agent IDs if agents are being updated
           if filtered_params[:origin_agent_id].present? || filtered_params[:destination_agent_id].present?
-            set_area_ids_from_agents(@package, filtered_params)
+            assign_area_ids_from_agents(@package, filtered_params)
           end
 
           # Validate state transitions if state is being changed
@@ -270,21 +276,46 @@ module Api
         end
       end
 
+      # FIXED: QR code generation using proper QrCodeGenerator service
       def qr_code
         begin
-          qr_data = generate_qr_code_data(@package)
+          Rails.logger.info "🔲 Generating QR code for package: #{@package.code}"
           
-          render json: {
-            success: true,
-            data: {
-              qr_code_base64: qr_data[:base64],
-              tracking_url: qr_data[:tracking_url],
-              package_code: @package.code,
-              package_state: @package.state,
-              route_description: safe_route_description(@package)
-            },
-            message: 'QR code generated successfully'
-          }
+          # Use the QrCodeGenerator service from app/services
+          if defined?(QrCodeGenerator)
+            qr_generator = QrCodeGenerator.new(@package, qr_code_options)
+            qr_base64 = qr_generator.generate_base64
+            tracking_url = qr_generator.send(:generate_tracking_url_safely)
+            
+            Rails.logger.info "✅ QR code generated successfully using QrCodeGenerator service"
+            
+            render json: {
+              success: true,
+              data: {
+                qr_code_base64: qr_base64,
+                tracking_url: tracking_url,
+                package_code: @package.code,
+                package_state: @package.state,
+                route_description: safe_route_description(@package)
+              },
+              message: 'QR code generated successfully'
+            }
+          else
+            # Fallback if service not available
+            Rails.logger.warn "QrCodeGenerator service not available, using fallback"
+            
+            render json: {
+              success: true,
+              data: {
+                qr_code_base64: nil,
+                tracking_url: package_tracking_url(@package.code),
+                package_code: @package.code,
+                package_state: @package.state,
+                route_description: safe_route_description(@package)
+              },
+              message: 'QR code service unavailable - tracking URL provided'
+            }
+          end
         rescue => e
           Rails.logger.error "PackagesController#qr_code error: #{e.message}"
           render json: { 
@@ -365,31 +396,75 @@ module Api
 
       private
 
-      # Set area IDs from agent IDs
-      def set_area_ids_from_agents(package, params_override = nil)
+      # FIXED: Proper area ID assignment from agent relationships
+      def assign_area_ids_from_agents(package, params_override = nil)
         params_to_use = params_override || package.attributes.symbolize_keys
 
         # Set origin_area_id from origin_agent_id
         if params_to_use[:origin_agent_id].present?
           begin
             origin_agent = Agent.find(params_to_use[:origin_agent_id])
-            package.origin_area_id = origin_agent.area_id
-            Rails.logger.info "📍 Set origin_area_id=#{package.origin_area_id} from origin_agent_id=#{params_to_use[:origin_agent_id]}"
+            if origin_agent.area_id.present?
+              package.origin_area_id = origin_agent.area_id
+              Rails.logger.info "📍 Set origin_area_id=#{package.origin_area_id} from origin_agent_id=#{params_to_use[:origin_agent_id]}"
+            else
+              Rails.logger.error "❌ Origin agent #{params_to_use[:origin_agent_id]} has no area_id"
+            end
           rescue ActiveRecord::RecordNotFound
             Rails.logger.error "❌ Origin agent not found: #{params_to_use[:origin_agent_id]}"
+            # Don't fail here, let validation handle it
           end
         end
 
-        # Set destination_area_id from destination_agent_id if provided and destination_area_id not already set
-        if params_to_use[:destination_agent_id].present? && package.destination_area_id.blank?
+        # Set destination_area_id from destination_agent_id if provided
+        if params_to_use[:destination_agent_id].present?
           begin
             destination_agent = Agent.find(params_to_use[:destination_agent_id])
-            package.destination_area_id = destination_agent.area_id
-            Rails.logger.info "📍 Set destination_area_id=#{package.destination_area_id} from destination_agent_id=#{params_to_use[:destination_agent_id]}"
+            if destination_agent.area_id.present?
+              package.destination_area_id = destination_agent.area_id
+              Rails.logger.info "📍 Set destination_area_id=#{package.destination_area_id} from destination_agent_id=#{params_to_use[:destination_agent_id]}"
+            else
+              Rails.logger.error "❌ Destination agent #{params_to_use[:destination_agent_id]} has no area_id"
+            end
           rescue ActiveRecord::RecordNotFound
             Rails.logger.error "❌ Destination agent not found: #{params_to_use[:destination_agent_id]}"
+            # Don't fail here, let validation handle it
           end
         end
+        
+        # If destination_area_id is provided explicitly, use it
+        if params_to_use[:destination_area_id].present? && package.destination_area_id != params_to_use[:destination_area_id]
+          package.destination_area_id = params_to_use[:destination_area_id]
+          Rails.logger.info "📍 Set destination_area_id=#{package.destination_area_id} from explicit parameter"
+        end
+      end
+
+      # FIXED: Agent validation for package creation
+      def validate_package_agents(package)
+        # Validate origin agent exists and user has access
+        if package.origin_agent_id.present?
+          origin_agent = Agent.find_by(id: package.origin_agent_id)
+          unless origin_agent
+            package.errors.add(:origin_agent_id, 'Origin agent not found')
+            return false
+          end
+          
+          unless current_user.can_access_agent?(origin_agent)
+            package.errors.add(:origin_agent_id, 'Access denied to origin agent')
+            return false
+          end
+        end
+
+        # Validate destination agent if provided
+        if package.destination_agent_id.present?
+          destination_agent = Agent.find_by(id: package.destination_agent_id)
+          unless destination_agent
+            package.errors.add(:destination_agent_id, 'Destination agent not found')
+            return false
+          end
+        end
+
+        true
       end
 
       def force_json_format
@@ -417,6 +492,18 @@ module Api
           success: false, 
           message: 'Package not found or access denied' 
         }, status: :not_found
+      end
+
+      # FIXED: Use PackageCodeGenerator service if available
+      def ensure_package_has_code(package)
+        return if package.code.present?
+        
+        if defined?(PackageCodeGenerator)
+          package.update!(code: PackageCodeGenerator.new(package).generate)
+        else
+          # Fallback code generation
+          package.update!(code: "PKG#{SecureRandom.hex(4).upcase}")
+        end
       end
 
       def can_edit_package?(package)
@@ -461,15 +548,24 @@ module Api
       end
 
       def should_recalculate_cost?(params)
-        params.key?(:destination_area_id) || params.key?(:destination_agent_id)
+        params.key?(:destination_area_id) || params.key?(:destination_agent_id) || params.key?(:delivery_type)
       end
 
       def calculate_package_cost(package)
         return nil unless package.origin_area && package.destination_area
         
-        # Basic cost calculation - implement your business logic here
-        base_cost = 100 # Base cost in cents
-        base_cost
+        # Use package model's cost calculation if available
+        if package.respond_to?(:calculate_delivery_cost)
+          package.calculate_delivery_cost
+        else
+          # Basic fallback calculation
+          base_cost = package.origin_area.id == package.destination_area.id ? 150 : 300
+          case package.delivery_type
+          when 'agent' then base_cost - 50
+          when 'fragile' then base_cost + 100
+          else base_cost
+          end
+        end
       end
 
       def get_available_scanning_actions(package)
@@ -511,13 +607,15 @@ module Api
           'id' => package.id.to_s,
           'code' => package.code,
           'state' => package.state,
+          'state_display' => package.state&.humanize,
           'sender_name' => package.sender_name,
           'receiver_name' => package.receiver_name,
           'receiver_phone' => package.receiver_phone,
           'cost' => package.cost,
-          'created_at' => package.created_at.iso8601,
-          'updated_at' => package.updated_at.iso8601,
-          'delivery_type' => package.delivery_type
+          'delivery_type' => package.delivery_type,
+          'route_description' => safe_route_description(package),
+          'created_at' => package.created_at&.iso8601,
+          'updated_at' => package.updated_at&.iso8601
         }
       end
 
@@ -610,8 +708,8 @@ module Api
         return nil unless agent
         {
           'id' => agent.id.to_s,
-          'name' => agent.respond_to?(:name) ? agent.name : 'Unknown Agent',
-          'phone' => agent.respond_to?(:phone) ? agent.phone : nil,
+          'name' => agent.name,
+          'phone' => agent.phone,
           'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
         }
       end
@@ -646,6 +744,7 @@ module Api
           :delivery_type
         ]
         
+        # Include optional fields that exist in your Package model
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
           base_params << field if Package.column_names.include?(field.to_s)
@@ -692,35 +791,68 @@ module Api
         packages
       end
 
-      # Helper methods - you'll need to implement these based on your business logic
-      def ensure_package_has_code(package)
-        package.update!(code: generate_package_code(package)) if package.code.blank?
-      end
-
-      def generate_package_code(package)
-        "PKG#{SecureRandom.hex(4).upcase}"
-      end
-
-      def generate_qr_code_data(package)
-        # Implement QR code generation logic
+      # FIXED: QR code options for the QrCodeGenerator service
+      def qr_code_options
         {
-          base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
-          tracking_url: package_tracking_url(package.code)
+          module_size: params[:module_size]&.to_i || 8,
+          border_size: params[:border_size]&.to_i || 20,
+          corner_radius: params[:corner_radius]&.to_i || 5,
+          data_type: params[:data_type]&.to_sym || :url,
+          center_logo: params[:center_logo] != 'false',
+          gradient: params[:gradient] != 'false',
+          logo_size: params[:logo_size]&.to_i || 30,
+          qr_size: params[:qr_size]&.to_i || 6
         }
       end
 
       def safe_route_description(package)
         return "Unknown route" unless package.origin_area && package.destination_area
-        "#{package.origin_area.name} → #{package.destination_area.name}"
+        
+        # Try using package's route_description method if available
+        if package.respond_to?(:route_description)
+          package.route_description
+        else
+          # Fallback route description
+          origin_name = package.origin_area.location&.name || package.origin_area.name || 'Unknown Origin'
+          destination_name = package.destination_area.location&.name || package.destination_area.name || 'Unknown Destination'
+          
+          if package.origin_area.location&.id == package.destination_area.location&.id
+            # Same location, different areas
+            "#{origin_name} (#{package.origin_area.name} → #{package.destination_area.name})"
+          else
+            # Different locations
+            "#{origin_name} → #{destination_name}"
+          end
+        end
       end
 
       def package_timeline(package)
-        # Implement timeline generation logic
-        []
+        # Implement timeline generation logic based on tracking events
+        if package.respond_to?(:tracking_events)
+          package.tracking_events.order(:created_at).map do |event|
+            {
+              event_type: event.event_type,
+              description: event.description,
+              timestamp: event.created_at.iso8601,
+              location: event.location,
+              user: event.user&.name || 'System'
+            }
+          end
+        else
+          []
+        end
       end
 
       def package_tracking_url(code)
-        "#{request.base_url}/tracking/#{code}"
+        begin
+          # Try using Rails URL helpers
+          Rails.application.routes.url_helpers.package_tracking_url(code)
+        rescue
+          # Fallback URL generation
+          protocol = Rails.env.production? ? 'https' : 'http'
+          host = Rails.application.config.action_mailer.default_url_options[:host] || 'localhost:3000'
+          "#{protocol}://#{host}/track/#{code}"
+        end
       end
 
       def get_sender_phone(package)
