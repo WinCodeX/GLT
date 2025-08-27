@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - Using QrCodeGenerator service with fixed serialization
+# app/controllers/api/v1/packages_controller.rb - Using PackageSerializer
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -10,8 +10,8 @@ module Api
       def index
         begin
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
-                                         { origin_area: :location, destination_area: :location })
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                         { origin_area: :location, destination_area: :location }, :user)
                                 .order(created_at: :desc)
           
           packages = apply_filters(packages)
@@ -22,13 +22,17 @@ module Api
           total_count = packages.count
           packages = packages.offset((page - 1) * per_page).limit(per_page)
 
-          serialized_packages = packages.map do |package|
-            serialize_package_with_complete_info(package)
-          end
+          # Use PackageSerializer for consistent serialization
+          serialized_data = PackageSerializer.new(packages, {
+            params: { 
+              include_qr_code: false,
+              url_helper: self
+            }
+          }).serializable_hash
 
           render json: {
             success: true,
-            data: serialized_packages,
+            data: serialized_data[:data]&.map { |pkg| pkg[:attributes] } || [],
             pagination: {
               current_page: page,
               per_page: per_page,
@@ -64,9 +68,17 @@ module Api
             }, status: :forbidden
           end
 
+          # Use PackageSerializer for consistent serialization
+          serialized_data = PackageSerializer.new(@package, {
+            params: { 
+              include_qr_code: false,
+              url_helper: self
+            }
+          }).serializable_hash
+
           render json: {
             success: true,
-            data: serialize_package_complete(@package),
+            data: serialized_data[:data][:attributes],
             user_permissions: {
               can_edit: can_edit_package?(@package),
               can_delete: can_delete_package?(@package),
@@ -102,9 +114,14 @@ module Api
 
           if package.save
             Rails.logger.info "Package created successfully: #{package.code}"
+            
+            serialized_data = PackageSerializer.new(package, {
+              params: { url_helper: self }
+            }).serializable_hash
+            
             render json: {
               success: true,
-              data: serialize_package_complete(package),
+              data: serialized_data[:data][:attributes],
               message: 'Package created successfully'
             }, status: :created
           else
@@ -154,9 +171,13 @@ module Api
               @package.update_column(:cost, new_cost) if new_cost
             end
 
+            serialized_data = PackageSerializer.new(@package.reload, {
+              params: { url_helper: self }
+            }).serializable_hash
+
             render json: {
               success: true,
-              data: serialize_package_complete(@package.reload),
+              data: serialized_data[:data][:attributes],
               message: 'Package updated successfully'
             }
           else
@@ -227,19 +248,19 @@ module Api
         begin
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                         { origin_area: :location, destination_area: :location })
+                                         { origin_area: :location, destination_area: :location }, :user)
                                 .where("code ILIKE ?", "%#{query}%")
                                 .limit(20)
 
-          serialized_packages = packages.map do |package|
-            serialize_package_with_complete_info(package)
-          end
+          serialized_data = PackageSerializer.new(packages, {
+            params: { url_helper: self }
+          }).serializable_hash
 
           render json: {
             success: true,
-            data: serialized_packages,
+            data: serialized_data[:data]&.map { |pkg| pkg[:attributes] } || [],
             query: query,
-            count: serialized_packages.length,
+            count: packages.count,
             user_role: current_user.primary_role
           }
         rescue => e
@@ -254,16 +275,24 @@ module Api
 
       def qr_code
         begin
-          qr_data = generate_qr_code_data(@package)
+          serialized_data = PackageSerializer.new(@package, {
+            params: { 
+              include_qr_code: true,
+              url_helper: self,
+              qr_options: qr_code_options
+            }
+          }).serializable_hash
+
+          package_data = serialized_data[:data][:attributes]
           
           render json: {
             success: true,
             data: {
-              qr_code_base64: qr_data[:base64],
-              tracking_url: qr_data[:tracking_url],
+              qr_code_base64: package_data[:qr_code_base64],
+              tracking_url: package_data[:tracking_url],
               package_code: @package.code,
               package_state: @package.state,
-              route_description: safe_route_description(@package)
+              route_description: package_data[:route_description]
             },
             message: 'QR code generated successfully'
           }
@@ -279,11 +308,15 @@ module Api
 
       def tracking_page
         begin
+          serialized_data = PackageSerializer.new(@package, {
+            params: { url_helper: self }
+          }).serializable_hash
+
           render json: {
             success: true,
-            data: serialize_package_complete(@package),
+            data: serialized_data[:data][:attributes],
             timeline: package_timeline(@package),
-            tracking_url: package_tracking_url(@package.code)
+            tracking_url: tracking_url_for(@package.code)
           }
         rescue => e
           Rails.logger.error "PackagesController#tracking_page error: #{e.message}"
@@ -299,10 +332,15 @@ module Api
         begin
           if @package.state == 'pending_unpaid'
             @package.update!(state: 'pending')
+            
+            serialized_data = PackageSerializer.new(@package, {
+              params: { url_helper: self }
+            }).serializable_hash
+            
             render json: { 
               success: true, 
               message: 'Payment processed successfully',
-              data: serialize_package_basic(@package)
+              data: serialized_data[:data][:attributes]
             }
           else
             render json: { 
@@ -324,10 +362,15 @@ module Api
         begin
           if @package.state == 'pending'
             @package.update!(state: 'submitted')
+            
+            serialized_data = PackageSerializer.new(@package, {
+              params: { url_helper: self }
+            }).serializable_hash
+            
             render json: { 
               success: true, 
               message: 'Package submitted for delivery',
-              data: serialize_package_basic(@package)
+              data: serialized_data[:data][:attributes]
             }
           else
             render json: { 
@@ -489,268 +532,6 @@ module Api
         actions
       end
 
-      # FIXED: Safer serialization methods with proper nil checking
-      def serialize_package_with_complete_info(package)
-        data = serialize_package_basic(package)
-        
-        data.merge!(
-          'sender_phone' => get_sender_phone(package),
-          'sender_email' => get_sender_email(package),
-          'receiver_email' => get_receiver_email(package),
-          'business_name' => get_business_name(package),
-          'delivery_location' => safe_get_delivery_location(package),
-          'origin_area' => serialize_area(package.origin_area),
-          'destination_area' => serialize_area(package.destination_area),
-          'origin_agent' => serialize_agent(package.origin_agent),
-          'destination_agent' => serialize_agent(package.destination_agent)
-        )
-        
-        unless current_user.client?
-          data.merge!(
-            'access_reason' => get_access_reason(package),
-            'user_can_scan' => current_user.respond_to?(:can_scan_packages?) ? current_user.can_scan_packages? : false,
-            'available_actions' => get_available_scanning_actions(package).map { |a| a[:action] }
-          )
-        end
-        
-        data
-      end
-
-      def serialize_package_complete(package)
-        data = serialize_package_basic(package)
-        
-        additional_data = {
-          'sender_phone' => get_sender_phone(package),
-          'sender_email' => get_sender_email(package),
-          'receiver_email' => get_receiver_email(package),
-          'business_name' => get_business_name(package),
-          'origin_area' => serialize_area(package.origin_area),
-          'destination_area' => serialize_area(package.destination_area),
-          'origin_agent' => serialize_agent(package.origin_agent),
-          'destination_agent' => serialize_agent(package.destination_agent),
-          'delivery_location' => safe_get_delivery_location(package),
-          'tracking_url' => package_tracking_url(package.code),
-          'created_by' => serialize_user_basic(package.user),
-          'is_editable' => can_edit_package?(package),
-          'is_deletable' => can_delete_package?(package),
-          'available_scanning_actions' => get_available_scanning_actions(package)
-        }
-        
-        data.merge!(additional_data)
-      end
-
-      def serialize_package_basic(package)
-        {
-          'id' => package.id.to_s,
-          'code' => package.code || '',
-          'state' => package.state || 'unknown',
-          'state_display' => package.state&.humanize || 'Unknown',
-          'sender_name' => package.sender_name || '',
-          'receiver_name' => package.receiver_name || '',
-          'receiver_phone' => package.receiver_phone || '',
-          'cost' => package.cost || 0,
-          'delivery_type' => package.delivery_type || 'agent',
-          'route_description' => safe_route_description(package),
-          'created_at' => package.created_at&.iso8601,
-          'updated_at' => package.updated_at&.iso8601
-        }
-      end
-
-      def serialize_area(area)
-        return nil unless area
-        
-        {
-          'id' => area.id.to_s,
-          'name' => area.name || 'Unknown Area',
-          'location' => serialize_location(area.location)
-        }
-      rescue => e
-        Rails.logger.error "Error serializing area: #{e.message}"
-        nil
-      end
-
-      def serialize_location(location)
-        return nil unless location
-        
-        {
-          'id' => location.id.to_s,
-          'name' => location.name || 'Unknown Location'
-        }
-      rescue => e
-        Rails.logger.error "Error serializing location: #{e.message}"
-        nil
-      end
-
-      def serialize_agent(agent)
-        return nil unless agent
-        
-        {
-          'id' => agent.id.to_s,
-          'name' => agent.name || 'Unknown Agent',
-          'phone' => agent.phone || '',
-          'area' => serialize_area(agent.area)
-        }
-      rescue => e
-        Rails.logger.error "Error serializing agent: #{e.message}"
-        nil
-      end
-
-      def serialize_user_basic(user)
-        return nil unless user
-        
-        name = if user.respond_to?(:name) && user.name.present?
-          user.name
-        elsif user.respond_to?(:first_name) && user.respond_to?(:last_name)
-          "#{user.first_name} #{user.last_name}".strip
-        elsif user.respond_to?(:first_name) && user.first_name.present?
-          user.first_name
-        elsif user.respond_to?(:last_name) && user.last_name.present?
-          user.last_name
-        else
-          user.email
-        end
-        
-        {
-          'id' => user.id.to_s,
-          'name' => name || 'Unknown User',
-          'email' => user.email || '',
-          'role' => user.respond_to?(:primary_role) ? user.primary_role : 'user'
-        }
-      rescue => e
-        Rails.logger.error "Error serializing user: #{e.message}"
-        {
-          'id' => user&.id.to_s || '',
-          'name' => 'Unknown User',
-          'email' => '',
-          'role' => 'user'
-        }
-      end
-
-      def get_access_reason(package)
-        case current_user.primary_role
-        when 'agent'
-          'Area agent access'
-        when 'rider'
-          'Delivery rider access'
-        when 'warehouse'
-          'Warehouse processing'
-        when 'admin'
-          'Administrator access'
-        else
-          'Package owner'
-        end
-      end
-
-      # FIXED: Safer helper methods with nil checking
-      def get_sender_phone(package)
-        return nil unless package
-        
-        if package.respond_to?(:sender_phone) && package.sender_phone.present?
-          package.sender_phone
-        elsif package.user&.respond_to?(:phone) && package.user&.phone.present?
-          package.user.phone
-        else
-          nil
-        end
-      rescue => e
-        Rails.logger.error "Error getting sender phone: #{e.message}"
-        nil
-      end
-
-      def get_sender_email(package)
-        return nil unless package
-        
-        if package.respond_to?(:sender_email) && package.sender_email.present?
-          package.sender_email
-        elsif package.user&.respond_to?(:email) && package.user&.email.present?
-          package.user.email
-        else
-          nil
-        end
-      rescue => e
-        Rails.logger.error "Error getting sender email: #{e.message}"
-        nil
-      end
-
-      def get_receiver_email(package)
-        return nil unless package
-        
-        if package.respond_to?(:receiver_email) && package.receiver_email.present?
-          package.receiver_email
-        else
-          nil
-        end
-      rescue => e
-        Rails.logger.error "Error getting receiver email: #{e.message}"
-        nil
-      end
-
-      def get_business_name(package)
-        return nil unless package
-        
-        if package.respond_to?(:business_name) && package.business_name.present?
-          package.business_name
-        elsif package.user&.respond_to?(:business_name) && package.user&.business_name.present?
-          package.user.business_name
-        elsif package.user&.respond_to?(:company) && package.user&.company.present?
-          package.user.company
-        else
-          nil
-        end
-      rescue => e
-        Rails.logger.error "Error getting business name: #{e.message}"
-        nil
-      end
-
-      def safe_get_delivery_location(package)
-        return nil unless package
-        
-        if package.respond_to?(:delivery_location)
-          package.delivery_location
-        else
-          nil
-        end
-      rescue => e
-        Rails.logger.error "Error getting delivery location: #{e.message}"
-        nil
-      end
-
-      # QR Code generation using the QrCodeGenerator service
-      def generate_qr_code_data(package)
-        tracking_url = package_tracking_url(package.code)
-        
-        if defined?(QrCodeGenerator)
-          begin
-            qr_generator = QrCodeGenerator.new(package, qr_code_options)
-            png_data = qr_generator.generate
-            return {
-              base64: "data:image/png;base64,#{Base64.encode64(png_data)}",
-              tracking_url: tracking_url
-            }
-          rescue => e
-            Rails.logger.warn "QrCodeGenerator failed: #{e.message}"
-          end
-        end
-        
-        # Fallback if QrCodeGenerator is not available
-        {
-          base64: nil,
-          tracking_url: tracking_url
-        }
-      end
-
-      def qr_code_options
-        {
-          module_size: params[:module_size]&.to_i || 12,
-          border_size: params[:border_size]&.to_i || 24,
-          corner_radius: params[:corner_radius]&.to_i || 4,
-          data_type: params[:data_type]&.to_sym || :url,
-          center_logo: params[:center_logo] != 'false',
-          gradient: params[:gradient] != 'false',
-          logo_size: params[:logo_size]&.to_i || 40
-        }
-      end
-
       def valid_state_transition?(current_state, new_state)
         valid_transitions = {
           'pending_unpaid' => ['pending', 'rejected'],
@@ -769,7 +550,7 @@ module Api
       end
 
       def ensure_package_has_code(package)
-        if package&.code.blank?
+        if package.code.blank?
           package.update!(code: generate_package_code(package))
         end
       rescue => e
@@ -835,6 +616,18 @@ module Api
       def should_recalculate_cost?(params)
         cost_affecting_fields = ['origin_area_id', 'destination_area_id', 'delivery_type']
         params.keys.any? { |key| cost_affecting_fields.include?(key) }
+      end
+
+      def qr_code_options
+        {
+          module_size: params[:module_size]&.to_i || 12,
+          border_size: params[:border_size]&.to_i || 24,
+          corner_radius: params[:corner_radius]&.to_i || 4,
+          data_type: params[:data_type]&.to_sym || :url,
+          center_logo: params[:center_logo] != 'false',
+          gradient: params[:gradient] != 'false',
+          logo_size: params[:logo_size]&.to_i || 40
+        }
       end
 
       def package_params
@@ -925,37 +718,11 @@ module Api
         ]
       end
 
-      def package_tracking_url(code)
+      def tracking_url_for(code)
         "#{request.base_url}/track/#{code}"
       rescue => e
         Rails.logger.error "Tracking URL generation failed: #{e.message}"
         "/track/#{code}"
-      end
-
-      def safe_route_description(package)
-        return 'Route information unavailable' unless package
-
-        begin
-          if package.respond_to?(:route_description) && package.route_description.present?
-            package.route_description
-          else
-            origin_location = package.origin_area&.location&.name || 'Unknown Origin'
-            destination_location = package.destination_area&.location&.name || 'Unknown Destination'
-            
-            if package.origin_area&.location&.id == package.destination_area&.location&.id
-              origin_area = package.origin_area&.name || 'Unknown Area'
-              destination_area = package.destination_area&.name || 'Unknown Area'
-              "#{origin_location} (#{origin_area} → #{destination_area})"
-            else
-              "#{origin_location} → #{destination_location}"
-            end
-          end
-        rescue => e
-          Rails.logger.error "Route description generation failed: #{e.message}"
-          origin = package.origin_area&.name || 'Unknown Origin'
-          destination = package.destination_area&.name || 'Unknown Destination'
-          "#{origin} → #{destination}"
-        end
       end
 
       def status_description(state)
