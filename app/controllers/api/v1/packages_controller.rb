@@ -207,6 +207,10 @@ module Api
 
       private
 
+      def force_json_format
+        request.format = :json
+      end
+
       def apply_filters(packages)
         # Apply explicit filters first
         packages = packages.where(state: params[:state]) if params[:state].present?
