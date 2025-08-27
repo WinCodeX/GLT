@@ -1,523 +1,625 @@
-# app/controllers/api/v1/packages_controller.rb - Fixed for enhanced delivery type handling
-class Api::V1::PackagesController < ApplicationController
-  before_action :authenticate_user!
-  before_action :ensure_client_role, only: [:create]
-  before_action :set_package_by_code, only: [:show, :update, :destroy]
-  before_action :set_package_for_authenticated_user, only: [:update, :destroy]
-  before_action :authorize_package_action, only: [:update, :destroy]
+# app/controllers/api/v1/packages_controller.rb - FIXED: State filtering issue
+module Api
+  module V1
+    class PackagesController < ApplicationController
+      before_action :authenticate_user!
+      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :thermal_qr_code, :qr_comparison, :tracking_page, :pay, :submit]
+      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code, :thermal_qr_code, :qr_comparison]
+      before_action :force_json_format
 
-  def index
-    @packages = current_user.accessible_packages
-                            .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                     origin_area: :location, destination_area: :location)
-                            .order(created_at: :desc)
-                            .limit(50)
-
-    render json: {
-      success: true,
-      data: @packages.map { |pkg| serialize_package_basic(pkg) },
-      meta: {
-        total_count: @packages.size,
-        current_user_role: current_user.primary_role,
-        delivery_types_supported: Package.delivery_types.keys
-      }
-    }
-  end
-
-  def show
-    render json: {
-      success: true,
-      data: serialize_package_full(@package)
-    }
-  end
-
-  def create
-    delivery_type = package_params[:delivery_type] || 'doorstep'
-    Rails.logger.info "🆕 Creating #{delivery_type} package with params: #{package_params.except(:special_instructions).to_json}"
-    
-    # Build package with core parameters first
-    @package = current_user.packages.build(package_params)
-    
-    # FIXED: Ensure all required fields are set before validation
-    prepare_package_for_creation
-    
-    # Set additional parameters safely
-    set_additional_package_parameters_safely
-
-    Rails.logger.info "🔧 Package prepared for creation: delivery_type=#{@package.delivery_type}, state=#{@package.state}, code=#{@package.code&.present? ? 'SET' : 'PENDING'}"
-
-    # Wrap in transaction and handle all creation steps
-    Package.transaction do
-      if @package.save
-        Rails.logger.info "✅ Package created successfully: #{@package.code} (ID: #{@package.id})"
-        
-        # Generate QR codes after successful save (non-blocking)
+      def index
         begin
-          @package.generate_qr_code_files if @package.respond_to?(:generate_qr_code_files)
+          Rails.logger.info "🔍 PackagesController#index - User: #{current_user.email}, Role: #{current_user.primary_role}"
+          Rails.logger.info "🔍 Request params: #{params.to_unsafe_h.slice(:state, :search, :page, :per_page, :area_filter, :action_filter)}"
+          
+          packages = current_user.accessible_packages
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
+                                         origin_area: :location, destination_area: :location)
+                                .order(created_at: :desc)
+          
+          Rails.logger.info "🔍 Base packages count: #{packages.count}"
+          
+          # FIXED: Apply filters with proper state handling
+          packages = apply_filters_fixed(packages)
+          
+          Rails.logger.info "🔍 After filtering count: #{packages.count}"
+          
+          page = [params[:page]&.to_i || 1, 1].max
+          per_page = [[params[:per_page]&.to_i || 20, 1].max, 100].min
+          
+          total_count = packages.count
+          packages = packages.offset((page - 1) * per_page).limit(per_page)
+
+          Rails.logger.info "🔍 Final paginated count: #{packages.count}/#{total_count}"
+
+          serialized_packages = packages.map do |package|
+            serialize_package_with_complete_info(package)
+          end
+
+          # Log actual states returned for debugging
+          if params[:state].present?
+            returned_states = serialized_packages.map { |p| p['state'] }.uniq
+            Rails.logger.info "🎯 Expected state: #{params[:state]}, Returned states: #{returned_states}"
+            
+            if returned_states.length > 1 || (returned_states.length == 1 && returned_states.first != params[:state])
+              Rails.logger.error "❌ FILTERING FAILED! Expected: #{params[:state]}, Got: #{returned_states}"
+            else
+              Rails.logger.info "✅ Filtering successful for state: #{params[:state]}"
+            end
+          end
+
+          render json: {
+            success: true,
+            data: serialized_packages,
+            pagination: {
+              current_page: page,
+              per_page: per_page,
+              total_count: total_count,
+              total_pages: (total_count / per_page.to_f).ceil,
+              has_next: page * per_page < total_count,
+              has_prev: page > 1
+            },
+            user_context: {
+              role: current_user.primary_role,
+              can_create_packages: current_user.client?,
+              accessible_areas_count: current_user.respond_to?(:accessible_areas) ? current_user.accessible_areas.count : 0,
+              accessible_locations_count: current_user.respond_to?(:accessible_locations) ? current_user.accessible_locations.count : 0
+            },
+            filter_debug: {
+              requested_state: params[:state],
+              returned_states: serialized_packages.map { |p| p['state'] }.uniq,
+              filter_working: params[:state].blank? || serialized_packages.all? { |p| p['state'] == params[:state] }
+            }
+          }
         rescue => e
-          Rails.logger.warn "QR code generation failed for package #{@package.code}: #{e.message}"
-          # Don't fail the entire request if QR generation fails
+          Rails.logger.error "❌ PackagesController#index error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          render json: { 
+            success: false, 
+            message: 'Failed to load packages',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
         end
-
-        render json: {
-          success: true,
-          data: serialize_package_full(@package),
-          message: "#{@package.delivery_type.humanize} package created successfully"
-        }, status: :created
-      else
-        Rails.logger.error "❌ Package creation failed: #{@package.errors.full_messages.join(', ')}"
-        render json: {
-          success: false,
-          errors: @package.errors.full_messages,
-          message: 'Failed to create package',
-          debug_info: Rails.env.development? ? {
-            delivery_type: @package.delivery_type,
-            state: @package.state,
-            code: @package.code,
-            cost: @package.cost,
-            route_sequence: @package.route_sequence
-          } : nil
-        }, status: :unprocessable_entity
       end
-    end
-  rescue => e
-    Rails.logger.error "PackagesController#create error: #{e.message}"
-    Rails.logger.error e.backtrace.join("\n")
-    
-    render json: {
-      success: false,
-      message: 'An error occurred while creating the package',
-      error: Rails.env.development? ? e.message : 'Internal server error'
-    }, status: :internal_server_error
-  end
 
-  def update
-    update_params = package_update_params
+      def show
+        begin
+          unless current_user.can_access_package?(@package)
+            return render json: {
+              success: false,
+              message: 'Access denied to this package'
+            }, status: :forbidden
+          end
 
-    if @package.update(update_params)
-      render json: {
-        success: true,
-        data: serialize_package_full(@package),
-        message: 'Package updated successfully'
-      }
-    else
-      render json: {
-        success: false,
-        errors: @package.errors.full_messages,
-        message: 'Failed to update package'
-      }, status: :unprocessable_entity
-    end
-  rescue => e
-    Rails.logger.error "PackagesController#update error: #{e.message}"
-    render json: {
-      success: false,
-      message: 'An error occurred while updating the package'
-    }, status: :internal_server_error
-  end
-
-  def destroy
-    if @package.destroy
-      render json: {
-        success: true,
-        message: 'Package deleted successfully'
-      }
-    else
-      render json: {
-        success: false,
-        errors: @package.errors.full_messages,
-        message: 'Failed to delete package'
-      }, status: :unprocessable_entity
-    end
-  end
-
-  # QR Code generation endpoint
-  def qr_code
-    qr_type = params[:type]&.to_sym || :organic
-    qr_options = params[:options] || {}
-    
-    case qr_type
-    when :thermal
-      if @package.respond_to?(:thermal_qr_response)
-        response_data = @package.thermal_qr_response(qr_options)
-        render json: { success: true, data: response_data }
-      else
-        render json: { success: false, message: 'Thermal QR not supported' }
+          render json: {
+            success: true,
+            data: serialize_package_complete(@package),
+            user_permissions: {
+              can_edit: can_edit_package?(@package),
+              can_delete: can_delete_package?(@package),
+              can_scan: current_user.respond_to?(:can_scan_packages?) ? current_user.can_scan_packages? : false,
+              access_reason: get_access_reason(@package)
+            }
+          }
+        rescue => e
+          Rails.logger.error "PackagesController#show error: #{e.message}"
+          render json: { 
+            success: false, 
+            message: 'Failed to load package details',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
       end
-    else
-      if @package.respond_to?(:organic_qr_code_base64)
-        qr_data = @package.organic_qr_code_base64(qr_options)
-        render json: { success: true, qr_code_base64: qr_data, type: 'organic' }
-      else
-        render json: { success: false, message: 'QR code generation not available' }
+
+      # FIXED: QR code generation using app services
+      def qr_code
+        begin
+          Rails.logger.info "📱 Generating QR code for package: #{@package.code}"
+          
+          # Use the QrCodeGenerator service from app/services
+          if defined?(QrCodeGenerator)
+            qr_options = {
+              module_size: params[:module_size]&.to_i || 8,
+              border_size: params[:border_size]&.to_i || 20,
+              corner_radius: params[:corner_radius]&.to_i || 5,
+              data_type: params[:data_type]&.to_sym || :url,
+              center_logo: params[:center_logo] != 'false',
+              gradient: params[:gradient] != 'false'
+            }
+            
+            qr_generator = QrCodeGenerator.new(@package, qr_options)
+            qr_base64 = qr_generator.generate_base64
+            
+            render json: {
+              success: true,
+              data: {
+                qr_code_base64: qr_base64,
+                tracking_url: @package.respond_to?(:tracking_url) ? @package.tracking_url : package_tracking_url(@package.code),
+                package_code: @package.code,
+                package_state: @package.state,
+                route_description: safe_route_description(@package),
+                qr_type: 'organic',
+                generated_at: Time.current.iso8601
+              },
+              message: 'QR code generated successfully'
+            }
+          else
+            Rails.logger.warn "⚠️ QrCodeGenerator service not available"
+            render json: {
+              success: false,
+              message: 'QR code generation service not available',
+              data: {
+                tracking_url: package_tracking_url(@package.code),
+                package_code: @package.code
+              }
+            }, status: :service_unavailable
+          end
+        rescue => e
+          Rails.logger.error "❌ QR code generation failed: #{e.message}"
+          render json: {
+            success: false,
+            message: 'QR code generation failed',
+            error: Rails.env.development? ? e.message : nil,
+            data: {
+              tracking_url: package_tracking_url(@package.code),
+              package_code: @package.code
+            }
+          }, status: :internal_server_error
+        end
       end
-    end
-  rescue => e
-    render json: { success: false, message: "QR generation failed: #{e.message}" }
-  end
 
-  # New endpoint to get delivery type information
-  def delivery_types
-    render json: {
-      success: true,
-      data: PackageCodeGenerator.delivery_type_info,
-      supported_types: Package.delivery_types.keys
-    }
-  end
+      # FIXED: Thermal QR code generation
+      def thermal_qr_code
+        begin
+          Rails.logger.info "🖨️ Generating thermal QR code for package: #{@package.code}"
+          
+          if defined?(ThermalQrGenerator)
+            thermal_options = {
+              module_size: params[:module_size]&.to_i || 6,
+              border_size: params[:border_size]&.to_i || 12,
+              corner_radius: params[:corner_radius]&.to_i || 3,
+              data_type: params[:data_type]&.to_sym || :url
+            }
+            
+            thermal_generator = ThermalQrGenerator.new(@package, thermal_options)
+            render json: thermal_generator.generate_thermal_response
+          else
+            Rails.logger.warn "⚠️ ThermalQrGenerator service not available"
+            render json: {
+              success: false,
+              message: 'Thermal QR code generation service not available'
+            }, status: :service_unavailable
+          end
+        rescue => e
+          Rails.logger.error "❌ Thermal QR code generation failed: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Thermal QR code generation failed',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
 
-  private
+      # QR code comparison endpoint
+      def qr_comparison
+        begin
+          if @package.respond_to?(:qr_code_comparison)
+            render json: {
+              success: true,
+              data: @package.qr_code_comparison(include_images: params[:include_images] == 'true')
+            }
+          else
+            render json: {
+              success: false,
+              message: 'QR code comparison not available for this package'
+            }, status: :not_implemented
+          end
+        rescue => e
+          Rails.logger.error "❌ QR code comparison failed: #{e.message}"
+          render json: {
+            success: false,
+            message: 'QR code comparison failed',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
 
-  def ensure_client_role
-    unless current_user.client?
-      render json: { 
-        success: false, 
-        message: 'Only clients can create packages' 
-      }, status: :forbidden
-    end
-  end
+      private
 
-  def authorize_package_action
-    action_name = params[:action]
-    
-    case action_name
-    when 'update'
-      unless can_edit_package?(@package)
+      # FIXED: Apply filters method that respects explicit state parameters
+      def apply_filters_fixed(packages)
+        Rails.logger.info "🔍 apply_filters_fixed called with params: #{params.to_unsafe_h.slice(:state, :search, :area_filter, :action_filter)}"
+        
+        # 1. ALWAYS apply explicit state filter first and respect it
+        if params[:state].present?
+          Rails.logger.info "🎯 Applying explicit state filter: #{params[:state]}"
+          packages = packages.where(state: params[:state])
+          Rails.logger.info "🎯 After state filter count: #{packages.count}"
+        end
+        
+        # 2. Apply search filter
+        if params[:search].present?
+          Rails.logger.info "🔍 Applying search filter: #{params[:search]}"
+          packages = packages.where("code ILIKE ?", "%#{params[:search]}%")
+          Rails.logger.info "🔍 After search filter count: #{packages.count}"
+        end
+        
+        # 3. Apply role-based area filtering WITHOUT overriding state
+        case current_user.primary_role
+        when 'agent'
+          packages = apply_agent_filters(packages)
+        when 'rider'  
+          packages = apply_rider_filters_fixed(packages)
+        when 'warehouse'
+          packages = apply_warehouse_filters(packages)
+        when 'client'
+          # Clients only see their own packages - already handled by accessible_packages
+          Rails.logger.info "🔍 Client role - using accessible_packages scope"
+        when 'admin'
+          # Admins see all packages - no additional filtering
+          Rails.logger.info "🔍 Admin role - no additional filtering"
+        end
+        
+        packages
+      end
+      
+      def apply_agent_filters(packages)
+        if params[:area_filter] == 'origin'
+          Rails.logger.info "🔍 Agent: filtering by origin areas"
+          packages = packages.where(origin_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+        elsif params[:area_filter] == 'destination'
+          Rails.logger.info "🔍 Agent: filtering by destination areas"  
+          packages = packages.where(destination_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+        else
+          # Default: show packages from accessible areas (both origin and destination)
+          if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
+            accessible_area_ids = current_user.accessible_areas
+            packages = packages.where(
+              "origin_area_id IN (?) OR destination_area_id IN (?)", 
+              accessible_area_ids, accessible_area_ids
+            )
+          end
+        end
+        packages
+      end
+      
+      # FIXED: Rider filters that don't override explicit state parameters
+      def apply_rider_filters_fixed(packages)
+        if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
+          accessible_area_ids = current_user.accessible_areas
+          
+          if params[:action_filter] == 'collection'
+            Rails.logger.info "🔍 Rider: filtering for collection packages"
+            # For collection: packages from rider's areas
+            packages = packages.where(origin_area_id: accessible_area_ids)
+            # FIXED: Only apply state filter if no explicit state was requested
+            if params[:state].blank?
+              Rails.logger.info "🔍 Rider collection: applying default state filter (submitted)"
+              packages = packages.where(state: 'submitted')
+            end
+          elsif params[:action_filter] == 'delivery'  
+            Rails.logger.info "🔍 Rider: filtering for delivery packages"
+            # For delivery: packages going to rider's areas
+            packages = packages.where(destination_area_id: accessible_area_ids)
+            # FIXED: Only apply state filter if no explicit state was requested
+            if params[:state].blank?
+              Rails.logger.info "🔍 Rider delivery: applying default state filter (in_transit)"
+              packages = packages.where(state: 'in_transit')
+            end
+          else
+            # Default: show all packages in rider's areas
+            Rails.logger.info "🔍 Rider: showing all packages in accessible areas"
+            packages = packages.where(
+              "origin_area_id IN (?) OR destination_area_id IN (?)", 
+              accessible_area_ids, accessible_area_ids
+            )
+          end
+        end
+        packages
+      end
+      
+      def apply_warehouse_filters(packages)
+        if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
+          accessible_area_ids = current_user.accessible_areas
+          packages = packages.where(
+            "origin_area_id IN (?) OR destination_area_id IN (?)", 
+            accessible_area_ids, accessible_area_ids
+          )
+        end
+        packages
+      end
+
+      def set_package
+        @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                   origin_area: :location, destination_area: :location)
+                         .find_by!(code: params[:id])
+        ensure_package_has_code(@package)
+      rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
-          message: 'You are not authorized to edit this package' 
-        }, status: :forbidden
+          message: 'Package not found' 
+        }, status: :not_found
       end
-    when 'destroy'
-      unless can_delete_package?(@package)
+
+      def set_package_for_authenticated_user
+        @package = current_user.accessible_packages
+                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                        origin_area: :location, destination_area: :location)
+                               .find_by!(code: params[:id])
+        ensure_package_has_code(@package)
+      rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
-          message: 'You are not authorized to delete this package' 
-        }, status: :forbidden
+          message: 'Package not found or access denied' 
+        }, status: :not_found
       end
-    end
-  end
 
-  # FIXED: Prepare package for creation with proper defaults and validation
-  def prepare_package_for_creation
-    # The model callbacks will handle most of this, but we can do some pre-validation here
-    
-    # Ensure delivery type is valid
-    unless Package.delivery_types.key?(@package.delivery_type)
-      @package.delivery_type = 'doorstep' # Default fallback
-      Rails.logger.warn "Invalid delivery type provided, defaulting to doorstep"
-    end
-    
-    # For packages without proper area setup, we might need to set defaults
-    # This is handled by the model callbacks, but we log for debugging
-    Rails.logger.info "📋 Package preparation: delivery_type=#{@package.delivery_type}"
-    
-    # Handle special delivery type requirements
-    case @package.delivery_type
-    when 'fragile'
-      Rails.logger.info "⚠️ Preparing fragile package with special handling requirements"
-    when 'collection'
-      Rails.logger.info "📦 Preparing collection package with collection service setup"
-    when 'express'
-      Rails.logger.info "⚡ Preparing express package with priority handling"
-    end
-  end
+      def ensure_package_has_code(package)
+        if package && package.code.blank?
+          Rails.logger.error "Package #{package.id} has no code - this should not happen"
+          render json: { 
+            success: false, 
+            message: 'Package data is invalid' 
+          }, status: :internal_server_error
+        end
+      end
 
-  # FIXED: Set additional package parameters safely without assigning to computed methods
-  def set_additional_package_parameters_safely
-    # Only set attributes that exist as database columns, not computed methods
-    safe_attributes = {}
-    
-    # Collection-specific attributes for collection delivery type
-    if @package.collection? || params.dig(:package, :shop_name).present?
-      collection_attributes = [
-        :shop_name, :shop_contact, :collection_address, :items_to_collect,
-        :item_value, :item_description, :collection_type
-      ]
-      
-      collection_attributes.each do |attr|
-        if @package.respond_to?("#{attr}=") && params.dig(:package, attr).present?
-          safe_attributes[attr] = params.dig(:package, attr)
+      def can_edit_package?(package)
+        case current_user.primary_role
+        when 'client'
+          package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
+        when 'admin'
+          true
+        when 'agent', 'rider', 'warehouse'
+          true
+        else
+          false
+        end
+      end
+
+      def can_delete_package?(package)
+        case current_user.primary_role
+        when 'client'
+          package.user == current_user
+        when 'admin'
+          true
+        else
+          false
+        end
+      end
+
+      def get_access_reason(package)
+        case current_user.primary_role
+        when 'agent'
+          if current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.origin_area_id)
+            'Origin area agent'
+          elsif current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.destination_area_id)
+            'Destination area agent'
+          else
+            'Area access'
+          end
+        when 'rider'
+          if current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.origin_area_id)
+            'Collection area rider'
+          elsif current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.destination_area_id)
+            'Delivery area rider'
+          else
+            'Area access'
+          end
+        when 'warehouse'
+          'Warehouse processing'
+        when 'admin'
+          'Administrator access'
+        else
+          'Package owner'
+        end
+      end
+
+      def get_available_scanning_actions(package)
+        return [] unless current_user.respond_to?(:can_scan_packages?) && current_user.can_scan_packages?
+        
+        actions = []
+        
+        case current_user.primary_role
+        when 'agent'
+          case package.state
+          when 'submitted'
+            actions << { action: 'collect', label: 'Collect Package', available: true }
+          when 'in_transit'
+            actions << { action: 'process', label: 'Process Package', available: true }
+          end
+        when 'rider'
+          case package.state
+          when 'submitted'
+            actions << { action: 'collect', label: 'Collect for Delivery', available: true }
+          when 'in_transit'
+            actions << { action: 'deliver', label: 'Mark Delivered', available: true }
+          end
+        when 'warehouse'
+          if ['submitted', 'in_transit'].include?(package.state)
+            actions << { action: 'process', label: 'Process Package', available: true }
+          end
+        when 'admin'
+          actions << { action: 'print', label: 'Print Label', available: true }
+          actions << { action: 'collect', label: 'Collect Package', available: true }
+          actions << { action: 'deliver', label: 'Mark Delivered', available: true }
+          actions << { action: 'process', label: 'Process Package', available: true }
+        end
+        
+        actions
+      end
+
+      def serialize_package_basic(package)
+        {
+          'id' => package.id.to_s,
+          'code' => package.code,
+          'state' => package.state,
+          'state_display' => package.state&.humanize,
+          'sender_name' => package.sender_name,
+          'receiver_name' => package.receiver_name,
+          'receiver_phone' => package.receiver_phone,
+          'cost' => package.cost,
+          'delivery_type' => package.delivery_type,
+          'route_description' => safe_route_description(package),
+          'created_at' => package.created_at&.iso8601,
+          'updated_at' => package.updated_at&.iso8601
+        }
+      end
+
+      def serialize_package_with_complete_info(package)
+        data = serialize_package_basic(package)
+        
+        data.merge!(
+          'sender_phone' => get_sender_phone(package),
+          'sender_email' => get_sender_email(package),
+          'receiver_email' => get_receiver_email(package),
+          'business_name' => get_business_name(package),
+          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil,
+          'origin_area' => serialize_area(package.origin_area),
+          'destination_area' => serialize_area(package.destination_area),
+          'origin_agent' => serialize_agent(package.origin_agent),
+          'destination_agent' => serialize_agent(package.destination_agent)
+        )
+        
+        unless current_user.client?
+          data.merge!(
+            'access_reason' => get_access_reason(package),
+            'user_can_scan' => current_user.respond_to?(:can_scan_packages?) ? current_user.can_scan_packages? : false,
+            'available_actions' => get_available_scanning_actions(package).map { |a| a[:action] }
+          )
+        end
+        
+        data
+      end
+
+      def serialize_package_complete(package)
+        data = serialize_package_basic(package)
+        
+        additional_data = {
+          'sender_phone' => get_sender_phone(package),
+          'sender_email' => get_sender_email(package),
+          'receiver_email' => get_receiver_email(package),
+          'business_name' => get_business_name(package),
+          'origin_area' => serialize_area(package.origin_area),
+          'destination_area' => serialize_area(package.destination_area),
+          'origin_agent' => serialize_agent(package.origin_agent),
+          'destination_agent' => serialize_agent(package.destination_agent),
+          'delivery_location' => package.respond_to?(:delivery_location) ? package.delivery_location : nil,
+          'tracking_url' => package_tracking_url(package.code),
+          'created_by' => serialize_user_basic(package.user),
+          'is_editable' => can_edit_package?(package),
+          'is_deletable' => can_delete_package?(package),
+          'available_scanning_actions' => get_available_scanning_actions(package)
+        }
+        
+        data.merge!(additional_data)
+        data
+      end
+
+      def serialize_area(area)
+        return nil unless area
+        
+        {
+          'id' => area.id.to_s,
+          'name' => area.name,
+          'location' => area.respond_to?(:location) ? serialize_location(area.location) : nil
+        }
+      end
+
+      def serialize_location(location)
+        return nil unless location
+        
+        {
+          'id' => location.id.to_s,
+          'name' => location.name
+        }
+      end
+
+      def serialize_agent(agent)
+        return nil unless agent
+        
+        {
+          'id' => agent.id.to_s,
+          'name' => agent.name,
+          'phone' => agent.phone,
+          'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
+        }
+      end
+
+      def serialize_user_basic(user)
+        return nil unless user
+        
+        name = if user.respond_to?(:name) && user.name.present?
+          user.name
+        elsif user.respond_to?(:first_name) && user.respond_to?(:last_name)
+          "#{user.first_name} #{user.last_name}".strip
+        elsif user.respond_to?(:first_name) && user.first_name.present?
+          user.first_name
+        elsif user.respond_to?(:last_name) && user.last_name.present?
+          user.last_name
+        else
+          user.email
+        end
+        
+        {
+          'id' => user.id.to_s,
+          'name' => name,
+          'email' => user.email,
+          'role' => user.respond_to?(:primary_role) ? user.primary_role : 'user'
+        }
+      end
+
+      def get_sender_phone(package)
+        return package.sender_phone if package.respond_to?(:sender_phone) && package.sender_phone.present?
+        return package.user&.phone if package.user&.phone.present?
+        return nil
+      end
+
+      def get_sender_email(package)
+        return package.sender_email if package.respond_to?(:sender_email) && package.sender_email.present?
+        return package.user&.email if package.user&.email.present?
+        return nil
+      end
+
+      def get_receiver_email(package)
+        return package.receiver_email if package.respond_to?(:receiver_email) && package.receiver_email.present?
+        return nil
+      end
+
+      def get_business_name(package)
+        return package.business_name if package.respond_to?(:business_name) && package.business_name.present?
+        return nil
+      end
+
+      def safe_route_description(package)
+        if package.respond_to?(:route_description) && package.route_description.present?
+          package.route_description
+        else
+          # Fallback route description generation
+          origin_location = package.origin_area&.location&.name || 'Unknown Origin'
+          destination_location = package.destination_area&.location&.name || 'Unknown Destination'
+          
+          if package.origin_area&.location&.id == package.destination_area&.location&.id
+            origin_area = package.origin_area&.name || 'Unknown Area'
+            destination_area = package.destination_area&.name || 'Unknown Area'
+            "#{origin_location} (#{origin_area} → #{destination_area})"
+          else
+            "#{origin_location} → #{destination_location}"
+          end
+        end
+      end
+
+      def package_tracking_url(code)
+        begin
+          Rails.application.routes.url_helpers.tracking_url(code)
+        rescue
+          # Fallback if route helpers aren't available
+          protocol = Rails.env.production? ? 'https' : 'http'
+          host = Rails.application.config.action_mailer.default_url_options[:host] || 
+                 ENV['APP_URL']&.sub(/^https?:\/\//, '') || 'localhost:3000'
+          "#{protocol}://#{host}/track/#{code}"
         end
       end
     end
-    
-    # General package attributes
-    general_attributes = [
-      :payment_method, :special_instructions, :special_handling,
-      :requires_payment_advance, :pickup_latitude, :pickup_longitude,
-      :delivery_latitude, :delivery_longitude, :payment_deadline,
-      :collection_scheduled_at
-    ]
-    
-    general_attributes.each do |attr|
-      if @package.respond_to?("#{attr}=") && params.dig(:package, attr).present?
-        safe_attributes[attr] = params.dig(:package, attr)
-      end
-    end
-    
-    # Set special handling to true for fragile packages if not explicitly provided
-    if @package.fragile? && !safe_attributes.key?(:special_handling)
-      safe_attributes[:special_handling] = true
-    end
-    
-    # Set collection type for collection packages if not explicitly provided
-    if @package.collection? && !safe_attributes.key?(:collection_type)
-      safe_attributes[:collection_type] = 'shop_pickup'
-    end
-
-    # Apply all safe attributes at once
-    @package.assign_attributes(safe_attributes) unless safe_attributes.empty?
-    
-    Rails.logger.info "🔧 Set safe attributes: #{safe_attributes.keys.join(', ')}" unless safe_attributes.empty?
-  end
-
-  # Serialization methods with enhanced delivery type information
-  def serialize_package_basic(package)
-    {
-      'id' => package.id.to_s,
-      'code' => package.code,
-      'sender_name' => package.sender_name,
-      'receiver_name' => package.receiver_name,
-      'delivery_type' => package.delivery_type,
-      'delivery_type_display' => package.delivery_type_display,
-      'state' => package.state,
-      'cost' => package.cost,
-      'priority_level' => package.priority_level,
-      'created_at' => package.created_at,
-      'origin_area' => serialize_area(package.origin_area),
-      'destination_area' => serialize_area(package.destination_area),
-      'is_fragile' => package.fragile?,
-      'is_collection' => package.collection?,
-      'requires_special_handling' => package.requires_special_handling?
-    }
-  end
-
-  def serialize_package_full(package)
-    base_data = serialize_package_basic(package)
-    
-    enhanced_data = {
-      'sender_phone' => package.sender_phone,
-      'receiver_phone' => package.receiver_phone,
-      'delivery_location' => package.delivery_location,
-      'special_instructions' => package.respond_to?(:special_instructions) ? package.special_instructions : nil,
-      'handling_instructions' => package.handling_instructions, # Use computed method
-      'payment_method' => package.respond_to?(:payment_method) ? package.payment_method : nil,
-      'special_handling' => package.respond_to?(:special_handling) ? package.special_handling : package.requires_special_handling?,
-      'requires_payment_advance' => package.respond_to?(:requires_payment_advance) ? package.requires_payment_advance : false,
-      'origin_agent' => serialize_agent(package.origin_agent),
-      'destination_agent' => serialize_agent(package.destination_agent),
-      'user' => serialize_user_basic(package.user),
-      'tracking_url' => package.respond_to?(:tracking_url) ? package.tracking_url : nil,
-      'route_description' => package.route_description,
-      'display_identifier' => package.display_identifier,
-      'updated_at' => package.updated_at
-    }
-    
-    # Add collection-specific information if this is a collection package
-    if package.collection?
-      collection_data = {}
-      
-      [:shop_name, :shop_contact, :collection_address, :items_to_collect, 
-       :item_value, :item_description, :collection_type].each do |attr|
-        if package.respond_to?(attr)
-          collection_data[attr.to_s] = package.send(attr)
-        end
-      end
-      
-      enhanced_data['collection_details'] = collection_data unless collection_data.empty?
-    end
-    
-    # Add coordinate information if available
-    if package.respond_to?(:pickup_latitude) && package.pickup_latitude
-      enhanced_data['pickup_coordinates'] = {
-        'latitude' => package.pickup_latitude,
-        'longitude' => package.pickup_longitude
-      }
-    end
-    
-    if package.respond_to?(:delivery_latitude) && package.delivery_latitude
-      enhanced_data['delivery_coordinates'] = {
-        'latitude' => package.delivery_latitude,
-        'longitude' => package.delivery_longitude
-      }
-    end
-    
-    base_data.merge(enhanced_data)
-  end
-
-  def serialize_area(area)
-    return nil unless area
-    
-    {
-      'id' => area.id.to_s,
-      'name' => area.name,
-      'location' => area.location ? serialize_location(area.location) : nil
-    }
-  end
-
-  def serialize_location(location)
-    return nil unless location
-    
-    {
-      'id' => location.id.to_s,
-      'name' => location.name
-    }
-  end
-
-  def serialize_agent(agent)
-    return nil unless agent
-    
-    {
-      'id' => agent.id.to_s,
-      'name' => agent.name,
-      'phone' => agent.phone,
-      'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
-    }
-  end
-
-  def serialize_user_basic(user)
-    return nil unless user
-    
-    name = if user.respond_to?(:name) && user.name.present?
-      user.name
-    elsif user.respond_to?(:first_name) && user.respond_to?(:last_name)
-      "#{user.first_name} #{user.last_name}".strip
-    elsif user.respond_to?(:first_name) && user.first_name.present?
-      user.first_name
-    elsif user.respond_to?(:last_name) && user.last_name.present?
-      user.last_name
-    else
-      user.email
-    end
-    
-    {
-      'id' => user.id.to_s,
-      'name' => name,
-      'email' => user.email,
-      'role' => user.primary_role
-    }
-  end
-
-  def set_package_by_code
-    @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                               origin_area: :location, destination_area: :location)
-                      .find_by!(code: params[:id])
-  rescue ActiveRecord::RecordNotFound
-    render json: { 
-      success: false, 
-      message: 'Package not found' 
-    }, status: :not_found
-  end
-
-  def set_package_for_authenticated_user
-    @package = current_user.accessible_packages
-                           .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                    origin_area: :location, destination_area: :location)
-                           .find_by!(code: params[:id])
-  rescue ActiveRecord::RecordNotFound
-    render json: { 
-      success: false, 
-      message: 'Package not found or access denied' 
-    }, status: :not_found
-  end
-
-  def can_edit_package?(package)
-    case current_user.primary_role
-    when 'client'
-      package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
-    when 'admin'
-      true
-    when 'agent', 'rider', 'warehouse'
-      true
-    else
-      false
-    end
-  end
-
-  def can_delete_package?(package)
-    case current_user.primary_role
-    when 'client'
-      package.user == current_user
-    when 'admin'
-      true
-    else
-      false
-    end
-  end
-
-  # FIXED: Expanded strong parameters to accept all legitimate frontend fields including collection-specific ones
-  def package_params
-    # Base required parameters
-    base_params = [
-      :sender_name, :sender_phone, :receiver_name, :receiver_phone,
-      :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
-      :delivery_type, :delivery_location
-    ]
-    
-    # Extended parameters that the frontend legitimately sends
-    extended_params = [
-      :sender_email, :receiver_email, :business_name, :special_instructions,
-      :shop_name, :shop_contact, :collection_address, :items_to_collect,
-      :item_value, :item_description, :payment_method, :special_handling,
-      :requires_payment_advance, :collection_type, :pickup_latitude,
-      :pickup_longitude, :delivery_latitude, :delivery_longitude,
-      :payment_deadline, :collection_scheduled_at
-    ]
-    
-    # Only include parameters for columns that actually exist in the database
-    all_params = base_params + extended_params.select do |field|
-      Package.column_names.include?(field.to_s)
-    end
-    
-    permitted_params = params.require(:package).permit(*all_params)
-    
-    Rails.logger.info "📋 Permitted parameters: #{permitted_params.keys.join(', ')}"
-    Rails.logger.info "📋 Delivery type: #{permitted_params[:delivery_type]}" if permitted_params[:delivery_type]
-    
-    permitted_params
-  end
-
-  def package_update_params
-    base_params = [
-      :sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-      :destination_area_id, :destination_agent_id, :delivery_type, :state,
-      :origin_agent_id, :delivery_location
-    ]
-    
-    # Add extended update parameters including collection-specific ones
-    extended_params = [
-      :sender_email, :receiver_email, :business_name, :special_instructions,
-      :payment_method, :special_handling, :requires_payment_advance,
-      :shop_name, :shop_contact, :collection_address, :items_to_collect,
-      :item_value, :item_description, :collection_type
-    ]
-    
-    all_params = base_params + extended_params.select do |field|
-      Package.column_names.include?(field.to_s)
-    end
-    
-    permitted_params = []
-    
-    case current_user.primary_role
-    when 'client'
-      if ['pending_unpaid', 'pending'].include?(@package.state)
-        permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                           :destination_area_id, :destination_agent_id, :delivery_location,
-                           :sender_email, :receiver_email, :business_name, :special_instructions,
-                           :shop_name, :shop_contact, :collection_address, :items_to_collect,
-                           :item_value, :item_description].select do |field|
-          all_params.include?(field)
-        end
-      end
-    when 'admin'
-      permitted_params = all_params
-    when 'agent', 'rider', 'warehouse'
-      permitted_params = [:state, :destination_area_id, :destination_agent_id, 
-                         :delivery_location, :special_instructions,
-                         :collection_address, :items_to_collect].select do |field|
-        all_params.include?(field)
-      end
-    end
-    
-    params.require(:package).permit(*permitted_params)
   end
 end
