@@ -401,31 +401,58 @@ module Api
       def serialize_area(area)
         return nil unless area
         
-        {
-          'id' => area.id.to_s,
-          'name' => area.name,
-          'location' => area.respond_to?(:location) ? serialize_location(area.location) : nil
-        }
+        begin
+          {
+            'id' => area.id.to_s,
+            'name' => area.name || 'Unknown Area',
+            'location' => (area.respond_to?(:location) && area.location) ? serialize_location(area.location) : nil
+          }
+        rescue => e
+          Rails.logger.error "Error serializing area #{area.id}: #{e.message}"
+          {
+            'id' => area.id.to_s,
+            'name' => 'Unknown Area',
+            'location' => nil
+          }
+        end
       end
 
       def serialize_location(location)
         return nil unless location
         
-        {
-          'id' => location.id.to_s,
-          'name' => location.name
-        }
+        begin
+          {
+            'id' => location.id.to_s,
+            'name' => location.name || 'Unknown Location'
+          }
+        rescue => e
+          Rails.logger.error "Error serializing location #{location.id}: #{e.message}"
+          {
+            'id' => location.id.to_s,
+            'name' => 'Unknown Location'
+          }
+        end
       end
 
       def serialize_agent(agent)
         return nil unless agent
         
-        {
-          'id' => agent.id.to_s,
-          'name' => agent.name,
-          'phone' => agent.phone,
-          'area' => agent.respond_to?(:area) ? serialize_area(agent.area) : nil
-        }
+        begin
+          {
+            'id' => agent.id.to_s,
+            'name' => agent.name || 'Unknown Agent',
+            'phone' => agent.phone || '',
+            'area' => (agent.respond_to?(:area) && agent.area) ? serialize_area(agent.area) : nil
+          }
+        rescue => e
+          Rails.logger.error "Error serializing agent #{agent.id}: #{e.message}"
+          {
+            'id' => agent.id.to_s,
+            'name' => 'Unknown Agent',
+            'phone' => '',
+            'area' => nil
+          }
+        end
       end
 
       def serialize_user_basic(user)
