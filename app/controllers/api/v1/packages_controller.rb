@@ -10,8 +10,8 @@ module Api
       def index
         begin
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
-                                         origin_area: :location, destination_area: :location, :user)
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                         { origin_area: :location, destination_area: :location }, :user)
                                 .order(created_at: :desc)
           
           packages = apply_filters(packages)
@@ -248,7 +248,7 @@ module Api
         begin
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                         origin_area: :location, destination_area: :location, :user)
+                                         { origin_area: :location, destination_area: :location }, :user)
                                 .where("code ILIKE ?", "%#{query}%")
                                 .limit(20)
 
@@ -396,7 +396,7 @@ module Api
 
       def set_package
         @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                   origin_area: :location, destination_area: :location, :user)
+                                   { origin_area: :location, destination_area: :location }, :user)
                          .find_by!(code: params[:id])
         ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
@@ -409,7 +409,7 @@ module Api
       def set_package_for_authenticated_user
         @package = current_user.accessible_packages
                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                        origin_area: :location, destination_area: :location, :user)
+                                        { origin_area: :location, destination_area: :location }, :user)
                                .find_by!(code: params[:id])
         ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
