@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: State filtering issue
+# app/controllers/api/v1/packages_controller.rb - COMPLETELY REWRITTEN FOR PROPER STATE FILTERING
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -12,6 +12,7 @@ module Api
           Rails.logger.info "🔍 PackagesController#index - User: #{current_user.email}, Role: #{current_user.primary_role}"
           Rails.logger.info "🔍 Request params: #{params.to_unsafe_h.slice(:state, :search, :page, :per_page, :area_filter, :action_filter)}"
           
+          # Start with base accessible packages
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
                                          origin_area: :location, destination_area: :location)
@@ -19,11 +20,12 @@ module Api
           
           Rails.logger.info "🔍 Base packages count: #{packages.count}"
           
-          # FIXED: Apply filters with proper state handling
-          packages = apply_filters_fixed(packages)
+          # Apply filters in strict precedence order
+          packages = apply_filters_with_precedence(packages)
           
           Rails.logger.info "🔍 After filtering count: #{packages.count}"
           
+          # Pagination
           page = [params[:page]&.to_i || 1, 1].max
           per_page = [[params[:per_page]&.to_i || 20, 1].max, 100].min
           
@@ -36,17 +38,8 @@ module Api
             serialize_package_with_complete_info(package)
           end
 
-          # Log actual states returned for debugging
-          if params[:state].present?
-            returned_states = serialized_packages.map { |p| p['state'] }.uniq
-            Rails.logger.info "🎯 Expected state: #{params[:state]}, Returned states: #{returned_states}"
-            
-            if returned_states.length > 1 || (returned_states.length == 1 && returned_states.first != params[:state])
-              Rails.logger.error "❌ FILTERING FAILED! Expected: #{params[:state]}, Got: #{returned_states}"
-            else
-              Rails.logger.info "✅ Filtering successful for state: #{params[:state]}"
-            end
-          end
+          # Validate filtering worked correctly
+          validate_state_filtering(serialized_packages)
 
           render json: {
             success: true,
@@ -62,13 +55,14 @@ module Api
             user_context: {
               role: current_user.primary_role,
               can_create_packages: current_user.client?,
-              accessible_areas_count: current_user.respond_to?(:accessible_areas) ? current_user.accessible_areas.count : 0,
-              accessible_locations_count: current_user.respond_to?(:accessible_locations) ? current_user.accessible_locations.count : 0
+              accessible_areas_count: get_accessible_areas_count,
+              accessible_locations_count: get_accessible_locations_count
             },
             filter_debug: {
               requested_state: params[:state],
-              returned_states: serialized_packages.map { |p| p['state'] }.uniq,
-              filter_working: params[:state].blank? || serialized_packages.all? { |p| p['state'] == params[:state] }
+              returned_states: serialized_packages.map { |p| p['state'] }.uniq.sort,
+              filter_working: validate_state_filter_success(serialized_packages),
+              filter_precedence: get_applied_filters_summary
             }
           }
         rescue => e
@@ -111,12 +105,10 @@ module Api
         end
       end
 
-      # FIXED: QR code generation using app services
       def qr_code
         begin
           Rails.logger.info "📱 Generating QR code for package: #{@package.code}"
           
-          # Use the QrCodeGenerator service from app/services
           if defined?(QrCodeGenerator)
             qr_options = {
               module_size: params[:module_size]&.to_i || 8,
@@ -168,7 +160,6 @@ module Api
         end
       end
 
-      # FIXED: Thermal QR code generation
       def thermal_qr_code
         begin
           Rails.logger.info "🖨️ Generating thermal QR code for package: #{@package.code}"
@@ -200,7 +191,6 @@ module Api
         end
       end
 
-      # QR code comparison endpoint
       def qr_comparison
         begin
           if @package.respond_to?(:qr_code_comparison)
@@ -226,109 +216,201 @@ module Api
 
       private
 
-      # FIXED: Apply filters method that respects explicit state parameters
-      def apply_filters_fixed(packages)
-        Rails.logger.info "🔍 apply_filters_fixed called with params: #{params.to_unsafe_h.slice(:state, :search, :area_filter, :action_filter)}"
+      # CORE FILTERING METHOD: Applies filters in strict precedence order
+      def apply_filters_with_precedence(packages)
+        Rails.logger.info "🎯 apply_filters_with_precedence - Starting with #{packages.count} packages"
         
-        # 1. ALWAYS apply explicit state filter first and respect it
+        # PHASE 1: EXPLICIT PARAMETERS (HIGHEST PRECEDENCE)
+        packages = apply_explicit_filters(packages)
+        Rails.logger.info "🎯 After explicit filters: #{packages.count} packages"
+        
+        # PHASE 2: ROLE-BASED AREA FILTERING (MEDIUM PRECEDENCE)  
+        packages = apply_role_based_area_filtering(packages)
+        Rails.logger.info "🎯 After role-based area filtering: #{packages.count} packages"
+        
+        # PHASE 3: ROLE-BASED ACTION FILTERING (LOWEST PRECEDENCE - only if no explicit state)
+        packages = apply_role_based_action_filtering(packages)
+        Rails.logger.info "🎯 After role-based action filtering: #{packages.count} packages"
+        
+        packages
+      end
+
+      # PHASE 1: Apply explicit user-provided filters (highest precedence)
+      def apply_explicit_filters(packages)
+        # State filter - ALWAYS applied if present, never overridden
         if params[:state].present?
-          Rails.logger.info "🎯 Applying explicit state filter: #{params[:state]}"
+          Rails.logger.info "🎯 EXPLICIT STATE FILTER: #{params[:state]} (will not be overridden)"
           packages = packages.where(state: params[:state])
-          Rails.logger.info "🎯 After state filter count: #{packages.count}"
         end
         
-        # 2. Apply search filter
+        # Search filter
         if params[:search].present?
-          Rails.logger.info "🔍 Applying search filter: #{params[:search]}"
+          Rails.logger.info "🎯 EXPLICIT SEARCH FILTER: #{params[:search]}"
           packages = packages.where("code ILIKE ?", "%#{params[:search]}%")
-          Rails.logger.info "🔍 After search filter count: #{packages.count}"
         end
         
-        # 3. Apply role-based area filtering WITHOUT overriding state
+        packages
+      end
+
+      # PHASE 2: Apply role-based area filtering (respects explicit filters)
+      def apply_role_based_area_filtering(packages)
         case current_user.primary_role
         when 'agent'
-          packages = apply_agent_filters(packages)
-        when 'rider'  
-          packages = apply_rider_filters_fixed(packages)
+          packages = apply_agent_area_filtering(packages)
+        when 'rider'
+          packages = apply_rider_area_filtering(packages)
         when 'warehouse'
-          packages = apply_warehouse_filters(packages)
+          packages = apply_warehouse_area_filtering(packages)
         when 'client'
-          # Clients only see their own packages - already handled by accessible_packages
-          Rails.logger.info "🔍 Client role - using accessible_packages scope"
+          # Clients see their own packages - handled by accessible_packages scope
+          Rails.logger.info "🎯 CLIENT: Using accessible_packages scope only"
         when 'admin'
-          # Admins see all packages - no additional filtering
-          Rails.logger.info "🔍 Admin role - no additional filtering"
+          # Admins see all packages - no area filtering
+          Rails.logger.info "🎯 ADMIN: No area filtering applied"
         end
         
         packages
       end
-      
-      def apply_agent_filters(packages)
+
+      # PHASE 3: Apply role-based action filtering (only if no explicit state was provided)
+      def apply_role_based_action_filtering(packages)
+        # Only apply default state filters if no explicit state was requested
+        return packages if params[:state].present?
+        
+        case current_user.primary_role
+        when 'rider'
+          packages = apply_rider_action_filtering(packages)
+        # Other roles don't have default state filtering based on actions
+        end
+        
+        packages
+      end
+
+      # Agent area filtering
+      def apply_agent_area_filtering(packages)
+        return packages unless current_user.respond_to?(:accessible_areas)
+        
+        accessible_area_ids = current_user.accessible_areas
+        return packages if accessible_area_ids.empty?
+        
         if params[:area_filter] == 'origin'
-          Rails.logger.info "🔍 Agent: filtering by origin areas"
-          packages = packages.where(origin_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+          Rails.logger.info "🎯 AGENT: Filtering by origin areas only"
+          packages = packages.where(origin_area_id: accessible_area_ids)
         elsif params[:area_filter] == 'destination'
-          Rails.logger.info "🔍 Agent: filtering by destination areas"  
-          packages = packages.where(destination_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+          Rails.logger.info "🎯 AGENT: Filtering by destination areas only"
+          packages = packages.where(destination_area_id: accessible_area_ids)
         else
-          # Default: show packages from accessible areas (both origin and destination)
-          if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
-            accessible_area_ids = current_user.accessible_areas
-            packages = packages.where(
-              "origin_area_id IN (?) OR destination_area_id IN (?)", 
-              accessible_area_ids, accessible_area_ids
-            )
-          end
-        end
-        packages
-      end
-      
-      # FIXED: Rider filters that don't override explicit state parameters
-      def apply_rider_filters_fixed(packages)
-        if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
-          accessible_area_ids = current_user.accessible_areas
-          
-          if params[:action_filter] == 'collection'
-            Rails.logger.info "🔍 Rider: filtering for collection packages"
-            # For collection: packages from rider's areas
-            packages = packages.where(origin_area_id: accessible_area_ids)
-            # FIXED: Only apply state filter if no explicit state was requested
-            if params[:state].blank?
-              Rails.logger.info "🔍 Rider collection: applying default state filter (submitted)"
-              packages = packages.where(state: 'submitted')
-            end
-          elsif params[:action_filter] == 'delivery'  
-            Rails.logger.info "🔍 Rider: filtering for delivery packages"
-            # For delivery: packages going to rider's areas
-            packages = packages.where(destination_area_id: accessible_area_ids)
-            # FIXED: Only apply state filter if no explicit state was requested
-            if params[:state].blank?
-              Rails.logger.info "🔍 Rider delivery: applying default state filter (in_transit)"
-              packages = packages.where(state: 'in_transit')
-            end
-          else
-            # Default: show all packages in rider's areas
-            Rails.logger.info "🔍 Rider: showing all packages in accessible areas"
-            packages = packages.where(
-              "origin_area_id IN (?) OR destination_area_id IN (?)", 
-              accessible_area_ids, accessible_area_ids
-            )
-          end
-        end
-        packages
-      end
-      
-      def apply_warehouse_filters(packages)
-        if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
-          accessible_area_ids = current_user.accessible_areas
+          Rails.logger.info "🎯 AGENT: Filtering by all accessible areas (origin OR destination)"
           packages = packages.where(
             "origin_area_id IN (?) OR destination_area_id IN (?)", 
             accessible_area_ids, accessible_area_ids
           )
         end
+        
         packages
       end
 
+      # Rider area filtering (separate from action filtering)
+      def apply_rider_area_filtering(packages)
+        return packages unless current_user.respond_to?(:accessible_areas)
+        
+        accessible_area_ids = current_user.accessible_areas
+        return packages if accessible_area_ids.empty?
+        
+        # Area filtering based on action_filter, but no state filtering here
+        if params[:action_filter] == 'collection'
+          Rails.logger.info "🎯 RIDER: Filtering for collection areas (origin)"
+          packages = packages.where(origin_area_id: accessible_area_ids)
+        elsif params[:action_filter] == 'delivery'
+          Rails.logger.info "🎯 RIDER: Filtering for delivery areas (destination)"
+          packages = packages.where(destination_area_id: accessible_area_ids)
+        else
+          Rails.logger.info "🎯 RIDER: Filtering by all accessible areas"
+          packages = packages.where(
+            "origin_area_id IN (?) OR destination_area_id IN (?)", 
+            accessible_area_ids, accessible_area_ids
+          )
+        end
+        
+        packages
+      end
+
+      # Rider action filtering (only applies default states if no explicit state)
+      def apply_rider_action_filtering(packages)
+        # This method is only called if params[:state] is blank
+        if params[:action_filter] == 'collection'
+          Rails.logger.info "🎯 RIDER: Applying default state filter for collection (submitted)"
+          packages = packages.where(state: 'submitted')
+        elsif params[:action_filter] == 'delivery'
+          Rails.logger.info "🎯 RIDER: Applying default state filter for delivery (in_transit)"
+          packages = packages.where(state: 'in_transit')
+        end
+        
+        packages
+      end
+
+      # Warehouse area filtering
+      def apply_warehouse_area_filtering(packages)
+        return packages unless current_user.respond_to?(:accessible_areas)
+        
+        accessible_area_ids = current_user.accessible_areas
+        return packages if accessible_area_ids.empty?
+        
+        Rails.logger.info "🎯 WAREHOUSE: Filtering by accessible areas"
+        packages = packages.where(
+          "origin_area_id IN (?) OR destination_area_id IN (?)", 
+          accessible_area_ids, accessible_area_ids
+        )
+        
+        packages
+      end
+
+      # Validation methods
+      def validate_state_filtering(serialized_packages)
+        if params[:state].present?
+          returned_states = serialized_packages.map { |p| p['state'] }.uniq
+          Rails.logger.info "🎯 Expected state: #{params[:state]}, Returned states: #{returned_states}"
+          
+          if returned_states.length > 1 || (returned_states.length == 1 && returned_states.first != params[:state])
+            Rails.logger.error "❌ STATE FILTERING FAILED! Expected: #{params[:state]}, Got: #{returned_states}"
+          else
+            Rails.logger.info "✅ State filtering successful for state: #{params[:state]}"
+          end
+        end
+      end
+
+      def validate_state_filter_success(serialized_packages)
+        return true if params[:state].blank?
+        
+        returned_states = serialized_packages.map { |p| p['state'] }.uniq
+        returned_states.length == 1 && returned_states.first == params[:state]
+      end
+
+      def get_applied_filters_summary
+        filters = []
+        filters << "state:#{params[:state]}" if params[:state].present?
+        filters << "search:#{params[:search]}" if params[:search].present?
+        filters << "area_filter:#{params[:area_filter]}" if params[:area_filter].present?
+        filters << "action_filter:#{params[:action_filter]}" if params[:action_filter].present?
+        filters << "role:#{current_user.primary_role}"
+        filters.join(',')
+      end
+
+      def get_accessible_areas_count
+        return 0 unless current_user.respond_to?(:accessible_areas)
+        current_user.accessible_areas.count
+      rescue
+        0
+      end
+
+      def get_accessible_locations_count
+        return 0 unless current_user.respond_to?(:accessible_locations)
+        current_user.accessible_locations.count
+      rescue
+        0
+      end
+
+      # Helper methods remain the same
       def set_package
         @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
                                    origin_area: :location, destination_area: :location)
@@ -449,6 +531,7 @@ module Api
         actions
       end
 
+      # Serialization methods remain the same as original
       def serialize_package_basic(package)
         {
           'id' => package.id.to_s,
