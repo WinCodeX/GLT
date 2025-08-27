@@ -275,24 +275,17 @@ module Api
 
       def qr_code
         begin
-          serialized_data = PackageSerializer.new(@package, {
-            params: { 
-              include_qr_code: true,
-              url_helper: self,
-              qr_options: qr_code_options
-            }
-          }).serializable_hash
-
-          package_data = serialized_data[:data][:attributes]
+          # Use QrCodeGenerator service directly like the old version
+          qr_data = generate_qr_code_data(@package)
           
           render json: {
             success: true,
             data: {
-              qr_code_base64: package_data[:qr_code_base64],
-              tracking_url: package_data[:tracking_url],
+              qr_code_base64: qr_data[:base64],
+              tracking_url: qr_data[:tracking_url],
               package_code: @package.code,
               package_state: @package.state,
-              route_description: package_data[:route_description]
+              route_description: safe_route_description(@package)
             },
             message: 'QR code generated successfully'
           }
@@ -628,6 +621,54 @@ module Api
           gradient: params[:gradient] != 'false',
           logo_size: params[:logo_size]&.to_i || 40
         }
+      end
+
+      def generate_qr_code_data(package)
+        tracking_url = tracking_url_for(package.code)
+        
+        if defined?(QrCodeGenerator)
+          begin
+            qr_generator = QrCodeGenerator.new(package, qr_code_options)
+            png_data = qr_generator.generate
+            return {
+              base64: "data:image/png;base64,#{Base64.encode64(png_data)}",
+              tracking_url: tracking_url
+            }
+          rescue => e
+            Rails.logger.warn "QrCodeGenerator failed: #{e.message}"
+          end
+        end
+        
+        {
+          base64: nil,
+          tracking_url: tracking_url
+        }
+      end
+
+      def safe_route_description(package)
+        return 'Route information unavailable' unless package
+
+        begin
+          if package.respond_to?(:route_description)
+            package.route_description
+          else
+            origin_location = package.origin_area&.location&.name || 'Unknown Origin'
+            destination_location = package.destination_area&.location&.name || 'Unknown Destination'
+            
+            if package.origin_area&.location&.id == package.destination_area&.location&.id
+              origin_area = package.origin_area&.name || 'Unknown Area'
+              destination_area = package.destination_area&.name || 'Unknown Area'
+              "#{origin_location} (#{origin_area} → #{destination_area})"
+            else
+              "#{origin_location} → #{destination_location}"
+            end
+          end
+        rescue => e
+          Rails.logger.error "Route description generation failed: #{e.message}"
+          origin = package.origin_area&.name || 'Unknown Origin'
+          destination = package.destination_area&.name || 'Unknown Destination'
+          "#{origin} → #{destination}"
+        end
       end
 
       def package_params
