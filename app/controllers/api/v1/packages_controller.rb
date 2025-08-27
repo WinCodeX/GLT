@@ -1,29 +1,28 @@
-# app/controllers/api/v1/packages_controller.rb - COMPLETELY REWRITTEN FOR PROPER STATE FILTERING
+# app/controllers/api/v1/packages_controller.rb - SIMPLIFIED AND FIXED
 module Api
   module V1
     class PackagesController < ApplicationController
       before_action :authenticate_user!
-      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :thermal_qr_code, :qr_comparison, :tracking_page, :pay, :submit]
-      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code, :thermal_qr_code, :qr_comparison]
+      before_action :set_package, only: [:show, :qr_code, :thermal_qr_code, :qr_comparison]
       before_action :force_json_format
 
       def index
         begin
-          Rails.logger.info "🔍 PackagesController#index - User: #{current_user.email}, Role: #{current_user.primary_role}"
-          Rails.logger.info "🔍 Request params: #{params.to_unsafe_h.slice(:state, :search, :page, :per_page, :area_filter, :action_filter)}"
+          Rails.logger.info "PackagesController#index - User: #{current_user.email}, Role: #{current_user.primary_role}"
+          Rails.logger.info "Request params: #{params.to_unsafe_h.slice(:state, :search, :page, :per_page, :area_filter, :action_filter)}"
           
-          # Start with base accessible packages
+          # Start with accessible packages
           packages = current_user.accessible_packages
                                 .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, 
                                          origin_area: :location, destination_area: :location)
                                 .order(created_at: :desc)
           
-          Rails.logger.info "🔍 Base packages count: #{packages.count}"
+          Rails.logger.info "Base packages count: #{packages.count}"
           
-          # Apply filters in strict precedence order
-          packages = apply_filters_with_precedence(packages)
+          # Apply filters with proper precedence
+          packages = apply_filters(packages)
           
-          Rails.logger.info "🔍 After filtering count: #{packages.count}"
+          Rails.logger.info "After filtering count: #{packages.count}"
           
           # Pagination
           page = [params[:page]&.to_i || 1, 1].max
@@ -32,14 +31,19 @@ module Api
           total_count = packages.count
           packages = packages.offset((page - 1) * per_page).limit(per_page)
 
-          Rails.logger.info "🔍 Final paginated count: #{packages.count}/#{total_count}"
-
           serialized_packages = packages.map do |package|
             serialize_package_with_complete_info(package)
           end
 
-          # Validate filtering worked correctly
-          validate_state_filtering(serialized_packages)
+          # Validate state filtering worked
+          if params[:state].present?
+            returned_states = serialized_packages.map { |p| p['state'] }.uniq
+            if returned_states != [params[:state]]
+              Rails.logger.error "STATE FILTERING FAILED! Expected: #{params[:state]}, Got: #{returned_states}"
+            else
+              Rails.logger.info "State filtering successful for state: #{params[:state]}"
+            end
+          end
 
           render json: {
             success: true,
@@ -57,17 +61,10 @@ module Api
               can_create_packages: current_user.client?,
               accessible_areas_count: get_accessible_areas_count,
               accessible_locations_count: get_accessible_locations_count
-            },
-            filter_debug: {
-              requested_state: params[:state],
-              returned_states: serialized_packages.map { |p| p['state'] }.uniq.sort,
-              filter_working: validate_state_filter_success(serialized_packages),
-              filter_precedence: get_applied_filters_summary
             }
           }
         rescue => e
-          Rails.logger.error "❌ PackagesController#index error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
+          Rails.logger.error "PackagesController#index error: #{e.message}"
           render json: { 
             success: false, 
             message: 'Failed to load packages',
@@ -107,7 +104,7 @@ module Api
 
       def qr_code
         begin
-          Rails.logger.info "📱 Generating QR code for package: #{@package.code}"
+          Rails.logger.info "Generating QR code for package: #{@package.code}"
           
           if defined?(QrCodeGenerator)
             qr_options = {
@@ -126,7 +123,7 @@ module Api
               success: true,
               data: {
                 qr_code_base64: qr_base64,
-                tracking_url: @package.respond_to?(:tracking_url) ? @package.tracking_url : package_tracking_url(@package.code),
+                tracking_url: package_tracking_url(@package.code),
                 package_code: @package.code,
                 package_state: @package.state,
                 route_description: safe_route_description(@package),
@@ -136,7 +133,6 @@ module Api
               message: 'QR code generated successfully'
             }
           else
-            Rails.logger.warn "⚠️ QrCodeGenerator service not available"
             render json: {
               success: false,
               message: 'QR code generation service not available',
@@ -147,22 +143,18 @@ module Api
             }, status: :service_unavailable
           end
         rescue => e
-          Rails.logger.error "❌ QR code generation failed: #{e.message}"
+          Rails.logger.error "QR code generation failed: #{e.message}"
           render json: {
             success: false,
             message: 'QR code generation failed',
-            error: Rails.env.development? ? e.message : nil,
-            data: {
-              tracking_url: package_tracking_url(@package.code),
-              package_code: @package.code
-            }
+            error: Rails.env.development? ? e.message : nil
           }, status: :internal_server_error
         end
       end
 
       def thermal_qr_code
         begin
-          Rails.logger.info "🖨️ Generating thermal QR code for package: #{@package.code}"
+          Rails.logger.info "Generating thermal QR code for package: #{@package.code}"
           
           if defined?(ThermalQrGenerator)
             thermal_options = {
@@ -175,14 +167,13 @@ module Api
             thermal_generator = ThermalQrGenerator.new(@package, thermal_options)
             render json: thermal_generator.generate_thermal_response
           else
-            Rails.logger.warn "⚠️ ThermalQrGenerator service not available"
             render json: {
               success: false,
               message: 'Thermal QR code generation service not available'
             }, status: :service_unavailable
           end
         rescue => e
-          Rails.logger.error "❌ Thermal QR code generation failed: #{e.message}"
+          Rails.logger.error "Thermal QR code generation failed: #{e.message}"
           render json: {
             success: false,
             message: 'Thermal QR code generation failed',
@@ -205,7 +196,7 @@ module Api
             }, status: :not_implemented
           end
         rescue => e
-          Rails.logger.error "❌ QR code comparison failed: #{e.message}"
+          Rails.logger.error "QR code comparison failed: #{e.message}"
           render json: {
             success: false,
             message: 'QR code comparison failed',
@@ -216,234 +207,52 @@ module Api
 
       private
 
-      # CORE FILTERING METHOD: Applies filters in strict precedence order
-      def apply_filters_with_precedence(packages)
-        Rails.logger.info "🎯 apply_filters_with_precedence - Starting with #{packages.count} packages"
+      def apply_filters(packages)
+        # Apply explicit filters first
+        packages = packages.where(state: params[:state]) if params[:state].present?
+        packages = packages.where("code ILIKE ?", "%#{params[:search]}%") if params[:search].present?
         
-        # PHASE 1: EXPLICIT PARAMETERS (HIGHEST PRECEDENCE)
-        packages = apply_explicit_filters(packages)
-        Rails.logger.info "🎯 After explicit filters: #{packages.count} packages"
-        
-        # PHASE 2: ROLE-BASED AREA FILTERING (MEDIUM PRECEDENCE)  
-        packages = apply_role_based_area_filtering(packages)
-        Rails.logger.info "🎯 After role-based area filtering: #{packages.count} packages"
-        
-        # PHASE 3: ROLE-BASED ACTION FILTERING (LOWEST PRECEDENCE - only if no explicit state)
-        packages = apply_role_based_action_filtering(packages)
-        Rails.logger.info "🎯 After role-based action filtering: #{packages.count} packages"
-        
-        packages
-      end
-
-      # PHASE 1: Apply explicit user-provided filters (highest precedence)
-      def apply_explicit_filters(packages)
-        # State filter - ALWAYS applied if present, never overridden
-        if params[:state].present?
-          Rails.logger.info "🎯 EXPLICIT STATE FILTER: #{params[:state]} (will not be overridden)"
-          packages = packages.where(state: params[:state])
-        end
-        
-        # Search filter
-        if params[:search].present?
-          Rails.logger.info "🎯 EXPLICIT SEARCH FILTER: #{params[:search]}"
-          packages = packages.where("code ILIKE ?", "%#{params[:search]}%")
-        end
-        
-        packages
-      end
-
-      # PHASE 2: Apply role-based area filtering (respects explicit filters)
-      def apply_role_based_area_filtering(packages)
+        # Apply role-based filters
         case current_user.primary_role
         when 'agent'
-          packages = apply_agent_area_filtering(packages)
+          if params[:area_filter] == 'origin'
+            packages = packages.where(origin_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+          elsif params[:area_filter] == 'destination'
+            packages = packages.where(destination_area_id: current_user.accessible_areas) if current_user.respond_to?(:accessible_areas)
+          end
         when 'rider'
-          packages = apply_rider_area_filtering(packages)
+          if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
+            if params[:action_filter] == 'collection'
+              packages = packages.where(origin_area_id: current_user.accessible_areas)
+              # Only apply default state if no explicit state was provided
+              packages = packages.where(state: 'submitted') if params[:state].blank?
+            elsif params[:action_filter] == 'delivery'
+              packages = packages.where(destination_area_id: current_user.accessible_areas)
+              # Only apply default state if no explicit state was provided
+              packages = packages.where(state: 'in_transit') if params[:state].blank?
+            end
+          end
         when 'warehouse'
-          packages = apply_warehouse_area_filtering(packages)
-        when 'client'
-          # Clients see their own packages - handled by accessible_packages scope
-          Rails.logger.info "🎯 CLIENT: Using accessible_packages scope only"
-        when 'admin'
-          # Admins see all packages - no area filtering
-          Rails.logger.info "🎯 ADMIN: No area filtering applied"
-        end
-        
-        packages
-      end
-
-      # PHASE 3: Apply role-based action filtering (only if no explicit state was provided)
-      def apply_role_based_action_filtering(packages)
-        # Only apply default state filters if no explicit state was requested
-        return packages if params[:state].present?
-        
-        case current_user.primary_role
-        when 'rider'
-          packages = apply_rider_action_filtering(packages)
-        # Other roles don't have default state filtering based on actions
-        end
-        
-        packages
-      end
-
-      # Agent area filtering
-      def apply_agent_area_filtering(packages)
-        return packages unless current_user.respond_to?(:accessible_areas)
-        
-        accessible_area_ids = current_user.accessible_areas
-        return packages if accessible_area_ids.empty?
-        
-        if params[:area_filter] == 'origin'
-          Rails.logger.info "🎯 AGENT: Filtering by origin areas only"
-          packages = packages.where(origin_area_id: accessible_area_ids)
-        elsif params[:area_filter] == 'destination'
-          Rails.logger.info "🎯 AGENT: Filtering by destination areas only"
-          packages = packages.where(destination_area_id: accessible_area_ids)
-        else
-          Rails.logger.info "🎯 AGENT: Filtering by all accessible areas (origin OR destination)"
-          packages = packages.where(
-            "origin_area_id IN (?) OR destination_area_id IN (?)", 
-            accessible_area_ids, accessible_area_ids
-          )
-        end
-        
-        packages
-      end
-
-      # Rider area filtering (separate from action filtering)
-      def apply_rider_area_filtering(packages)
-        return packages unless current_user.respond_to?(:accessible_areas)
-        
-        accessible_area_ids = current_user.accessible_areas
-        return packages if accessible_area_ids.empty?
-        
-        # Area filtering based on action_filter, but no state filtering here
-        if params[:action_filter] == 'collection'
-          Rails.logger.info "🎯 RIDER: Filtering for collection areas (origin)"
-          packages = packages.where(origin_area_id: accessible_area_ids)
-        elsif params[:action_filter] == 'delivery'
-          Rails.logger.info "🎯 RIDER: Filtering for delivery areas (destination)"
-          packages = packages.where(destination_area_id: accessible_area_ids)
-        else
-          Rails.logger.info "🎯 RIDER: Filtering by all accessible areas"
-          packages = packages.where(
-            "origin_area_id IN (?) OR destination_area_id IN (?)", 
-            accessible_area_ids, accessible_area_ids
-          )
-        end
-        
-        packages
-      end
-
-      # Rider action filtering (only applies default states if no explicit state)
-      def apply_rider_action_filtering(packages)
-        # This method is only called if params[:state] is blank
-        if params[:action_filter] == 'collection'
-          Rails.logger.info "🎯 RIDER: Applying default state filter for collection (submitted)"
-          packages = packages.where(state: 'submitted')
-        elsif params[:action_filter] == 'delivery'
-          Rails.logger.info "🎯 RIDER: Applying default state filter for delivery (in_transit)"
-          packages = packages.where(state: 'in_transit')
-        end
-        
-        packages
-      end
-
-      # Warehouse area filtering
-      def apply_warehouse_area_filtering(packages)
-        return packages unless current_user.respond_to?(:accessible_areas)
-        
-        accessible_area_ids = current_user.accessible_areas
-        return packages if accessible_area_ids.empty?
-        
-        Rails.logger.info "🎯 WAREHOUSE: Filtering by accessible areas"
-        packages = packages.where(
-          "origin_area_id IN (?) OR destination_area_id IN (?)", 
-          accessible_area_ids, accessible_area_ids
-        )
-        
-        packages
-      end
-
-      # Validation methods
-      def validate_state_filtering(serialized_packages)
-        if params[:state].present?
-          returned_states = serialized_packages.map { |p| p['state'] }.uniq
-          Rails.logger.info "🎯 Expected state: #{params[:state]}, Returned states: #{returned_states}"
-          
-          if returned_states.length > 1 || (returned_states.length == 1 && returned_states.first != params[:state])
-            Rails.logger.error "❌ STATE FILTERING FAILED! Expected: #{params[:state]}, Got: #{returned_states}"
-          else
-            Rails.logger.info "✅ State filtering successful for state: #{params[:state]}"
+          if current_user.respond_to?(:accessible_areas) && current_user.accessible_areas.any?
+            packages = packages.where(
+              "origin_area_id IN (?) OR destination_area_id IN (?)", 
+              current_user.accessible_areas, current_user.accessible_areas
+            )
           end
         end
-      end
-
-      def validate_state_filter_success(serialized_packages)
-        return true if params[:state].blank?
         
-        returned_states = serialized_packages.map { |p| p['state'] }.uniq
-        returned_states.length == 1 && returned_states.first == params[:state]
+        packages
       end
 
-      def get_applied_filters_summary
-        filters = []
-        filters << "state:#{params[:state]}" if params[:state].present?
-        filters << "search:#{params[:search]}" if params[:search].present?
-        filters << "area_filter:#{params[:area_filter]}" if params[:area_filter].present?
-        filters << "action_filter:#{params[:action_filter]}" if params[:action_filter].present?
-        filters << "role:#{current_user.primary_role}"
-        filters.join(',')
-      end
-
-      def get_accessible_areas_count
-        return 0 unless current_user.respond_to?(:accessible_areas)
-        current_user.accessible_areas.count
-      rescue
-        0
-      end
-
-      def get_accessible_locations_count
-        return 0 unless current_user.respond_to?(:accessible_locations)
-        current_user.accessible_locations.count
-      rescue
-        0
-      end
-
-      # Helper methods remain the same
       def set_package
         @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
                                    origin_area: :location, destination_area: :location)
                          .find_by!(code: params[:id])
-        ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
         render json: { 
           success: false, 
           message: 'Package not found' 
         }, status: :not_found
-      end
-
-      def set_package_for_authenticated_user
-        @package = current_user.accessible_packages
-                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
-                                        origin_area: :location, destination_area: :location)
-                               .find_by!(code: params[:id])
-        ensure_package_has_code(@package)
-      rescue ActiveRecord::RecordNotFound
-        render json: { 
-          success: false, 
-          message: 'Package not found or access denied' 
-        }, status: :not_found
-      end
-
-      def ensure_package_has_code(package)
-        if package && package.code.blank?
-          Rails.logger.error "Package #{package.id} has no code - this should not happen"
-          render json: { 
-            success: false, 
-            message: 'Package data is invalid' 
-          }, status: :internal_server_error
-        end
       end
 
       def can_edit_package?(package)
@@ -473,21 +282,9 @@ module Api
       def get_access_reason(package)
         case current_user.primary_role
         when 'agent'
-          if current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.origin_area_id)
-            'Origin area agent'
-          elsif current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.destination_area_id)
-            'Destination area agent'
-          else
-            'Area access'
-          end
+          'Area agent access'
         when 'rider'
-          if current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.origin_area_id)
-            'Collection area rider'
-          elsif current_user.respond_to?(:operates_in_area?) && current_user.operates_in_area?(package.destination_area_id)
-            'Delivery area rider'
-          else
-            'Area access'
-          end
+          'Delivery rider access'
         when 'warehouse'
           'Warehouse processing'
         when 'admin'
@@ -531,7 +328,6 @@ module Api
         actions
       end
 
-      # Serialization methods remain the same as original
       def serialize_package_basic(package)
         {
           'id' => package.id.to_s,
@@ -596,7 +392,6 @@ module Api
         }
         
         data.merge!(additional_data)
-        data
       end
 
       def serialize_area(area)
@@ -655,30 +450,29 @@ module Api
       def get_sender_phone(package)
         return package.sender_phone if package.respond_to?(:sender_phone) && package.sender_phone.present?
         return package.user&.phone if package.user&.phone.present?
-        return nil
+        nil
       end
 
       def get_sender_email(package)
         return package.sender_email if package.respond_to?(:sender_email) && package.sender_email.present?
         return package.user&.email if package.user&.email.present?
-        return nil
+        nil
       end
 
       def get_receiver_email(package)
         return package.receiver_email if package.respond_to?(:receiver_email) && package.receiver_email.present?
-        return nil
+        nil
       end
 
       def get_business_name(package)
         return package.business_name if package.respond_to?(:business_name) && package.business_name.present?
-        return nil
+        nil
       end
 
       def safe_route_description(package)
         if package.respond_to?(:route_description) && package.route_description.present?
           package.route_description
         else
-          # Fallback route description generation
           origin_location = package.origin_area&.location&.name || 'Unknown Origin'
           destination_location = package.destination_area&.location&.name || 'Unknown Destination'
           
@@ -696,12 +490,25 @@ module Api
         begin
           Rails.application.routes.url_helpers.tracking_url(code)
         rescue
-          # Fallback if route helpers aren't available
           protocol = Rails.env.production? ? 'https' : 'http'
           host = Rails.application.config.action_mailer.default_url_options[:host] || 
                  ENV['APP_URL']&.sub(/^https?:\/\//, '') || 'localhost:3000'
           "#{protocol}://#{host}/track/#{code}"
         end
+      end
+
+      def get_accessible_areas_count
+        return 0 unless current_user.respond_to?(:accessible_areas)
+        current_user.accessible_areas.count
+      rescue
+        0
+      end
+
+      def get_accessible_locations_count
+        return 0 unless current_user.respond_to?(:accessible_locations)
+        current_user.accessible_locations.count
+      rescue
+        0
       end
     end
   end
