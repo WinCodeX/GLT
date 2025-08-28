@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - Using PackageSerializer
+# app/controllers/api/v1/packages_controller.rb - FIXED: Added missing parameters while keeping PackageSerializer
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -671,11 +671,12 @@ module Api
         end
       end
 
+      # FIXED: Added pickup_location and package_description to permitted parameters
       def package_params
         base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
           :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
-          :delivery_type
+          :delivery_type, :pickup_location, :package_description
         ]
         
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
@@ -686,10 +687,11 @@ module Api
         params.require(:package).permit(*base_params)
       end
 
+      # FIXED: Added pickup_location and package_description to update parameters
       def package_update_params
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                       :destination_area_id, :destination_agent_id, :delivery_type, :state,
-                      :origin_agent_id]
+                      :origin_agent_id, :pickup_location, :package_description]
         
         optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
         optional_fields.each do |field|
@@ -703,14 +705,16 @@ module Api
           if ['pending_unpaid', 'pending'].include?(@package.state)
             permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                                :destination_area_id, :destination_agent_id, :delivery_location,
-                               :sender_email, :receiver_email, :business_name].select do |field|
+                               :sender_email, :receiver_email, :business_name, :pickup_location, 
+                               :package_description].select do |field|
               base_params.include?(field)
             end
           end
         when 'admin'
           permitted_params = base_params
         when 'agent', 'rider', 'warehouse'
-          permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
+          permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location,
+                             :pickup_location, :package_description].select do |field|
             base_params.include?(field)
           end
         end
