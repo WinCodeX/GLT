@@ -1,5 +1,4 @@
-# app/models/package.rb - FIXED: Handle fragile deliveries without area requirements
-
+# app/models/package.rb - FIXED: Conditional validations for fragile and collection types
 class Package < ApplicationRecord
   belongs_to :user
   belongs_to :origin_area, class_name: 'Area', optional: true
@@ -7,11 +6,11 @@ class Package < ApplicationRecord
   belongs_to :origin_agent, class_name: 'Agent', optional: true
   belongs_to :destination_agent, class_name: 'Agent', optional: true
 
-  # Enhanced tracking associations
+  # Enhanced tracking associations (add these if you create the tracking models)
   has_many :tracking_events, class_name: 'PackageTrackingEvent', dependent: :destroy
   has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
 
-  enum delivery_type: { doorstep: 'doorstep', agent: 'agent', fragile: 'fragile' }
+  enum delivery_type: { doorstep: 'doorstep', agent: 'agent', fragile: 'fragile', collection: 'collection' }
   enum state: {
     pending_unpaid: 'pending_unpaid',
     pending: 'pending',
@@ -25,21 +24,17 @@ class Package < ApplicationRecord
   validates :delivery_type, :state, :cost, presence: true
   validates :code, presence: true, uniqueness: true
   
-  # ✅ FIXED: Conditional route sequence validation - not required for fragile/collect deliveries
+  # FIXED: Conditional validation - only for agent-based deliveries
   validates :route_sequence, presence: true, uniqueness: { 
     scope: [:origin_area_id, :destination_area_id],
     message: "Package sequence must be unique for this route"
-  }, unless: :location_independent_delivery?
+  }, unless: :location_based_delivery?
 
-  # ✅ FIXED: Conditional area validations
-  validates :origin_area, presence: true, unless: :location_independent_delivery?
-  validates :destination_area, presence: true, unless: :location_independent_delivery?
+  # FIXED: Conditional area validation - only for agent-based deliveries  
+  validates :origin_area_id, :destination_area_id, presence: true, unless: :location_based_delivery?
 
   # Additional validation for fragile packages
   validate :fragile_package_requirements, if: :fragile?
-  
-  # ✅ FIXED: Validate that fragile packages have pickup and delivery locations
-  validate :fragile_delivery_requirements, if: :fragile?
 
   # Callbacks
   before_create :generate_package_code_and_sequence
@@ -53,7 +48,9 @@ class Package < ApplicationRecord
   scope :intra_area, -> { where('origin_area_id = destination_area_id') }
   scope :inter_area, -> { where('origin_area_id != destination_area_id') }
   scope :fragile_packages, -> { where(delivery_type: 'fragile') }
+  scope :collection_packages, -> { where(delivery_type: 'collection') }
   scope :standard_packages, -> { where(delivery_type: ['doorstep', 'agent']) }
+  scope :location_based_packages, -> { where(delivery_type: ['fragile', 'collection']) }
   scope :requiring_special_handling, -> { fragile_packages }
 
   # Class methods
@@ -73,11 +70,6 @@ class Package < ApplicationRecord
     by_route(origin_area_id, destination_area_id).maximum(:route_sequence).to_i + 1
   end
 
-  # ✅ FIXED: Method to handle fragile package sequences
-  def self.next_fragile_sequence
-    fragile_packages.maximum(:route_sequence).to_i + 1
-  end
-
   def self.fragile_packages_in_transit
     fragile_packages.where(state: ['submitted', 'in_transit'])
   end
@@ -90,195 +82,139 @@ class Package < ApplicationRecord
                     .having('COUNT(package_tracking_events.id) = 0')
   end
 
+  # FIXED: New method to identify location-based deliveries
+  def location_based_delivery?
+    ['fragile', 'collection'].include?(delivery_type)
+  end
+
   # Instance methods
   def intra_area_shipment?
+    return false if location_based_delivery?
     origin_area_id == destination_area_id
   end
 
-  def inter_area_shipment?
-    !intra_area_shipment? && origin_area_id.present? && destination_area_id.present?
-  end
-
-  def fragile?
-    delivery_type == 'fragile'
-  end
-
-  # ✅ FIXED: New method to identify location-independent deliveries
-  def location_independent_delivery?
-    ['fragile'].include?(delivery_type)
-  end
-
-  def requires_special_handling?
-    fragile?
-  end
-
-  def standard_delivery?
-    ['doorstep', 'agent'].include?(delivery_type)
-  end
-
   def route_description
-    # ✅ FIXED: Handle fragile packages without area information
+    # FIXED: Handle route description for location-based deliveries
+    if location_based_delivery?
+      pickup = pickup_location.presence || 'Pickup Location'
+      delivery = delivery_location.presence || 'Delivery Location'
+      return "#{pickup} → #{delivery}"
+    end
+    
+    return 'Route information unavailable' unless origin_area && destination_area
+    
+    origin_location_name = origin_area.location&.name || 'Unknown Location'
+    destination_location_name = destination_area.location&.name || 'Unknown Location'
+    
+    if origin_area.location_id == destination_area.location_id
+      "#{origin_location_name} (#{origin_area.name} → #{destination_area.name})"
+    else
+      "#{origin_location_name} → #{destination_location_name}"
+    end
+  rescue => e
+    Rails.logger.error "Route description generation failed: #{e.message}"
+    'Route information unavailable'
+  end
+
+  def tracking_url
+    "#{Rails.application.routes.url_helpers.root_url}track/#{code}"
+  rescue
+    "/track/#{code}"
+  end
+
+  # FIXED: Conditional QR options based on delivery type
+  def organic_qr_options
+    base_options = {
+      module_size: 12,
+      border_size: 24,
+      corner_radius: 8,
+      center_logo: true,
+      gradient: true,
+      logo_size: 40
+    }
+    
     if fragile?
-      pickup_desc = pickup_location.present? ? pickup_location.truncate(30) : 'Pickup Location'
-      delivery_desc = delivery_location.present? ? delivery_location.truncate(30) : 'Delivery Location'
-      "FRAGILE: #{pickup_desc} → #{delivery_desc}"
-    elsif intra_area_shipment?
-      "Within #{origin_area&.name}"
-    elsif origin_area && destination_area
-      "#{origin_area.name} → #{destination_area.name}"
+      base_options.merge({
+        fragile_indicator: true,
+        priority_handling: true,
+        module_size: 14, # Larger for fragile visibility
+        border_size: 28,
+        corner_radius: 6
+      })
+    elsif delivery_type == 'collection'
+      base_options.merge({
+        collection_indicator: true,
+        module_size: 13,
+        border_size: 26
+      })
     else
-      "Custom Route"
+      base_options
     end
   end
 
-  def display_identifier
-    identifier = "#{code} (#{route_description})"
-    fragile? ? "⚠️ #{identifier}" : identifier
-  end
-
-  def delivery_type_display
-    case delivery_type
-    when 'doorstep'
-      'Door-to-Door Delivery'
-    when 'agent'
-      'Agent Collection'
-    when 'fragile'
-      '⚠️ Fragile Handling Required'
-    else
-      delivery_type.humanize
-    end
-  end
-
-  def handling_instructions
-    return [] unless fragile?
+  def thermal_qr_options
+    base_options = {
+      module_size: 6,
+      border_size: 12,
+      thermal_optimized: true,
+      monochrome: true,
+      corner_radius: 2
+    }
     
-    [
-      'Handle with extreme care',
-      'Avoid dropping or throwing',
-      'Keep upright at all times',
-      'Use protective packaging',
-      'Prioritize gentle transport',
-      'Check for damage before and after handling'
-    ]
-  end
-
-  def priority_level
-    case delivery_type
-    when 'fragile'
-      'HIGH'
-    when 'doorstep'
-      'MEDIUM'
-    when 'agent'
-      'STANDARD'
-    else
-      'STANDARD'
-    end
-  end
-
-  private
-
-  # ✅ FIXED: Enhanced code and sequence generation for fragile packages
-  def generate_package_code_and_sequence
-    return if code.present? # Don't regenerate if already set
-    
-    # Generate code using the PackageCodeGenerator service
-    generator_options = fragile? ? { fragile: true } : {}
-    self.code = PackageCodeGenerator.new(self, generator_options).generate
-    
-    # ✅ FIXED: Set route sequence based on delivery type
-    if location_independent_delivery?
-      # For fragile/location-independent deliveries, use global sequence
-      self.route_sequence = self.class.next_fragile_sequence
-    elsif origin_area_id.present? && destination_area_id.present?
-      # For standard deliveries with areas, use route-based sequence
-      self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
-    else
-      # Fallback for edge cases
-      self.route_sequence = Package.maximum(:route_sequence).to_i + 1
-    end
-  end
-
-  def generate_qr_code_files
-    # Generate both QR code types asynchronously (optional)
-    job_options = fragile? ? { priority: 'high', fragile: true } : {}
-    
-    begin
-      if defined?(GenerateQrCodeJob)
-        # Generate organic QR
-        GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
-        
-        # Generate thermal QR
-        GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal')) if defined?(GenerateThermalQrCodeJob)
-      end
-    rescue => e
-      # Log error but don't fail package creation
-      Rails.logger.error "Failed to generate QR codes for package #{id}: #{e.message}"
-    end
-  end
-
-  def calculate_default_cost
-    # Enhanced cost calculation with fragile handling
     if fragile?
-      # Fragile packages have fixed pricing regardless of area
-      base_cost = 1000 # KES 1,000 for fragile handling
-      return base_cost
-    end
-    
-    if intra_area_shipment?
-      case delivery_type
-      when 'doorstep' then 150
-      when 'agent' then 100
-      else 100
-      end
+      base_options.merge({
+        fragile_indicator: true,
+        priority_handling: true,
+        module_size: 7, # Slightly larger for fragile visibility
+        border_size: 14,
+        corner_radius: 4 # More organic rounding even for thermal
+      })
+    elsif delivery_type == 'collection'
+      base_options.merge({
+        collection_indicator: true,
+        module_size: 6,
+        border_size: 13
+      })
     else
-      # Inter-area shipping
-      case delivery_type
-      when 'doorstep' then 300
-      when 'agent' then 200
-      else 200
-      end
+      base_options
     end
   end
 
-  def apply_fragile_surcharge(base_cost)
-    return base_cost unless fragile?
+  # Enhanced JSON serialization with QR options
+  def as_json(options = {})
+    result = super(options).except('route_sequence') # Hide internal sequence from API
     
-    # Fragile packages already have surcharge included in base cost
-    base_cost
-  end
+    # Always include these computed fields
+    result.merge!(
+      'tracking_code' => code,
+      'route_description' => route_description,
+      'is_intra_area' => intra_area_shipment?,
+      'tracking_url' => tracking_url,
+      'is_fragile' => fragile?,
+      'is_collection' => delivery_type == 'collection',
+      'is_location_based' => location_based_delivery?,
+      'requires_special_handling' => requires_special_handling?,
+      'priority_level' => priority_level,
+      'delivery_type_display' => delivery_type_display
+    )
+    
+    # Include fragile-specific information
+    if fragile?
+      result.merge!(
+        'handling_instructions' => handling_instructions,
+        'fragile_warning' => 'This package requires special handling due to fragile contents'
+      )
+    end
 
-  def fragile_package_requirements
-    return unless fragile?
-    
-    # ✅ FIXED: Fragile-specific validations
-    if cost && cost < 500
-      errors.add(:cost, 'cannot be less than 500 KES for fragile packages due to special handling requirements')
-    end
-  end
-
-  # ✅ FIXED: New validation for fragile delivery requirements
-  def fragile_delivery_requirements
-    return unless fragile?
-    
-    # For fragile packages, we need pickup and delivery locations instead of areas
-    if pickup_location.blank? && delivery_location.blank?
-      errors.add(:base, 'Fragile packages require either pickup_location or delivery_location to be specified')
+    # Include collection-specific information
+    if delivery_type == 'collection'
+      result.merge!(
+        'collection_instructions' => 'Package will be collected from specified pickup location',
+        'collection_type' => 'Location-based collection service'
+      )
     end
     
-    if receiver_name.blank?
-      errors.add(:receiver_name, 'is required for fragile deliveries')
-    end
-    
-    if receiver_phone.blank?
-      errors.add(:receiver_phone, 'is required for fragile deliveries')
-    end
-  end
-
-  def update_fragile_metadata
-    return unless fragile?
-    
-    # This method can be used to set additional metadata for fragile packages
-    # For example, updating handling priority, special instructions, etc.
+    result
   end
 
   # Status helper methods
@@ -306,61 +242,119 @@ class Package < ApplicationRecord
     fragile? || (cost > 1000) # High value or fragile packages get priority
   end
 
-  # Enhanced state transition methods with fragile package considerations
-  def transition_to_state!(new_state, user, metadata = {})
-    return false if state == new_state
-    
-    old_state = state
-    
-    # Add fragile package specific metadata
-    if fragile?
-      metadata = metadata.merge(
-        fragile_package: true,
-        handling_instructions: handling_instructions,
-        priority_level: priority_level
-      )
-    end
-    
-    ActiveRecord::Base.transaction do
-      update!(state: new_state)
-      
-      # Create tracking event if tracking is enabled
-      if defined?(PackageTrackingEvent)
-        event_type = state_to_event_type(new_state)
-        if event_type
-          tracking_events.create!(
-            user: user,
-            event_type: event_type,
-            metadata: metadata.merge(
-              previous_state: old_state,
-              new_state: new_state,
-              transition_context: 'state_change'
-            )
-          )
-        end
-      end
-      
-      # Send special notifications for fragile packages
-      if fragile? && ['in_transit', 'delivered'].include?(new_state)
-        send_fragile_package_notification(new_state, user)
-      end
-    end
-    
-    true
-  rescue => e
-    Rails.logger.error "State transition failed: #{e.message}"
-    false
+  def requires_special_handling?
+    fragile? || delivery_type == 'collection'
   end
 
-  def tracking_url
-    begin
-      Rails.application.routes.url_helpers.package_tracking_url(self.code)
-    rescue
-      # Fallback if route helpers aren't available
-      base_url = Rails.env.production? ? 
-                 (ENV['APP_URL'] || "https://#{Rails.application.config.host}") :
-                 "http://localhost:3000"
-      "#{base_url}/track/#{code}"
+  def priority_level
+    case delivery_type
+    when 'fragile'
+      'high'
+    when 'collection'
+      'medium'
+    else
+      'standard'
     end
+  end
+
+  def delivery_type_display
+    case delivery_type
+    when 'doorstep'
+      'Doorstep Delivery'
+    when 'agent'
+      'Agent Pickup'
+    when 'fragile'
+      'Fragile Delivery'
+    when 'collection'
+      'Collection Service'
+    else
+      delivery_type.humanize
+    end
+  end
+
+  def handling_instructions
+    case delivery_type
+    when 'fragile'
+      'Handle with extreme care. This package contains fragile items.'
+    when 'collection'
+      'Collection service - pick up from specified location.'
+    else
+      'Standard handling procedures apply.'
+    end
+  end
+
+  private
+
+  # FIXED: Conditional code and sequence generation
+  def generate_package_code_and_sequence
+    return if code.present?
+    
+    # Generate code using the PackageCodeGenerator service
+    generator_options = {}
+    generator_options[:fragile] = true if fragile?
+    generator_options[:collection] = true if delivery_type == 'collection'
+    
+    self.code = PackageCodeGenerator.new(self, generator_options).generate
+    
+    # FIXED: Only set route sequence for agent-based deliveries
+    unless location_based_delivery?
+      self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
+    else
+      # For location-based deliveries, use a simple incrementing sequence
+      self.route_sequence = self.class.where(delivery_type: delivery_type).maximum(:route_sequence).to_i + 1
+    end
+  end
+
+  def generate_qr_code_files
+    # Generate both QR code types asynchronously (optional)
+    job_options = {}
+    job_options[:priority] = 'high' if fragile?
+    job_options[:fragile] = true if fragile?
+    job_options[:collection] = true if delivery_type == 'collection'
+    
+    begin
+      if defined?(GenerateQrCodeJob)
+        # Generate organic QR
+        GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
+        
+        # Generate thermal QR
+        GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal')) if defined?(GenerateThermalQrCodeJob)
+      end
+    rescue => e
+      # Log error but don't fail package creation
+      Rails.logger.error "Failed to generate QR codes for package #{id}: #{e.message}"
+    end
+  end
+
+  # FIXED: Enhanced cost calculation with location-based delivery support
+  def calculate_default_cost
+    case delivery_type
+    when 'fragile'
+      500 # Premium pricing for fragile items
+    when 'collection'
+      350 # Collection service pricing
+    when 'doorstep'
+      location_based_delivery? ? 300 : (intra_area_shipment? ? 150 : 300)
+    when 'agent'
+      location_based_delivery? ? 200 : (intra_area_shipment? ? 100 : 200)
+    else
+      200
+    end
+  end
+
+  def fragile_package_requirements
+    return unless fragile?
+    
+    # Add specific validations for fragile packages
+    if cost && cost < 100
+      errors.add(:cost, 'cannot be less than 100 KES for fragile packages due to special handling requirements')
+    end
+  end
+
+  def update_fragile_metadata
+    return unless fragile?
+    
+    # This method can be used to set additional metadata for fragile packages
+    # For example, updating handling priority, special instructions, etc.
   end
 end
