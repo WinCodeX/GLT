@@ -129,6 +129,7 @@ defaults: { format: :json }
         member do
           get :validate
           get :qr_code
+         get :qr, to: 'packages#qr_code'  # Add this line
           get :thermal_qr_code
           get :qr_comparison
           get :tracking_page
