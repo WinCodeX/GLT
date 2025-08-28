@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: Added missing parameters while keeping PackageSerializer
+# app/controllers/api/v1/packages_controller.rb - FIXED: Made agent/area IDs optional for fragile and collection types
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -106,7 +106,13 @@ module Api
 
         begin
           package = current_user.packages.build(package_params)
-          set_area_ids_from_agents(package)
+          
+          # FIXED: Handle area assignment differently for fragile/collection types
+          if ['fragile', 'collection'].include?(package.delivery_type)
+            assign_default_areas_for_location_based_delivery(package)
+          else
+            set_area_ids_from_agents(package)
+          end
           
           package.state = 'pending_unpaid'
           package.code = generate_package_code(package) if package.code.blank?
@@ -125,6 +131,7 @@ module Api
               message: 'Package created successfully'
             }, status: :created
           else
+            Rails.logger.error "Package creation failed: #{package.errors.full_messages}"
             render json: { 
               success: false,
               errors: package.errors.full_messages,
@@ -152,8 +159,13 @@ module Api
 
           filtered_params = package_update_params
 
-          if filtered_params[:origin_agent_id].present? || filtered_params[:destination_agent_id].present?
-            set_area_ids_from_agents(@package, filtered_params)
+          # FIXED: Handle area assignment differently for fragile/collection types
+          if ['fragile', 'collection'].include?(@package.delivery_type)
+            assign_default_areas_for_location_based_delivery(@package)
+          else
+            if filtered_params[:origin_agent_id].present? || filtered_params[:destination_agent_id].present?
+              set_area_ids_from_agents(@package, filtered_params)
+            end
           end
 
           if filtered_params[:state] && filtered_params[:state] != @package.state
@@ -445,6 +457,26 @@ module Api
         packages
       end
 
+      # FIXED: Auto-assign default areas for fragile and collection deliveries
+      def assign_default_areas_for_location_based_delivery(package)
+        # For fragile and collection types, auto-assign default Nairobi areas
+        default_location = Location.find_by(name: 'Nairobi') || Location.first
+        return unless default_location
+        
+        default_area = default_location.areas.first
+        return unless default_area
+        
+        if package.origin_area_id.blank?
+          package.origin_area_id = default_area.id
+          Rails.logger.info "Auto-assigned origin_area_id=#{package.origin_area_id} for #{package.delivery_type} delivery"
+        end
+        
+        if package.destination_area_id.blank?
+          package.destination_area_id = default_area.id
+          Rails.logger.info "Auto-assigned destination_area_id=#{package.destination_area_id} for #{package.delivery_type} delivery"
+        end
+      end
+
       def set_area_ids_from_agents(package, params_override = nil)
         params_to_use = params_override || package.attributes.symbolize_keys
 
@@ -452,6 +484,7 @@ module Api
           begin
             origin_agent = Agent.find(params_to_use[:origin_agent_id])
             package.origin_area_id = origin_agent.area_id
+            Rails.logger.info "Set origin_area_id=#{package.origin_area_id} from origin_agent_id=#{params_to_use[:origin_agent_id]}"
           rescue ActiveRecord::RecordNotFound
             Rails.logger.error "Origin agent not found: #{params_to_use[:origin_agent_id]}"
           end
@@ -461,6 +494,7 @@ module Api
           begin
             destination_agent = Agent.find(params_to_use[:destination_agent_id])
             package.destination_area_id = destination_agent.area_id
+            Rails.logger.info "Set destination_area_id=#{package.destination_area_id} from destination_agent_id=#{params_to_use[:destination_agent_id]}"
           rescue ActiveRecord::RecordNotFound
             Rails.logger.error "Destination agent not found: #{params_to_use[:destination_agent_id]}"
           end
@@ -583,6 +617,14 @@ module Api
           base_cost += 0
         when 'mixed'
           base_cost += 50
+        when 'collection'
+          base_cost += 200
+        end
+
+        # FIXED: Handle cost calculation for location-based deliveries
+        if ['fragile', 'collection'].include?(package.delivery_type)
+          # Use flat rate for location-based deliveries since areas are auto-assigned
+          return base_cost
         end
 
         origin_location_id = package.origin_area&.location&.id
@@ -652,6 +694,13 @@ module Api
           if package.respond_to?(:route_description)
             package.route_description
           else
+            # FIXED: Handle route description for location-based deliveries
+            if ['fragile', 'collection'].include?(package.delivery_type)
+              pickup = package.respond_to?(:pickup_location) ? package.pickup_location : 'Pickup Location'
+              delivery = package.respond_to?(:delivery_location) ? package.delivery_location : 'Delivery Location'
+              return "#{pickup} → #{delivery}"
+            end
+            
             origin_location = package.origin_area&.location&.name || 'Unknown Origin'
             destination_location = package.destination_area&.location&.name || 'Unknown Destination'
             
@@ -671,31 +720,42 @@ module Api
         end
       end
 
-      # FIXED: Added pickup_location and package_description to permitted parameters
+      # FIXED: Made agent/area fields conditional based on delivery type
       def package_params
         base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
-          :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id,
           :delivery_type, :pickup_location, :package_description
         ]
         
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
+        # Only require agent/area IDs for non-location-based deliveries
+        delivery_type = params.dig(:package, :delivery_type)
+        unless ['fragile', 'collection'].include?(delivery_type)
+          base_params += [:origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
+        end
+        
+        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
+                          :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         optional_fields.each do |field|
-          base_params << field if Package.column_names.include?(field.to_s)
+          base_params << field unless base_params.include?(field)
         end
         
         params.require(:package).permit(*base_params)
       end
 
-      # FIXED: Added pickup_location and package_description to update parameters
+      # FIXED: Updated update parameters with same conditional logic
       def package_update_params
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                      :destination_area_id, :destination_agent_id, :delivery_type, :state,
-                      :origin_agent_id, :pickup_location, :package_description]
+                      :delivery_type, :state, :pickup_location, :package_description]
         
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name]
+        # Only require agent/area IDs for non-location-based deliveries
+        unless ['fragile', 'collection'].include?(@package.delivery_type)
+          base_params += [:destination_area_id, :destination_agent_id, :origin_agent_id]
+        end
+        
+        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
+                          :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         optional_fields.each do |field|
-          base_params << field if Package.column_names.include?(field.to_s)
+          base_params << field unless base_params.include?(field)
         end
         
         permitted_params = []
