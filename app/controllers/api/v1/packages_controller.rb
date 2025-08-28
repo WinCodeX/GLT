@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: Made agent/area IDs optional for fragile and collection types
+# app/controllers/api/v1/packages_controller.rb - FIXED: Collection/delivery fields handling
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -22,17 +22,23 @@ module Api
           total_count = packages.count
           packages = packages.offset((page - 1) * per_page).limit(per_page)
 
-          # Use PackageSerializer for consistent serialization
-          serialized_data = PackageSerializer.new(packages, {
-            params: { 
-              include_qr_code: false,
-              url_helper: self
-            }
-          }).serializable_hash
+          # Use PackageSerializer if available, otherwise fallback to manual serialization
+          if defined?(PackageSerializer)
+            serialized_data = PackageSerializer.new(packages, {
+              params: { 
+                include_qr_code: false,
+                url_helper: self
+              }
+            }).serializable_hash
+            
+            serialized_packages = serialized_data[:data]&.map { |pkg| pkg[:attributes] } || []
+          else
+            serialized_packages = packages.map { |package| serialize_package_with_complete_info(package) }
+          end
 
           render json: {
             success: true,
-            data: serialized_data[:data]&.map { |pkg| pkg[:attributes] } || [],
+            data: serialized_packages,
             pagination: {
               current_page: page,
               per_page: per_page,
@@ -68,17 +74,22 @@ module Api
             }, status: :forbidden
           end
 
-          # Use PackageSerializer for consistent serialization
-          serialized_data = PackageSerializer.new(@package, {
-            params: { 
-              include_qr_code: false,
-              url_helper: self
-            }
-          }).serializable_hash
+          if defined?(PackageSerializer)
+            serialized_data = PackageSerializer.new(@package, {
+              params: { 
+                include_qr_code: false,
+                url_helper: self
+              }
+            }).serializable_hash
+            
+            package_data = serialized_data[:data][:attributes]
+          else
+            package_data = serialize_package_complete(@package)
+          end
 
           render json: {
             success: true,
-            data: serialized_data[:data][:attributes],
+            data: package_data,
             user_permissions: {
               can_edit: can_edit_package?(@package),
               can_delete: can_delete_package?(@package),
@@ -105,10 +116,13 @@ module Api
         end
 
         begin
-          package = current_user.packages.build(package_params)
+          # FIXED: Process collection/delivery data before building package
+          processed_params = process_collection_delivery_params
+          package = current_user.packages.build(processed_params)
           
-          # FIXED: Handle area assignment differently for fragile/collection types
-          if ['fragile', 'collection'].include?(package.delivery_type)
+          # FIXED: Handle area assignment differently for different delivery types
+          case package.delivery_type
+          when 'fragile', 'collection'
             assign_default_areas_for_location_based_delivery(package)
           else
             set_area_ids_from_agents(package)
@@ -121,13 +135,18 @@ module Api
           if package.save
             Rails.logger.info "Package created successfully: #{package.code}"
             
-            serialized_data = PackageSerializer.new(package, {
-              params: { url_helper: self }
-            }).serializable_hash
+            if defined?(PackageSerializer)
+              serialized_data = PackageSerializer.new(package, {
+                params: { url_helper: self }
+              }).serializable_hash
+              package_data = serialized_data[:data][:attributes]
+            else
+              package_data = serialize_package_complete(package)
+            end
             
             render json: {
               success: true,
-              data: serialized_data[:data][:attributes],
+              data: package_data,
               message: 'Package created successfully'
             }, status: :created
           else
@@ -159,8 +178,9 @@ module Api
 
           filtered_params = package_update_params
 
-          # FIXED: Handle area assignment differently for fragile/collection types
-          if ['fragile', 'collection'].include?(@package.delivery_type)
+          # Handle area assignment for different delivery types
+          case @package.delivery_type
+          when 'fragile', 'collection'
             assign_default_areas_for_location_based_delivery(@package)
           else
             if filtered_params[:origin_agent_id].present? || filtered_params[:destination_agent_id].present?
@@ -183,13 +203,18 @@ module Api
               @package.update_column(:cost, new_cost) if new_cost
             end
 
-            serialized_data = PackageSerializer.new(@package.reload, {
-              params: { url_helper: self }
-            }).serializable_hash
+            if defined?(PackageSerializer)
+              serialized_data = PackageSerializer.new(@package.reload, {
+                params: { url_helper: self }
+              }).serializable_hash
+              package_data = serialized_data[:data][:attributes]
+            else
+              package_data = serialize_package_complete(@package.reload)
+            end
 
             render json: {
               success: true,
-              data: serialized_data[:data][:attributes],
+              data: package_data,
               message: 'Package updated successfully'
             }
           else
@@ -264,13 +289,18 @@ module Api
                                 .where("code ILIKE ?", "%#{query}%")
                                 .limit(20)
 
-          serialized_data = PackageSerializer.new(packages, {
-            params: { url_helper: self }
-          }).serializable_hash
+          if defined?(PackageSerializer)
+            serialized_data = PackageSerializer.new(packages, {
+              params: { url_helper: self }
+            }).serializable_hash
+            serialized_packages = serialized_data[:data]&.map { |pkg| pkg[:attributes] } || []
+          else
+            serialized_packages = packages.map { |package| serialize_package_with_complete_info(package) }
+          end
 
           render json: {
             success: true,
-            data: serialized_data[:data]&.map { |pkg| pkg[:attributes] } || [],
+            data: serialized_packages,
             query: query,
             count: packages.count,
             user_role: current_user.primary_role
@@ -287,7 +317,6 @@ module Api
 
       def qr_code
         begin
-          # Use QrCodeGenerator service directly like the old version
           qr_data = generate_qr_code_data(@package)
           
           render json: {
@@ -313,13 +342,18 @@ module Api
 
       def tracking_page
         begin
-          serialized_data = PackageSerializer.new(@package, {
-            params: { url_helper: self }
-          }).serializable_hash
+          if defined?(PackageSerializer)
+            serialized_data = PackageSerializer.new(@package, {
+              params: { url_helper: self }
+            }).serializable_hash
+            package_data = serialized_data[:data][:attributes]
+          else
+            package_data = serialize_package_complete(@package)
+          end
 
           render json: {
             success: true,
-            data: serialized_data[:data][:attributes],
+            data: package_data,
             timeline: package_timeline(@package),
             tracking_url: tracking_url_for(@package.code)
           }
@@ -338,14 +372,19 @@ module Api
           if @package.state == 'pending_unpaid'
             @package.update!(state: 'pending')
             
-            serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
-            }).serializable_hash
+            if defined?(PackageSerializer)
+              serialized_data = PackageSerializer.new(@package, {
+                params: { url_helper: self }
+              }).serializable_hash
+              package_data = serialized_data[:data][:attributes]
+            else
+              package_data = serialize_package_complete(@package)
+            end
             
             render json: { 
               success: true, 
               message: 'Payment processed successfully',
-              data: serialized_data[:data][:attributes]
+              data: package_data
             }
           else
             render json: { 
@@ -368,14 +407,19 @@ module Api
           if @package.state == 'pending'
             @package.update!(state: 'submitted')
             
-            serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
-            }).serializable_hash
+            if defined?(PackageSerializer)
+              serialized_data = PackageSerializer.new(@package, {
+                params: { url_helper: self }
+              }).serializable_hash
+              package_data = serialized_data[:data][:attributes]
+            else
+              package_data = serialize_package_complete(@package)
+            end
             
             render json: { 
               success: true, 
               message: 'Package submitted for delivery',
-              data: serialized_data[:data][:attributes]
+              data: package_data
             }
           else
             render json: { 
@@ -457,7 +501,65 @@ module Api
         packages
       end
 
-      # FIXED: Auto-assign default areas for fragile and collection deliveries
+      # FIXED: Process collection/delivery specific data and map to existing fields
+      def process_collection_delivery_params
+        # Get base package parameters that exist in the schema
+        base_params = package_params
+        
+        # Map collection/delivery data to existing fields if present
+        if is_collection_delivery_request?
+          # Map collection data to delivery_location field
+          collection_info = build_collection_info_from_params
+          base_params[:delivery_location] = collection_info if collection_info.present?
+          
+          # Set delivery type to collection if not already set
+          base_params[:delivery_type] = 'collection' if base_params[:delivery_type].blank?
+        end
+        
+        base_params
+      end
+      
+      # Check if this is a collection/delivery request based on parameters
+      def is_collection_delivery_request?
+        params[:shop_name].present? || 
+        params[:collection_address].present? || 
+        params[:items_to_collect].present? ||
+        params.dig(:package, :delivery_type) == 'collection'
+      end
+      
+      # Build collection information to store in delivery_location
+      def build_collection_info_from_params
+        collection_data = {}
+        
+        # Map collection-specific fields to structured data
+        collection_data[:collection_type] = 'shop_pickup'
+        collection_data[:shop_name] = params[:shop_name] if params[:shop_name].present?
+        collection_data[:shop_contact] = params[:shop_contact] if params[:shop_contact].present?
+        collection_data[:collection_address] = params[:collection_address] if params[:collection_address].present?
+        collection_data[:items_to_collect] = params[:items_to_collect] if params[:items_to_collect].present?
+        collection_data[:item_value] = params[:item_value] if params[:item_value].present?
+        collection_data[:special_instructions] = params[:special_instructions] if params[:special_instructions].present?
+        collection_data[:payment_method] = params[:payment_method] if params[:payment_method].present?
+        
+        # Add coordinates if present
+        if params[:pickup_latitude].present? && params[:pickup_longitude].present?
+          collection_data[:pickup_coordinates] = {
+            latitude: params[:pickup_latitude],
+            longitude: params[:pickup_longitude]
+          }
+        end
+        
+        if params[:delivery_latitude].present? && params[:delivery_longitude].present?
+          collection_data[:delivery_coordinates] = {
+            latitude: params[:delivery_latitude],
+            longitude: params[:delivery_longitude]
+          }
+        end
+        
+        collection_data.any? ? collection_data.to_json : nil
+      end
+
+      # Auto-assign default areas for location-based delivery types
       def assign_default_areas_for_location_based_delivery(package)
         # For fragile and collection types, auto-assign default Nairobi areas
         default_location = Location.find_by(name: 'Nairobi') || Location.first
@@ -621,9 +723,8 @@ module Api
           base_cost += 200
         end
 
-        # FIXED: Handle cost calculation for location-based deliveries
+        # Handle cost calculation for location-based deliveries
         if ['fragile', 'collection'].include?(package.delivery_type)
-          # Use flat rate for location-based deliveries since areas are auto-assigned
           return base_cost
         end
 
@@ -694,11 +795,21 @@ module Api
           if package.respond_to?(:route_description)
             package.route_description
           else
-            # FIXED: Handle route description for location-based deliveries
+            # Handle route description for location-based deliveries
             if ['fragile', 'collection'].include?(package.delivery_type)
-              pickup = package.respond_to?(:pickup_location) ? package.pickup_location : 'Pickup Location'
-              delivery = package.respond_to?(:delivery_location) ? package.delivery_location : 'Delivery Location'
-              return "#{pickup} → #{delivery}"
+              # Try to extract location info from delivery_location JSON
+              if package.delivery_location.present?
+                begin
+                  location_data = JSON.parse(package.delivery_location)
+                  pickup = location_data['shop_name'] || location_data['collection_address'] || 'Pickup Location'
+                  delivery = 'Delivery Location'
+                  return "#{pickup} → #{delivery}"
+                rescue JSON::ParserError
+                  # Fallback if delivery_location is not JSON
+                  return "Collection → Delivery"
+                end
+              end
+              return "Collection → Delivery"
             end
             
             origin_location = package.origin_area&.location&.name || 'Unknown Origin'
@@ -720,21 +831,22 @@ module Api
         end
       end
 
-      # FIXED: Made agent/area fields conditional based on delivery type
+      # FIXED: Only permit fields that exist in the packages table schema
       def package_params
+        # Base fields that always exist in packages table
         base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
-          :delivery_type, :pickup_location, :package_description
+          :delivery_type, :delivery_location
         ]
         
-        # Only require agent/area IDs for non-location-based deliveries
+        # Conditionally add agent/area fields for non-location-based deliveries
         delivery_type = params.dig(:package, :delivery_type)
         unless ['fragile', 'collection'].include?(delivery_type)
           base_params += [:origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         end
         
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
-                          :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
+        # Add optional fields that exist in the schema
+        optional_fields = [:origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         optional_fields.each do |field|
           base_params << field unless base_params.include?(field)
         end
@@ -742,20 +854,13 @@ module Api
         params.require(:package).permit(*base_params)
       end
 
-      # FIXED: Updated update parameters with same conditional logic
       def package_update_params
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                      :delivery_type, :state, :pickup_location, :package_description]
+                      :delivery_type, :state, :delivery_location]
         
-        # Only require agent/area IDs for non-location-based deliveries
+        # Conditionally add agent/area fields for non-location-based deliveries
         unless ['fragile', 'collection'].include?(@package.delivery_type)
-          base_params += [:destination_area_id, :destination_agent_id, :origin_agent_id]
-        end
-        
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
-                          :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
-        optional_fields.each do |field|
-          base_params << field unless base_params.include?(field)
+          base_params += [:destination_area_id, :destination_agent_id, :origin_agent_id, :origin_area_id]
         end
         
         permitted_params = []
@@ -764,17 +869,14 @@ module Api
         when 'client'
           if ['pending_unpaid', 'pending'].include?(@package.state)
             permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                               :destination_area_id, :destination_agent_id, :delivery_location,
-                               :sender_email, :receiver_email, :business_name, :pickup_location, 
-                               :package_description].select do |field|
+                               :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
               base_params.include?(field)
             end
           end
         when 'admin'
           permitted_params = base_params
         when 'agent', 'rider', 'warehouse'
-          permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location,
-                             :pickup_location, :package_description].select do |field|
+          permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location].select do |field|
             base_params.include?(field)
           end
         end
@@ -863,6 +965,88 @@ module Api
         current_user.accessible_locations.count
       rescue
         0
+      end
+      
+      # Fallback serialization methods if PackageSerializer is not available
+      def serialize_package_complete(package)
+        {
+          'id' => package.id.to_s,
+          'code' => package.code,
+          'state' => package.state,
+          'state_display' => status_description(package.state),
+          'delivery_type' => package.delivery_type,
+          'delivery_type_display' => package.delivery_type&.humanize,
+          'sender_name' => package.sender_name,
+          'sender_phone' => package.sender_phone,
+          'receiver_name' => package.receiver_name,
+          'receiver_phone' => package.receiver_phone,
+          'delivery_location' => package.delivery_location,
+          'cost' => package.cost,
+          'route_description' => safe_route_description(package),
+          'origin_area' => package.origin_area ? serialize_area(package.origin_area) : nil,
+          'destination_area' => package.destination_area ? serialize_area(package.destination_area) : nil,
+          'origin_agent' => package.origin_agent ? serialize_agent(package.origin_agent) : nil,
+          'destination_agent' => package.destination_agent ? serialize_agent(package.destination_agent) : nil,
+          'user' => serialize_user_basic(package.user),
+          'created_at' => package.created_at&.iso8601,
+          'updated_at' => package.updated_at&.iso8601
+        }
+      end
+      
+      def serialize_package_with_complete_info(package)
+        serialize_package_complete(package)
+      end
+      
+      def serialize_area(area)
+        return nil unless area
+        {
+          'id' => area.id.to_s,
+          'name' => area.name,
+          'initials' => area.initials,
+          'location' => area.location ? serialize_location(area.location) : nil
+        }
+      end
+      
+      def serialize_location(location)
+        return nil unless location
+        {
+          'id' => location.id.to_s,
+          'name' => location.name
+        }
+      end
+      
+      def serialize_agent(agent)
+        return nil unless agent
+        {
+          'id' => agent.id.to_s,
+          'name' => agent.name,
+          'phone' => agent.phone,
+          'active' => agent.active,
+          'area' => agent.area ? serialize_area(agent.area) : nil
+        }
+      end
+      
+      def serialize_user_basic(user)
+        return nil unless user
+        
+        name = if user.respond_to?(:name) && user.name.present?
+          user.name
+        elsif user.respond_to?(:first_name) && user.respond_to?(:last_name)
+          "#{user.first_name} #{user.last_name}".strip
+        elsif user.respond_to?(:first_name) && user.first_name.present?
+          user.first_name
+        elsif user.respond_to?(:last_name) && user.last_name.present?
+          user.last_name
+        else
+          user.email
+        end
+        
+        {
+          'id' => user.id.to_s,
+          'name' => name,
+          'email' => user.email,
+          'role' => user.primary_role
+        }
       end
     end
   end
