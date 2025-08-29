@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_26_122543) do
+ActiveRecord::Schema[7.1].define(version: 2025_08_29_054941) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -200,6 +200,9 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_26_122543) do
     t.datetime "payment_deadline"
     t.datetime "collection_scheduled_at"
     t.datetime "collected_at"
+    t.text "pickup_location"
+    t.text "package_description"
+    t.string "package_size"
     t.index ["code"], name: "idx_packages_code", unique: true
     t.index ["collection_scheduled_at"], name: "index_packages_on_collection_scheduled_at"
     t.index ["collection_type"], name: "index_packages_on_collection_type"
