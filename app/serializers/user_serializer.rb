@@ -13,7 +13,7 @@ class UserSerializer < ActiveModel::Serializer
              :initials, :username, :phone, :phone_number,
              
              # Avatar and profile
-             :google_image_url, :profile_complete,
+             :avatar_url, :google_image_url, :profile_complete,
              
              # Role and permissions
              :roles, :primary_role, :role_display, :role_description,
@@ -129,63 +129,13 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   # ===========================================
-  # 🎨 AVATAR HANDLING (Enhanced with Google support)
+  # 🎨 AVATAR HANDLING (Fixed to use AvatarHelper properly)
   # ===========================================
 
-  # ===========================================
-# 🎨 AVATAR HANDLING (Delegates to AvatarHelper)
-# ===========================================
-
-def avatar_url
-  # If uploaded avatar exists, use helper logic (ensures CDN/R2 URL)
-  return avatar_api_url(object) if object.avatar&.attached?
-  
-  # Fallback: Google avatar if no uploaded avatar
-  google_avatar_url
-end
-
-
-  private
-
-  def uploaded_avatar_url
-    return nil unless object.avatar&.attached?
-
-    begin
-      avatar_blob = object.avatar.blob
-      return nil unless avatar_blob&.persisted?
-      
-      # Additional safety check - ensure the attachment is properly linked
-      return nil unless object.avatar.attachment&.persisted?
-      
-      host = first_available_host
-      return nil unless host
-
-      # Generate URL with error handling
-      rails_blob_url(
-        object.avatar, 
-        host: host, 
-        protocol: host.include?('https') ? 'https' : 'http'
-      )
-      
-    rescue ActiveStorage::FileNotFoundError => e
-      Rails.logger.warn "Avatar file not found for user #{object.id}: #{e.message}"
-      nil
-    rescue NoMethodError => e
-      Rails.logger.warn "Avatar method error for user #{object.id}: #{e.message}"
-      nil
-    rescue => e
-      Rails.logger.error "Error generating avatar URL for user #{object.id}: #{e.message}"
-      nil
-    end
+  def avatar_url
+    # Use the same approach as MeController - delegate to AvatarHelper
+    avatar_api_url(object)
   end
-
-  def google_avatar_url
-    # Fallback to Google avatar if no uploaded avatar
-    return nil if uploaded_avatar_url.present?
-    safe_call(:google_image_url)
-  end
-
-  public
 
   # ===========================================
   # 📦 PACKAGE DELIVERY PERMISSIONS
