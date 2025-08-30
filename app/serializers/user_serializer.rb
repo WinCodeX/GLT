@@ -144,9 +144,6 @@ def avatar_url
   google_avatar_url
 end
 
-def google_avatar_url
-  safe_call(:google_image_url)
-end
 
   private
 
