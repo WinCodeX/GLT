@@ -7,11 +7,50 @@ module Api
       before_action :authenticate_user!
 
       def show
-        render json: { 
-          id: current_user.id, 
-          email: current_user.email,
-          avatar_url: avatar_api_url(current_user)
+        # Use the comprehensive UserSerializer but handle avatar separately
+        serializer = UserSerializer.new(
+          current_user,
+          include_sensitive_info: true,
+          context: 'profile'
+        )
+        
+        # Get serialized user data and add avatar_url from controller
+        user_data = serializer.as_json
+        user_data[:avatar_url] = avatar_api_url(current_user)
+        
+        render json: {
+          status: 'success',
+          user: user_data
         }
+      end
+
+      def update
+        user_params = params.require(:user).permit(
+          :first_name, :last_name, :phone_number, :email
+        )
+
+        if current_user.update(user_params)
+          serializer = UserSerializer.new(
+            current_user,
+            include_sensitive_info: true,
+            context: 'profile'
+          )
+          
+          user_data = serializer.as_json
+          user_data[:avatar_url] = avatar_api_url(current_user)
+          
+          render json: {
+            status: 'success',
+            message: 'Profile updated successfully',
+            user: user_data
+          }
+        else
+          render json: {
+            status: 'error',
+            message: 'Profile update failed',
+            errors: current_user.errors.full_messages
+          }, status: :unprocessable_entity
+        end
       end
 
       def update_avatar
@@ -43,16 +82,27 @@ module Api
             raise "Avatar attachment failed"
           end
           
-          # Generate the proper avatar URL
+          # Generate the proper avatar URL using controller method
           new_avatar_url = avatar_api_url(current_user)
           
           Rails.logger.info "✅ Avatar uploaded successfully"
           Rails.logger.info "🔗 Avatar URL: #{new_avatar_url}"
           
+          # Return updated user data with new avatar
+          serializer = UserSerializer.new(
+            current_user,
+            include_sensitive_info: true,
+            context: 'profile'
+          )
+          
+          user_data = serializer.as_json
+          user_data[:avatar_url] = new_avatar_url
+          
           render json: {
             success: true,
             message: 'Avatar updated successfully',
-            avatar_url: new_avatar_url
+            avatar_url: new_avatar_url,
+            user: user_data
           }
           
         rescue => e
@@ -68,10 +118,21 @@ module Api
         current_user.avatar.purge if current_user.avatar.attached?
         current_user.reload
         
+        # Return updated user data without avatar
+        serializer = UserSerializer.new(
+          current_user,
+          include_sensitive_info: true,
+          context: 'profile'
+        )
+        
+        user_data = serializer.as_json
+        user_data[:avatar_url] = avatar_api_url(current_user) # This will now return fallback
+        
         render json: { 
           success: true, 
           message: 'Avatar deleted',
-          avatar_url: nil
+          avatar_url: user_data[:avatar_url],
+          user: user_data
         }
       end
     end
