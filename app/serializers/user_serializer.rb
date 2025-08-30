@@ -3,7 +3,6 @@
 class UserSerializer < ActiveModel::Serializer
   include Rails.application.routes.url_helpers
   include UrlHostHelper
-  include AvatarHelper
 
   # ===========================================
   # 📋 CORE ATTRIBUTES
@@ -12,8 +11,8 @@ class UserSerializer < ActiveModel::Serializer
   attributes :id, :email, :first_name, :last_name, :display_name, :full_name, 
              :initials, :phone, :phone_number,
              
-             # Avatar and profile
-             :avatar_url, :google_image_url, :profile_complete,
+             # Avatar and profile (avatar_url removed - handled by controller)
+             :google_image_url, :profile_complete,
              
              # Role and permissions
              :roles, :primary_role, :role_display, :role_description,
@@ -129,17 +128,28 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   # ===========================================
-  # 🎨 AVATAR HANDLING (Using AvatarHelper like old MeController)
+  # 🎨 AVATAR HANDLING (Using improved AvatarHelper)
   # ===========================================
 
   def avatar_url
-    # Use the exact same method as the old MeController
+    # Use the updated AvatarHelper that always returns a URL (with fallback)
     avatar_api_url(object)
   rescue => e
     Rails.logger.error "Error generating avatar URL for user #{object.id}: #{e.message}"
-    # Fallback to Google avatar or nil
-    safe_call(:google_image_url)
+    # Manual fallback if helper completely fails
+    generate_manual_fallback_avatar
   end
+
+  private
+
+  def generate_manual_fallback_avatar
+    # Last resort fallback avatar generation
+    name = display_name || "User #{object.id}"
+    encoded_name = CGI.escape(name)
+    "https://ui-avatars.com/api/?name=#{encoded_name}&size=150&background=6366f1&color=ffffff"
+  end
+
+  public
 
   # ===========================================
   # 📦 PACKAGE DELIVERY PERMISSIONS
