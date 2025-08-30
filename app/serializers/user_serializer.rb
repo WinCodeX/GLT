@@ -3,6 +3,7 @@
 class UserSerializer < ActiveModel::Serializer
   include Rails.application.routes.url_helpers
   include UrlHostHelper
+  include AvatarHelper
 
   # ===========================================
   # 📋 CORE ATTRIBUTES
@@ -131,10 +132,21 @@ class UserSerializer < ActiveModel::Serializer
   # 🎨 AVATAR HANDLING (Enhanced with Google support)
   # ===========================================
 
-  def avatar_url
-    # First, try to get uploaded avatar
-    uploaded_avatar_url || google_avatar_url
-  end
+  # ===========================================
+# 🎨 AVATAR HANDLING (Delegates to AvatarHelper)
+# ===========================================
+
+def avatar_url
+  # If uploaded avatar exists, use helper logic (ensures CDN/R2 URL)
+  return avatar_api_url(object) if object.avatar&.attached?
+  
+  # Fallback: Google avatar if no uploaded avatar
+  google_avatar_url
+end
+
+def google_avatar_url
+  safe_call(:google_image_url)
+end
 
   private
 
