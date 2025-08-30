@@ -129,12 +129,32 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   # ===========================================
-  # 🎨 AVATAR HANDLING (Fixed to use AvatarHelper properly)
+  # 🎨 AVATAR HANDLING (Bypass helper, generate directly)
   # ===========================================
 
   def avatar_url
-    # Use the same approach as MeController - delegate to AvatarHelper
-    avatar_api_url(object)
+    # Generate avatar URL directly to avoid helper method context issues
+    return nil unless object.avatar&.attached?
+    
+    begin
+      avatar_blob = object.avatar.blob
+      return nil unless avatar_blob&.persisted?
+      
+      host = first_available_host
+      return nil unless host
+
+      rails_blob_url(
+        object.avatar, 
+        host: host, 
+        protocol: host.include?('https') ? 'https' : 'http'
+      )
+    rescue ActiveStorage::FileNotFoundError => e
+      Rails.logger.warn "Avatar file not found for user #{object.id}: #{e.message}"
+      nil
+    rescue => e
+      Rails.logger.error "Error generating avatar URL for user #{object.id}: #{e.message}"
+      nil
+    end
   end
 
   # ===========================================
