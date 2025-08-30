@@ -13,7 +13,7 @@ class UserSerializer < ActiveModel::Serializer
              :initials, :username, :phone, :phone_number,
              
              # Avatar and profile
-             :avatar_url, :google_image_url, :profile_complete,
+             :google_image_url, :profile_complete,
              
              # Role and permissions
              :roles, :primary_role, :role_display, :role_description,
