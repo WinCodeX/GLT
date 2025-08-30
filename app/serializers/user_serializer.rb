@@ -10,7 +10,7 @@ class UserSerializer < ActiveModel::Serializer
   # ===========================================
   
   attributes :id, :email, :first_name, :last_name, :display_name, :full_name, 
-             :initials, :username, :phone, :phone_number,
+             :initials, :phone, :phone_number,
              
              # Avatar and profile
              :avatar_url, :google_image_url, :profile_complete,
@@ -240,10 +240,6 @@ class UserSerializer < ActiveModel::Serializer
 
   def last_name
     safe_call(:last_name)
-  end
-
-  def username
-    safe_call(:username)
   end
 
   def phone
