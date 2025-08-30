@@ -129,57 +129,16 @@ class UserSerializer < ActiveModel::Serializer
   end
 
   # ===========================================
-  # 🎨 AVATAR HANDLING (Explicit helper usage with error handling)
+  # 🎨 AVATAR HANDLING (Using AvatarHelper like old MeController)
   # ===========================================
 
   def avatar_url
-    # Try using the helper with explicit method resolution
-    return nil unless object&.avatar&.attached?
-    
-    begin
-      # Call the helper method explicitly from the included module
-      self.class.included_modules.each do |mod|
-        if mod.name == 'AvatarHelper' && mod.method_defined?(:avatar_api_url)
-          return mod.instance_method(:avatar_api_url).bind(self).call(object, variant: :thumb)
-        end
-      end
-      
-      # If explicit module call doesn't work, try direct call
-      avatar_api_url(object, variant: :thumb)
-      
-    rescue NoMethodError, ArgumentError => e
-      Rails.logger.error "Helper method failed for user #{object.id}: #{e.message}"
-      generate_avatar_url_fallback
-    rescue => e
-      Rails.logger.error "Unexpected error generating avatar URL for user #{object.id}: #{e.message}"
-      generate_avatar_url_fallback
-    end
-  end
-
-  private
-
-  def generate_avatar_url_fallback
-    return nil unless object.avatar&.attached?
-    
-    begin
-      avatar_blob = object.avatar.blob
-      return nil unless avatar_blob&.persisted?
-      
-      host = first_available_host
-      return nil unless host
-
-      rails_blob_url(
-        object.avatar, 
-        host: host, 
-        protocol: host.include?('https') ? 'https' : 'http'
-      )
-    rescue ActiveStorage::FileNotFoundError => e
-      Rails.logger.warn "Avatar file not found for user #{object.id}: #{e.message}"
-      nil
-    rescue => e
-      Rails.logger.error "Error generating avatar URL for user #{object.id}: #{e.message}"
-      nil
-    end
+    # Use the exact same method as the old MeController
+    avatar_api_url(object)
+  rescue => e
+    Rails.logger.error "Error generating avatar URL for user #{object.id}: #{e.message}"
+    # Fallback to Google avatar or nil
+    safe_call(:google_image_url)
   end
 
   # ===========================================
