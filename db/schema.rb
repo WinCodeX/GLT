@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_08_29_054941) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_01_081646) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -62,6 +62,18 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_29_054941) do
     t.string "initials", limit: 3
     t.index ["initials"], name: "idx_areas_initials", unique: true
     t.index ["location_id"], name: "index_areas_on_location_id"
+  end
+
+  create_table "business_invites", force: :cascade do |t|
+    t.string "code", null: false
+    t.bigint "inviter_id", null: false
+    t.bigint "business_id", null: false
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["business_id"], name: "index_business_invites_on_business_id"
+    t.index ["code"], name: "index_business_invites_on_code", unique: true
+    t.index ["inviter_id"], name: "index_business_invites_on_inviter_id"
   end
 
   create_table "businesses", force: :cascade do |t|
@@ -292,6 +304,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_08_29_054941) do
   add_foreign_key "agents", "areas"
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
+  add_foreign_key "business_invites", "businesses"
+  add_foreign_key "business_invites", "users", column: "inviter_id"
   add_foreign_key "businesses", "users", column: "owner_id"
   add_foreign_key "conversation_participants", "conversations"
   add_foreign_key "conversation_participants", "users"
