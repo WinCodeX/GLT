@@ -1,3 +1,4 @@
+# app/controllers/api/v1/me_controller.rb - Fixed for R2 user folders
 module Api
   module V1
     class MeController < ApplicationController
@@ -81,52 +82,21 @@ module Api
           Rails.logger.info "🖼️ Starting avatar upload for user #{current_user.id}"
           Rails.logger.info "📁 File: #{avatar_file.original_filename} (#{avatar_file.size} bytes)"
           Rails.logger.info "🔧 Content-Type: #{avatar_file.content_type}"
-          Rails.logger.info "🗄️ Active Storage Service: #{Rails.application.config.active_storage.service}"
           
-          # Log environment variables for debugging
-          Rails.logger.info "🔑 R2 Config Check:"
-          Rails.logger.info "   - Bucket: #{ENV['CLOUDFLARE_R2_BUCKET']&.present? ? 'SET' : 'MISSING'}"
-          Rails.logger.info "   - Access Key: #{ENV['CLOUDFLARE_R2_ACCESS_KEY_ID']&.present? ? 'SET' : 'MISSING'}"
-          Rails.logger.info "   - Secret Key: #{ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY']&.present? ? 'SET' : 'MISSING'}"
-          Rails.logger.info "   - Public URL: #{ENV['CLOUDFLARE_R2_PUBLIC_URL']&.present? ? 'SET' : 'MISSING'}"
-          
-          # Remove existing avatar
-          if current_user.avatar.attached?
-            Rails.logger.info "🗑️ Purging existing avatar"
-            current_user.avatar.purge
-          end
-          
-          # Create a proper IO object from the uploaded file
-          io_object = if avatar_file.respond_to?(:tempfile)
-            avatar_file.tempfile
-          elsif avatar_file.respond_to?(:read)
-            avatar_file
+          if Rails.env.production?
+            # Production: Upload directly to R2 with user ID folder structure
+            new_avatar_url = upload_avatar_to_r2(current_user, avatar_file)
           else
-            raise "Invalid file object: #{avatar_file.class}"
+            # Development: Use Active Storage as before
+            current_user.avatar.purge if current_user.avatar.attached?
+            current_user.avatar.attach(
+              io: avatar_file.tempfile,
+              filename: avatar_file.original_filename || 'avatar.jpg',
+              content_type: avatar_file.content_type || 'image/jpeg'
+            )
+            current_user.reload
+            new_avatar_url = avatar_api_url(current_user)
           end
-
-          Rails.logger.info "📎 Attaching avatar via Active Storage"
-          
-          # Upload to R2 via Active Storage (now using cloudflare service)
-          current_user.avatar.attach(
-            io: io_object,
-            filename: avatar_file.original_filename || 'avatar.jpg',
-            content_type: avatar_file.content_type || 'image/jpeg'
-          )
-          
-          # Verify attachment with detailed logging
-          current_user.reload
-          unless current_user.avatar.attached?
-            Rails.logger.error "❌ Avatar attachment verification failed"
-            raise "Avatar attachment failed - no avatar found after attach"
-          end
-          
-          Rails.logger.info "✅ Avatar attachment verified"
-          Rails.logger.info "🔗 Blob ID: #{current_user.avatar.blob.id}"
-          Rails.logger.info "🔑 Blob Key: #{current_user.avatar.blob.key}"
-          
-          # Generate the proper avatar URL using controller method
-          new_avatar_url = avatar_api_url(current_user)
           
           Rails.logger.info "✅ Avatar uploaded successfully"
           Rails.logger.info "🔗 Avatar URL: #{new_avatar_url}"
@@ -174,8 +144,14 @@ module Api
       end
 
       def destroy_avatar
-        current_user.avatar.purge if current_user.avatar.attached?
-        current_user.reload
+        if Rails.env.production?
+          # Production: Delete from R2
+          delete_avatar_from_r2(current_user)
+        else
+          # Development: Delete from Active Storage
+          current_user.avatar.purge if current_user.avatar.attached?
+          current_user.reload
+        end
         
         # Return updated user data without avatar
         serializer = UserSerializer.new(
@@ -194,6 +170,201 @@ module Api
           user: user_data
         }
       end
+
+      private
+
+      def upload_avatar_to_r2(user, avatar_file)
+        require 'aws-sdk-s3'
+        
+        # Create R2 client
+        client = Aws::S3::Client.new(
+          access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
+          secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
+          region: 'auto',
+          endpoint: ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com',
+          force_path_style: true
+        )
+
+        bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
+        
+        # Define the R2 key with user folder structure: avatars/{user_id}/avatar.jpg
+        file_extension = File.extname(avatar_file.original_filename || 'avatar.jpg')
+        r2_key = "avatars/#{user.id}/avatar#{file_extension}"
+        
+        Rails.logger.info "📂 R2 Key: #{r2_key}"
+        
+        # Check if avatar already exists and delete it
+        begin
+          client.head_object(bucket: bucket_name, key: r2_key)
+          Rails.logger.info "🗑️ Deleting existing avatar"
+          client.delete_object(bucket: bucket_name, key: r2_key)
+        rescue Aws::S3::Errors::NotFound
+          Rails.logger.info "📝 No existing avatar found"
+        end
+        
+        # Upload the new avatar
+        Rails.logger.info "⬆️ Uploading to R2"
+        client.put_object(
+          bucket: bucket_name,
+          key: r2_key,
+          body: avatar_file.tempfile,
+          content_type: avatar_file.content_type || 'image/jpeg'
+        )
+        
+        # Generate the public URL
+        public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
+        "#{public_base}/#{r2_key}"
+      end
+
+      def delete_avatar_from_r2(user)
+        require 'aws-sdk-s3'
+        
+        client = Aws::S3::Client.new(
+          access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
+          secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
+          region: 'auto',
+          endpoint: ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com',
+          force_path_style: true
+        )
+
+        bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
+        
+        # List all objects in the user's avatar folder
+        user_prefix = "avatars/#{user.id}/"
+        
+        objects = client.list_objects_v2(
+          bucket: bucket_name,
+          prefix: user_prefix
+        )
+        
+        # Delete all objects in the user's folder
+        objects.contents.each do |object|
+          Rails.logger.info "🗑️ Deleting #{object.key}"
+          client.delete_object(bucket: bucket_name, key: object.key)
+        end
+        
+        Rails.logger.info "✅ User avatar folder cleared"
+      rescue => e
+        Rails.logger.error "❌ Error deleting avatar from R2: #{e.message}"
+      end
+    end
+  end
+end
+
+# app/helpers/avatar_helper.rb - Fixed for R2 user folders
+module AvatarHelper
+  include UrlHostHelper
+  
+  def avatar_url(user, variant: :thumb)
+    return nil unless user&.present?
+    
+    begin
+      if Rails.env.production?
+        # Production: Check R2 for user's avatar
+        generate_r2_user_avatar_url(user)
+      else
+        # Development: Use Active Storage as before
+        return nil unless user.avatar&.attached?
+        base_host = first_available_host
+        avatar_path = rails_blob_path(user.avatar.variant(resize_to_limit: variant_size(variant)))
+        "#{base_host}#{avatar_path}"
+      end
+    rescue => e
+      Rails.logger.error "Avatar URL generation failed for user #{user.id}: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+      nil
+    end
+  end
+  
+  # Generate direct avatar URL for API responses
+  def avatar_api_url(user, variant: :thumb)
+    avatar_url(user, variant: variant)
+  end
+  
+  # Fallback avatar when user has no avatar or generation fails
+  def fallback_avatar_url(variant = :thumb)
+    size = variant_size(variant)[0]
+    "https://ui-avatars.com/api/?name=User&size=#{size}&background=6366f1&color=ffffff"
+  end
+  
+  private
+  
+  def generate_r2_user_avatar_url(user)
+    # Check if avatar exists in R2 user folder
+    return nil unless r2_avatar_exists?(user)
+    
+    # Generate URL based on user folder structure
+    public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
+    
+    # Try common image extensions
+    %w[.jpg .jpeg .png .gif .webp].each do |extension|
+      avatar_key = "avatars/#{user.id}/avatar#{extension}"
+      if r2_object_exists?(avatar_key)
+        return "#{public_base}/#{avatar_key}"
+      end
+    end
+    
+    nil
+  end
+  
+  def r2_avatar_exists?(user)
+    # Quick check if user has avatar folder in R2
+    require 'aws-sdk-s3'
+    
+    client = Aws::S3::Client.new(
+      access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
+      secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
+      region: 'auto',
+      endpoint: ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com',
+      force_path_style: true
+    )
+
+    bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
+    user_prefix = "avatars/#{user.id}/"
+    
+    response = client.list_objects_v2(
+      bucket: bucket_name,
+      prefix: user_prefix,
+      max_keys: 1
+    )
+    
+    response.contents.any?
+  rescue => e
+    Rails.logger.error "❌ Error checking R2 avatar existence: #{e.message}"
+    false
+  end
+  
+  def r2_object_exists?(key)
+    require 'aws-sdk-s3'
+    
+    client = Aws::S3::Client.new(
+      access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
+      secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
+      region: 'auto',
+      endpoint: ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com',
+      force_path_style: true
+    )
+
+    bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
+    
+    client.head_object(bucket: bucket_name, key: key)
+    true
+  rescue Aws::S3::Errors::NotFound
+    false
+  rescue => e
+    Rails.logger.error "❌ Error checking R2 object existence: #{e.message}"
+    false
+  end
+  
+  def variant_size(variant)
+    case variant.to_sym
+    when :thumb then [150, 150]
+    when :small then [100, 100]
+    when :medium then [300, 300]
+    when :large then [600, 600]
+    when :xl then [1200, 1200]
+    when :original then nil
+    else [150, 150]
     end
   end
 end
