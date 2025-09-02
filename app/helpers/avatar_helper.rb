@@ -37,24 +37,20 @@ module AvatarHelper
   private
   
   def generate_production_avatar_url(avatar, variant)
-    # R2 doesn't support on-the-fly variants, use original file
-    begin
-      rails_blob_url(avatar, host: Rails.application.routes.default_url_options[:host])
-    rescue => e
-      Rails.logger.error "Active Storage URL generation failed: #{e.message}"
-      # If Active Storage URL fails, try direct R2 construction as fallback
-      construct_direct_r2_url(avatar, variant)
-    end
+    # Use direct R2 URLs instead of Rails Active Storage redirect URLs
+    construct_direct_r2_url(avatar, variant)
   end
   
   def construct_direct_r2_url(avatar, variant)
-    # Fallback method if Active Storage URL generation fails
-    public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL']
+    # Construct direct R2 URL in the format: {R2_PUBLIC_URL}/avatars/{blob_key}/{filename}
+    public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
     return fallback_avatar_url(variant) unless public_base
     
-    # Use the blob key directly
+    # Use the blob key and filename to match your R2 structure
     blob_key = avatar.blob.key
-    "#{public_base}/#{blob_key}"
+    filename = avatar.blob.filename || 'avatar.jpg'
+    
+    "#{public_base}/avatars/#{blob_key}/#{filename}"
   end
   
   def variant_size(variant)
