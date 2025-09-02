@@ -15,7 +15,7 @@ cloudflare:
   bucket: <%= ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp' %>
   endpoint: <%= ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com' %>
   force_path_style: true
-  public: true
+  
 # Use bin/rails credentials:edit to set the AWS secrets (as aws:access_key_id|secret_access_key)
 # amazon:
 #   service: S3
