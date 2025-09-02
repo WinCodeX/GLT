@@ -23,9 +23,10 @@ module AvatarHelper
   
   # Generate direct avatar URL for API responses
   def avatar_api_url(user, variant: :thumb)
-    url = avatar_url(user, variant: variant)
-    return fallback_avatar_url(variant) unless url
-    url
+    # Return nil if no avatar attached, don't use fallback
+    return nil unless user&.avatar&.attached?
+    
+    avatar_url(user, variant: variant)
   end
   
   # Fallback avatar when user has no avatar or generation fails
