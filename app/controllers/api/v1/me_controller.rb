@@ -1,4 +1,3 @@
-# app/controllers/api/v1/me_controller.rb
 module Api
   module V1
     class MeController < ApplicationController
@@ -63,24 +62,68 @@ module Api
 
         avatar_file = params[:avatar]
 
+        # Add file validation
+        if avatar_file.size > 5.megabytes
+          return render json: { 
+            success: false,
+            error: 'File too large (max 5MB)' 
+          }, status: :bad_request
+        end
+
+        unless avatar_file.content_type&.start_with?('image/')
+          return render json: { 
+            success: false,
+            error: 'Invalid file type. Please upload an image.' 
+          }, status: :bad_request
+        end
+
         begin
           Rails.logger.info "🖼️ Starting avatar upload for user #{current_user.id}"
+          Rails.logger.info "📁 File: #{avatar_file.original_filename} (#{avatar_file.size} bytes)"
+          Rails.logger.info "🔧 Content-Type: #{avatar_file.content_type}"
+          Rails.logger.info "🗄️ Active Storage Service: #{Rails.application.config.active_storage.service}"
+          
+          # Log environment variables for debugging
+          Rails.logger.info "🔑 R2 Config Check:"
+          Rails.logger.info "   - Bucket: #{ENV['CLOUDFLARE_R2_BUCKET']&.present? ? 'SET' : 'MISSING'}"
+          Rails.logger.info "   - Access Key: #{ENV['CLOUDFLARE_R2_ACCESS_KEY_ID']&.present? ? 'SET' : 'MISSING'}"
+          Rails.logger.info "   - Secret Key: #{ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY']&.present? ? 'SET' : 'MISSING'}"
+          Rails.logger.info "   - Public URL: #{ENV['CLOUDFLARE_R2_PUBLIC_URL']&.present? ? 'SET' : 'MISSING'}"
           
           # Remove existing avatar
-          current_user.avatar.purge if current_user.avatar.attached?
+          if current_user.avatar.attached?
+            Rails.logger.info "🗑️ Purging existing avatar"
+            current_user.avatar.purge
+          end
+          
+          # Create a proper IO object from the uploaded file
+          io_object = if avatar_file.respond_to?(:tempfile)
+            avatar_file.tempfile
+          elsif avatar_file.respond_to?(:read)
+            avatar_file
+          else
+            raise "Invalid file object: #{avatar_file.class}"
+          end
+
+          Rails.logger.info "📎 Attaching avatar via Active Storage"
           
           # Upload to R2 via Active Storage (now using cloudflare service)
           current_user.avatar.attach(
-            io: avatar_file.tempfile,
+            io: io_object,
             filename: avatar_file.original_filename || 'avatar.jpg',
             content_type: avatar_file.content_type || 'image/jpeg'
           )
           
-          # Verify attachment
+          # Verify attachment with detailed logging
           current_user.reload
           unless current_user.avatar.attached?
-            raise "Avatar attachment failed"
+            Rails.logger.error "❌ Avatar attachment verification failed"
+            raise "Avatar attachment failed - no avatar found after attach"
           end
+          
+          Rails.logger.info "✅ Avatar attachment verified"
+          Rails.logger.info "🔗 Blob ID: #{current_user.avatar.blob.id}"
+          Rails.logger.info "🔑 Blob Key: #{current_user.avatar.blob.key}"
           
           # Generate the proper avatar URL using controller method
           new_avatar_url = avatar_api_url(current_user)
@@ -107,9 +150,25 @@ module Api
           
         rescue => e
           Rails.logger.error "❌ Avatar upload error: #{e.message}"
+          Rails.logger.error "📍 Backtrace: #{e.backtrace.first(10).join('\n')}"
+          
+          # Check if it's a storage-specific error
+          error_message = case e.message
+          when /Access Denied/i, /403/
+            "Storage access denied. Check R2 credentials and permissions."
+          when /bucket.*not.*found/i, /404/
+            "Storage bucket not found. Check R2 bucket configuration."
+          when /timeout/i
+            "Upload timeout. Please try again."
+          when /network/i, /connection/i
+            "Network error. Check internet connection."
+          else
+            "Upload failed: #{e.message}"
+          end
+          
           render json: { 
             success: false,
-            error: "Upload failed: #{e.message}"
+            error: error_message
           }, status: :unprocessable_entity
         end
       end
@@ -126,7 +185,7 @@ module Api
         )
         
         user_data = serializer.as_json
-        user_data[:avatar_url] = avatar_api_url(current_user) # This will now return fallback
+        user_data[:avatar_url] = avatar_api_url(current_user) # This will now return nil
         
         render json: { 
           success: true, 
