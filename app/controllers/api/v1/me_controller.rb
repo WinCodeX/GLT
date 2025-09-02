@@ -193,13 +193,26 @@ module Api
         
         Rails.logger.info "📂 R2 Key: #{r2_key}"
         
-        # Check if avatar already exists and delete it
+        # Delete all existing avatars in user's folder (handles different file extensions)
+        user_prefix = "avatars/#{user.id}/"
+        
         begin
-          client.head_object(bucket: bucket_name, key: r2_key)
-          Rails.logger.info "🗑️ Deleting existing avatar"
-          client.delete_object(bucket: bucket_name, key: r2_key)
-        rescue Aws::S3::Errors::NotFound
-          Rails.logger.info "📝 No existing avatar found"
+          objects = client.list_objects_v2(
+            bucket: bucket_name,
+            prefix: user_prefix
+          )
+          
+          if objects.contents.any?
+            Rails.logger.info "🗑️ Deleting #{objects.contents.count} existing avatar(s)"
+            objects.contents.each do |object|
+              Rails.logger.info "🗑️ Deleting #{object.key}"
+              client.delete_object(bucket: bucket_name, key: object.key)
+            end
+          else
+            Rails.logger.info "📝 No existing avatars found"
+          end
+        rescue => e
+          Rails.logger.warn "⚠️ Error checking/deleting existing avatars: #{e.message}"
         end
         
         # Upload the new avatar
