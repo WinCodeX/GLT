@@ -1,4 +1,3 @@
-# app/helpers/avatar_helper.rb
 module AvatarHelper
   include UrlHostHelper
   
@@ -25,7 +24,7 @@ module AvatarHelper
   # Generate direct avatar URL for API responses
   def avatar_api_url(user, variant: :thumb)
     url = avatar_url(user, variant: variant)
-    return nil unless url
+    return fallback_avatar_url(variant) unless url
     url
   end
   
@@ -38,16 +37,9 @@ module AvatarHelper
   private
   
   def generate_production_avatar_url(avatar, variant)
-    # Now that we use cloudflare service, let Active Storage handle URL generation
+    # R2 doesn't support on-the-fly variants, use original file
     begin
-      if variant == :original
-        # For original size, use the avatar directly
-        rails_blob_url(avatar, host: Rails.application.routes.default_url_options[:host])
-      else
-        # For variants, create the variant and get its URL
-        variant_blob = avatar.variant(resize_to_limit: variant_size(variant))
-        rails_blob_url(variant_blob, host: Rails.application.routes.default_url_options[:host])
-      end
+      rails_blob_url(avatar, host: Rails.application.routes.default_url_options[:host])
     rescue => e
       Rails.logger.error "Active Storage URL generation failed: #{e.message}"
       # If Active Storage URL fails, try direct R2 construction as fallback
