@@ -1,5 +1,5 @@
 # app/controllers/api/auth/oauth_controller.rb
-# OAuth controller for expo-auth-session compatibility
+# OAuth controller for expo-auth-session compatibility (API-only Rails)
 
 require 'net/http'
 require 'json'
@@ -7,7 +7,9 @@ require 'json'
 class Api::Auth::OauthController < ApplicationController
   # Skip authentication for OAuth endpoints
   skip_before_action :authenticate_user!, only: [:authorize, :callback, :token_exchange, :session, :logout, :refresh_token]
-  protect_from_forgery with: :null_session
+  
+  # Note: No protect_from_forgery needed in API-only Rails
+  # API controllers inherit from ActionController::API, not ActionController::Base
 
   # ==========================================
   # 🔐 GOOGLE OAUTH AUTHORIZATION
@@ -20,7 +22,8 @@ class Api::Auth::OauthController < ApplicationController
     Rails.logger.info "🚀 OAuth authorization request received"
     Rails.logger.info "Parameters: #{params.inspect}"
     
-    # Store PKCE challenge and other parameters
+    # Store PKCE challenge and other parameters in session
+    # Note: Sessions work in API-only Rails when explicitly enabled
     session[:code_challenge] = params[:code_challenge]
     session[:code_challenge_method] = params[:code_challenge_method] || 'S256'
     session[:state] = params[:state]
@@ -183,7 +186,7 @@ class Api::Auth::OauthController < ApplicationController
   
   def logout
     # Clear session/cookies
-    session.clear
+    session.clear if session.respond_to?(:clear)
     render json: { success: true, message: 'Logged out successfully' }
   end
   
@@ -208,12 +211,14 @@ class Api::Auth::OauthController < ApplicationController
     request = Net::HTTP::Post.new(uri)
     request['Content-Type'] = 'application/x-www-form-urlencoded'
     
+    callback_uri = "#{self.request.base_url}/api/auth/callback"
+    
     request.body = {
       client_id: ENV['GOOGLE_CLIENT_ID'],
       client_secret: ENV['GOOGLE_CLIENT_SECRET'],
       code: authorization_code,
       grant_type: 'authorization_code',
-      redirect_uri: "#{request.base_url}/api/auth/callback"
+      redirect_uri: callback_uri
     }.to_query
     
     response = http.request(request)
@@ -274,8 +279,10 @@ class Api::Auth::OauthController < ApplicationController
         google_image_url: user_info['picture']
       )
       
-      # Add default role
-      user.add_role(:client) if user.persisted? && user.roles.blank?
+      # Add default role if user has roles system
+      if user.persisted? && user.respond_to?(:add_role) && user.roles.blank?
+        user.add_role(:client)
+      end
       
       Rails.logger.info "✅ Created new user: #{user.email}"
     end
@@ -287,8 +294,8 @@ class Api::Auth::OauthController < ApplicationController
     payload = {
       user_id: user.id,
       email: user.email,
-      name: user.full_name,
-      role: user.primary_role,
+      name: user_full_name(user),
+      role: user_primary_role(user),
       exp: 24.hours.from_now.to_i
     }
     
@@ -314,7 +321,7 @@ class Api::Auth::OauthController < ApplicationController
         decoded = JWT.decode(token, Rails.application.secret_key_base, true, { algorithm: 'HS256' })
         payload = decoded[0]
         return User.find(payload['user_id'])
-      rescue JWT::DecodeError
+      rescue JWT::DecodeError, ActiveRecord::RecordNotFound
         nil
       end
     end
@@ -329,21 +336,82 @@ class Api::Auth::OauthController < ApplicationController
       email: user.email,
       first_name: user.first_name,
       last_name: user.last_name,
-      full_name: user.full_name,
-      display_name: user.display_name,
-      google_user: user.google_user?,
-      needs_password: user.needs_password?,
+      full_name: user_full_name(user),
+      display_name: user_display_name(user),
+      google_user: user_is_google_user(user),
+      needs_password: user_needs_password(user),
       profile_complete: profile_complete?(user),
-      primary_role: user.primary_role,
-      roles: user.roles.pluck(:name),
-      avatar_url: user.avatar.attached? ? url_for(user.avatar) : user.google_image_url,
-      google_image_url: user.google_image_url
+      primary_role: user_primary_role(user),
+      roles: user_roles(user),
+      avatar_url: user_avatar_url(user),
+      google_image_url: user.respond_to?(:google_image_url) ? user.google_image_url : nil
     }
+  end
+  
+  # Helper methods that safely handle missing methods
+  def user_full_name(user)
+    if user.respond_to?(:full_name)
+      user.full_name
+    else
+      "#{user.first_name} #{user.last_name}".strip
+    end
+  end
+  
+  def user_display_name(user)
+    if user.respond_to?(:display_name)
+      user.display_name
+    else
+      user_full_name(user).present? ? user_full_name(user) : user.email
+    end
+  end
+  
+  def user_is_google_user(user)
+    if user.respond_to?(:google_user?)
+      user.google_user?
+    else
+      user.provider == 'google_oauth2'
+    end
+  end
+  
+  def user_needs_password(user)
+    if user.respond_to?(:needs_password?)
+      user.needs_password?
+    else
+      user.encrypted_password.blank? && user.provider.present?
+    end
+  end
+  
+  def user_primary_role(user)
+    if user.respond_to?(:primary_role)
+      user.primary_role
+    elsif user.respond_to?(:roles)
+      user.roles.first&.name || 'client'
+    else
+      'client'
+    end
+  end
+  
+  def user_roles(user)
+    if user.respond_to?(:roles)
+      user.roles.pluck(:name)
+    else
+      ['client']
+    end
+  end
+  
+  def user_avatar_url(user)
+    if user.respond_to?(:avatar) && user.avatar.attached?
+      url_for(user.avatar)
+    elsif user.respond_to?(:google_image_url)
+      user.google_image_url
+    else
+      nil
+    end
   end
   
   def profile_complete?(user)
     user.first_name.present? && 
     user.last_name.present? && 
-    user.phone_number.present?
+    (user.respond_to?(:phone_number) ? user.phone_number.present? : true)
   end
 end
