@@ -1,3 +1,5 @@
+# config/application.rb - Secure configuration
+
 if defined?(Dotenv)
   require 'dotenv/rails-now'
 end
@@ -15,71 +17,69 @@ require "action_mailbox/engine"
 require "action_text/engine"
 require "action_view/railtie"
 require "action_cable/engine"
-# require "rails/test_unit/railtie"
 
-# Require the gems listed in Gemfile, including any gems
-# you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
 module GltApi
   class Application < Rails::Application
-    # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 7.1
-
-    # Please, add to the `ignore` list any other `lib` subdirectories that do
-    # not contain `.rb` files, or that should not be reloaded or eager loaded.
-    # Common ones are `templates`, `generators`, or `middleware`, for example.
     config.autoload_lib(ignore: %w(assets tasks))
-
-    # Configuration for the application, engines, and railties goes here.
-    #
-    # These settings can be overridden in specific environments using the files
-    # in config/environments, which are processed later.
-    #
-    # config.time_zone = "Central Time (US & Canada)"
-    # config.eager_load_paths << Rails.root.join("extras")
-
-    # Only loads a smaller set of middleware suitable for API only apps.
-    # Middleware like session, flash, cookies can be added back manually.
-    # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # ===========================================
+    # 🔒 SECURE SSL CONFIGURATION
+    # ===========================================
+    
+    # Force SSL in production (Render provides SSL certificates)
+    config.force_ssl = Rails.env.production?
+    
+    # Secure headers configuration
+    if Rails.env.production?
+      config.ssl_options = {
+        redirect: { exclude: ->(request) { request.path.start_with?('/health') } },
+        secure_cookies: true,
+        hsts: {
+          expires: 1.year,
+          subdomains: true,
+          preload: true
+        }
+      }
+    end
 
     # ===========================================
     # 🔐 SESSION CONFIGURATION FOR OAUTH
     # ===========================================
-    # Add sessions back for OAuth while keeping API-only mode
-    # Sessions will be used for OAuth flow, JWT for everything else
     
     config.session_store :cookie_store, 
       key: '_glt_api_session',
-      secure: Rails.env.production?,
+      secure: Rails.env.production?,  # HTTPS-only cookies in production
       httponly: true,
-      same_site: :lax
+      same_site: :lax,
+      expire_after: 24.hours
 
-    # Add session middleware back (required for OmniAuth)
+    # Add session middleware
     config.middleware.use ActionDispatch::Cookies
     config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
 
     # ===========================================
-    # ⚙️ CORS CONFIGURATION - FIXED
+    # 🌐 SECURE CORS CONFIGURATION
     # ===========================================
     
     config.middleware.insert_before 0, Rack::Cors do
       allow do
         if Rails.env.production?
-          # Production: Include your actual Render URL
+          # Production: Use HTTPS URLs only
           origins [
-            'https://glt-53x8.onrender.com',  # Your actual Render URL
-            'https://yourapp.com',            # Your custom domain (if you have one)
-            'https://www.yourapp.com'         # Your custom domain (if you have one)
+            'https://glt-53x8.onrender.com',     # Your Render URL with HTTPS
+            'https://yourapp.com',               # Your custom domain (if you have one)
+            'https://www.yourapp.com'            # Your custom domain (if you have one)
           ]
         else
           # Development: Allow localhost
           origins [
             'http://localhost:3000', 
             'http://127.0.0.1:3000', 
-            'http://0.0.0.0:3000',
-            'http://192.168.1.100:3000'  # Add your local IP if needed
+            'http://0.0.0.0:3000'
           ]
         end
         
@@ -91,19 +91,32 @@ module GltApi
     end
 
     # ===========================================
-    # 🔒 SSL CONFIGURATION - DISABLED FOR DEBUGGING
+    # 🛡️ SECURITY HEADERS
     # ===========================================
     
-    # Temporarily disable force SSL to debug
-    # Re-enable this once OAuth is working
-    # config.force_ssl = Rails.env.production?
-    config.force_ssl = false
+    if Rails.env.production?
+      # Security headers middleware
+      config.middleware.use Rack::Attack if defined?(Rack::Attack)
+      
+      # Content Security Policy
+      config.content_security_policy do |policy|
+        policy.default_src :self
+        policy.font_src    :self, :data
+        policy.img_src     :self, :data, :https
+        policy.object_src  :none
+        policy.script_src  :self
+        policy.style_src   :self, :unsafe_inline
+        policy.connect_src :self, :https
+      end
+      
+      config.content_security_policy_nonce_generator = ->(request) { SecureRandom.base64(16) }
+      config.content_security_policy_nonce_directives = %w(script-src)
+    end
 
     # ===========================================
     # 🛠️ GENERATORS CONFIGURATION
     # ===========================================
     
-    # Configure generators for API
     config.generators do |g|
       g.test_framework :rspec
       g.skip_routes true
