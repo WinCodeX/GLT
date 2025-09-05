@@ -61,33 +61,48 @@ module GltApi
     config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
 
     # ===========================================
-    # ⚙️ ADDITIONAL API CONFIGURATIONS
+    # ⚙️ CORS CONFIGURATION - FIXED
     # ===========================================
     
-    # CORS configuration - Fixed for development
     config.middleware.insert_before 0, Rack::Cors do
       allow do
         if Rails.env.production?
-          # Production: Use specific origins with credentials
-          origins ['https://yourapp.com', 'https://www.yourapp.com']
-          resource '*', 
-            headers: :any,
-            methods: [:get, :post, :put, :patch, :delete, :options, :head],
-            credentials: true
+          # Production: Include your actual Render URL
+          origins [
+            'https://glt-53x8.onrender.com',  # Your actual Render URL
+            'https://yourapp.com',            # Your custom domain (if you have one)
+            'https://www.yourapp.com'         # Your custom domain (if you have one)
+          ]
         else
-          # Development: Use specific localhost origins or disable credentials
-          origins ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000']
-          resource '*', 
-            headers: :any,
-            methods: [:get, :post, :put, :patch, :delete, :options, :head],
-            credentials: true
+          # Development: Allow localhost
+          origins [
+            'http://localhost:3000', 
+            'http://127.0.0.1:3000', 
+            'http://0.0.0.0:3000',
+            'http://192.168.1.100:3000'  # Add your local IP if needed
+          ]
         end
+        
+        resource '*', 
+          headers: :any,
+          methods: [:get, :post, :put, :patch, :delete, :options, :head],
+          credentials: true
       end
     end
 
-    # Force SSL in production
-    config.force_ssl = Rails.env.production?
+    # ===========================================
+    # 🔒 SSL CONFIGURATION - DISABLED FOR DEBUGGING
+    # ===========================================
+    
+    # Temporarily disable force SSL to debug
+    # Re-enable this once OAuth is working
+    # config.force_ssl = Rails.env.production?
+    config.force_ssl = false
 
+    # ===========================================
+    # 🛠️ GENERATORS CONFIGURATION
+    # ===========================================
+    
     # Configure generators for API
     config.generators do |g|
       g.test_framework :rspec
