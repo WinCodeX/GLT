@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_01_081646) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_05_184753) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -136,6 +136,31 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_01_081646) do
     t.index ["is_system"], name: "index_messages_on_is_system"
     t.index ["message_type"], name: "index_messages_on_message_type"
     t.index ["user_id"], name: "index_messages_on_user_id"
+  end
+
+  create_table "mpesa_transactions", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "package_id", null: false
+    t.string "checkout_request_id", null: false
+    t.string "merchant_request_id", null: false
+    t.string "phone_number", null: false
+    t.decimal "amount", precision: 10, scale: 2, null: false
+    t.string "status", default: "pending", null: false
+    t.integer "result_code"
+    t.text "result_desc"
+    t.string "mpesa_receipt_number"
+    t.string "callback_phone_number"
+    t.decimal "callback_amount", precision: 10, scale: 2
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["checkout_request_id"], name: "index_mpesa_transactions_on_checkout_request_id", unique: true
+    t.index ["merchant_request_id"], name: "index_mpesa_transactions_on_merchant_request_id"
+    t.index ["mpesa_receipt_number"], name: "index_mpesa_transactions_on_mpesa_receipt_number"
+    t.index ["package_id", "status"], name: "index_mpesa_transactions_on_package_id_and_status"
+    t.index ["package_id"], name: "index_mpesa_transactions_on_package_id"
+    t.index ["status"], name: "index_mpesa_transactions_on_status"
+    t.index ["user_id", "status"], name: "index_mpesa_transactions_on_user_id_and_status"
+    t.index ["user_id"], name: "index_mpesa_transactions_on_user_id"
   end
 
   create_table "package_print_logs", force: :cascade do |t|
@@ -311,6 +336,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_01_081646) do
   add_foreign_key "conversation_participants", "users"
   add_foreign_key "messages", "conversations"
   add_foreign_key "messages", "users"
+  add_foreign_key "mpesa_transactions", "packages"
+  add_foreign_key "mpesa_transactions", "users"
   add_foreign_key "package_print_logs", "packages"
   add_foreign_key "package_print_logs", "users"
   add_foreign_key "package_tracking_events", "packages"
