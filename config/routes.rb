@@ -1,4 +1,4 @@
-# config/routes.rb - Fixed OAuth routing
+# config/routes.rb - Complete OAuth routing for expo-auth-session
 
 Rails.application.routes.draw do
   # ==========================================
@@ -16,14 +16,30 @@ Rails.application.routes.draw do
       registrations: 'api/v1/registrations',
       omniauth_callbacks: 'api/v1/omniauth_callbacks'
     },
-defaults: { format: :json }  
+    defaults: { format: :json }  
   
   devise_scope :user do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
   end
 
   # ==========================================
-  # 🔐 FIXED GOOGLE OAUTH ROUTES
+  # 🔐 NEW: EXPO-AUTH-SESSION OAUTH ROUTES
+  # ==========================================
+  
+  namespace :api do
+    namespace :auth do
+      # OAuth 2.0 endpoints for expo-auth-session
+      get 'authorize', to: 'oauth#authorize'           # Initial OAuth authorization
+      get 'callback', to: 'oauth#callback'             # Google OAuth callback
+      post 'token', to: 'oauth#token_exchange'         # Token exchange endpoint
+      get 'session', to: 'oauth#session'               # Get current session
+      post 'logout', to: 'oauth#logout'                # Logout endpoint
+      post 'refresh', to: 'oauth#refresh_token'        # Refresh token endpoint
+    end
+  end
+
+  # ==========================================
+  # 🔐 LEGACY OAUTH ROUTES (Keep for backward compatibility)
   # ==========================================
   
   namespace :api, defaults: { format: :json } do
@@ -40,7 +56,7 @@ defaults: { format: :json }
   end
 
   # ==========================================
-  # 🔗 OMNIAUTH CALLBACK ROUTES (Standard)
+  # 🔗 STANDARD OMNIAUTH CALLBACK ROUTES
   # ==========================================
   
   # Standard omniauth routes (Rails will redirect here from Google)
@@ -61,7 +77,7 @@ defaults: { format: :json }
   end
 
   # ==========================================
-  # 📱 API v1 - Main Application Routes (Your existing routes continue here...)
+  # 📱 API v1 - Main Application Routes
   # ==========================================
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
@@ -72,15 +88,14 @@ defaults: { format: :json }
       # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
-     get 'me', to: 'me#show', defaults: { format: :json }
+      get 'me', to: 'me#show', defaults: { format: :json }
 
-       resource :me, only: [:show, :update] do
+      resource :me, only: [:show, :update] do
         patch :update_avatar, on: :collection
         delete :destroy_avatar, on: :collection
       end
       get 'users/:user_id/avatar', to: 'avatars#show'
       
-
       put 'me/avatar', to: 'me#update_avatar'
       delete 'me/avatar', to: 'me#destroy_avatar'
 
@@ -129,7 +144,7 @@ defaults: { format: :json }
         member do
           get :validate
           get :qr_code
-         get :qr, to: 'packages#qr_code'  # Add this line
+          get :qr, to: 'packages#qr_code'
           get :thermal_qr_code
           get :qr_comparison
           get :tracking_page
