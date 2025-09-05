@@ -52,6 +52,14 @@ Rails.application.routes.draw do
       
       # Legacy Google login route (maintain compatibility) - keep in sessions
       post :google_login, to: 'sessions#google_login'
+
+
+scope :mpesa do
+      post 'stk_push', to: 'mpesa#stk_push'
+      post 'query_status', to: 'mpesa#query_status'
+      post 'callback', to: 'mpesa#callback'
+      post 'timeout', to: 'mpesa#timeout'
+    end
     end
   end
 
