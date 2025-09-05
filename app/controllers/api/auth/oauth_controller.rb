@@ -1,5 +1,5 @@
 # app/controllers/api/auth/oauth_controller.rb
-# OAuth controller for expo-auth-session compatibility (API-only Rails)
+# OAuth controller using Devise-JWT for token management
 
 require 'net/http'
 require 'json'
@@ -7,23 +7,16 @@ require 'json'
 class Api::Auth::OauthController < ApplicationController
   # Skip authentication for OAuth endpoints
   skip_before_action :authenticate_user!, only: [:authorize, :callback, :token_exchange, :session, :logout, :refresh_token]
-  
-  # Note: No protect_from_forgery needed in API-only Rails
-  # API controllers inherit from ActionController::API, not ActionController::Base
 
   # ==========================================
   # 🔐 GOOGLE OAUTH AUTHORIZATION
   # ==========================================
   
   def authorize
-    # This is the initial OAuth authorization endpoint
-    # expo-auth-session will redirect here first
-    
     Rails.logger.info "🚀 OAuth authorization request received"
     Rails.logger.info "Parameters: #{params.inspect}"
     
     # Store PKCE challenge and other parameters in session
-    # Note: Sessions work in API-only Rails when explicitly enabled
     session[:code_challenge] = params[:code_challenge]
     session[:code_challenge_method] = params[:code_challenge_method] || 'S256'
     session[:state] = params[:state]
@@ -64,7 +57,6 @@ class Api::Auth::OauthController < ApplicationController
   # ==========================================
   
   def callback
-    # Google redirects back here with authorization code
     Rails.logger.info "📥 OAuth callback received"
     Rails.logger.info "Callback params: #{params.inspect}"
     
@@ -90,8 +82,8 @@ class Api::Auth::OauthController < ApplicationController
       user = find_or_create_user_from_google(user_info)
       
       if user.persisted?
-        # Generate your app's JWT tokens
-        access_token = generate_jwt_token(user)
+        # Generate JWT token using Devise-JWT
+        access_token = generate_devise_jwt_token(user)
         
         # Store authorization code temporarily for token exchange
         session[:temp_auth_code] = SecureRandom.urlsafe_base64(32)
@@ -123,7 +115,6 @@ class Api::Auth::OauthController < ApplicationController
   # ==========================================
   
   def token_exchange
-    # expo-auth-session calls this to exchange the authorization code for tokens
     Rails.logger.info "🔄 Token exchange request"
     Rails.logger.info "Request params: #{params.inspect}"
     
@@ -150,7 +141,7 @@ class Api::Auth::OauthController < ApplicationController
     end
     
     user = User.find(user_id)
-    refresh_token = generate_refresh_token(user)
+    refresh_token = generate_devise_jwt_token(user) # Generate another token as refresh token
     
     # Clear temporary session data
     session.delete(:temp_auth_code)
@@ -174,8 +165,8 @@ class Api::Auth::OauthController < ApplicationController
   # ==========================================
   
   def session
-    # Get current user session (for web)
-    user = current_user_from_session
+    # Get current user session
+    user = current_user_from_token
     
     if user
       render json: serialize_user(user)
@@ -185,14 +176,14 @@ class Api::Auth::OauthController < ApplicationController
   end
   
   def logout
-    # Clear session/cookies
+    # Clear session
     session.clear if session.respond_to?(:clear)
     render json: { success: true, message: 'Logged out successfully' }
   end
   
   def refresh_token
-    # Handle token refresh (implement if needed)
-    render json: { error: 'Refresh token endpoint not implemented' }, status: :not_implemented
+    # Handle token refresh using Devise-JWT mechanisms
+    render json: { error: 'Use Devise JWT refresh mechanisms' }, status: :not_implemented
   end
   
   private
@@ -290,43 +281,55 @@ class Api::Auth::OauthController < ApplicationController
     user
   end
   
-  def generate_jwt_token(user)
-    payload = {
-      user_id: user.id,
-      email: user.email,
-      name: user_full_name(user),
-      role: user_primary_role(user),
-      exp: 24.hours.from_now.to_i
-    }
-    
-    JWT.encode(payload, Rails.application.secret_key_base, 'HS256')
+  # ==========================================
+  # 🔐 DEVISE-JWT TOKEN GENERATION
+  # ==========================================
+  
+  def generate_devise_jwt_token(user)
+    # Use Devise-JWT's token generation mechanism
+    if defined?(Warden::JWTAuth::UserEncoder)
+      # Generate JWT token using devise-jwt
+      token, _payload = Warden::JWTAuth::UserEncoder.new.call(user, :user, nil)
+      token
+    else
+      # Fallback if Devise-JWT isn't properly configured
+      Rails.logger.warn "⚠️ Devise-JWT not found, using fallback token generation"
+      payload = {
+        user_id: user.id,
+        email: user.email,
+        name: user_full_name(user),
+        role: user_primary_role(user),
+        exp: 24.hours.from_now.to_i
+      }
+      
+      # Use the same secret as Devise-JWT
+      secret = ENV['DEVISE_JWT_SECRET_KEY'] || Rails.application.secret_key_base
+      JWT.encode(payload, secret, 'HS256')
+    end
   end
   
-  def generate_refresh_token(user)
-    payload = {
-      user_id: user.id,
-      type: 'refresh',
-      exp: 30.days.from_now.to_i
-    }
-    
-    JWT.encode(payload, Rails.application.secret_key_base, 'HS256')
-  end
-  
-  def current_user_from_session
+  def current_user_from_token
     # Try to get user from JWT token in Authorization header
     auth_header = request.headers['Authorization']
     if auth_header&.start_with?('Bearer ')
       token = auth_header.split(' ')[1]
       begin
-        decoded = JWT.decode(token, Rails.application.secret_key_base, true, { algorithm: 'HS256' })
-        payload = decoded[0]
-        return User.find(payload['user_id'])
+        # Use Devise-JWT's token verification
+        if defined?(Warden::JWTAuth::UserDecoder)
+          payload = Warden::JWTAuth::UserDecoder.new.call(token, :user, nil)
+          return User.find(payload['sub'])
+        else
+          # Fallback token verification
+          secret = ENV['DEVISE_JWT_SECRET_KEY'] || Rails.application.secret_key_base
+          decoded = JWT.decode(token, secret, true, { algorithm: 'HS256' })
+          payload = decoded[0]
+          return User.find(payload['user_id'])
+        end
       rescue JWT::DecodeError, ActiveRecord::RecordNotFound
         nil
       end
     end
     
-    # Fallback to session-based authentication
     nil
   end
   
