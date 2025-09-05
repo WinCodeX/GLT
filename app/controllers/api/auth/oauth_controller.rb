@@ -1,5 +1,5 @@
 # app/controllers/api/auth/oauth_controller.rb
-# Fixed OAuth controller with proper session handling
+# Fixed to prevent double render/redirect errors
 
 class Api::Auth::OauthController < ApplicationController
   skip_before_action :authenticate_user!, only: [:authorize, :callback, :token_exchange, :session, :logout, :refresh_token]
@@ -11,73 +11,117 @@ class Api::Auth::OauthController < ApplicationController
     begin
       # Check if sessions are working
       unless session_available?
-        return render json: { 
+        render json: { 
           error: 'Sessions not available',
           message: 'API-only Rails session configuration issue' 
         }, status: :internal_server_error
+        return # IMPORTANT: explicit return after render
       end
-      
-      # Store parameters safely with string keys
-      store_oauth_params
       
       # Check environment variables
       unless oauth_configured?
-        return render json: { 
+        render json: { 
           error: 'OAuth not configured', 
           missing: missing_env_vars 
         }, status: :internal_server_error
+        return # IMPORTANT: explicit return after render
       end
+      
+      # Store parameters safely
+      store_oauth_params
       
       # Build Google OAuth URL
       google_auth_url = build_google_auth_url
       
       Rails.logger.info "🔗 Redirecting to Google: #{google_auth_url}"
       
-      # Redirect to Google OAuth
+      # Only redirect - no render after this point
       redirect_to google_auth_url, allow_other_host: true
       
     rescue => e
       Rails.logger.error "❌ OAuth authorize error: #{e.message}"
       Rails.logger.error e.backtrace.first(5).join("\n")
       
-      render json: { 
-        error: 'OAuth authorization failed',
-        details: e.message,
-        type: e.class.name
-      }, status: :internal_server_error
+      # Only render error if we haven't already rendered/redirected
+      unless performed?
+        render json: { 
+          error: 'OAuth authorization failed',
+          details: e.message,
+          type: e.class.name
+        }, status: :internal_server_error
+      end
     end
   end
   
   def callback
     Rails.logger.info "📥 OAuth callback received"
+    Rails.logger.info "Callback params: #{params.except(:controller, :action).inspect}"
+    
+    # Validate state parameter
+    if params[:state] != session['oauth_state']
+      render json: { 
+        error: 'Invalid state parameter',
+        received_state: params[:state],
+        expected_state: session['oauth_state']
+      }, status: :bad_request
+      return
+    end
+    
+    # Handle OAuth errors from Google
+    if params[:error].present?
+      render json: { 
+        error: 'Google OAuth error',
+        error_type: params[:error],
+        error_description: params[:error_description]
+      }, status: :bad_request
+      return
+    end
+    
+    # Success response
     render json: { 
-      message: "OAuth callback received",
-      params: params.except(:controller, :action)
+      message: "OAuth callback successful",
+      code: params[:code].present? ? "received" : "missing",
+      state: "validated"
     }
   end
   
   def token_exchange
     Rails.logger.info "🔄 Token exchange request"
-    render json: { message: "Token exchange endpoint working" }
+    render json: { 
+      message: "Token exchange endpoint working",
+      method: request.method,
+      content_type: request.content_type
+    }
   end
   
   def session
-    render json: { message: "Session endpoint working" }
+    render json: { 
+      message: "Session endpoint working",
+      session_available: session_available?,
+      session_id: session.id rescue "unavailable"
+    }
   end
   
   def logout
-    # Clear session safely
     begin
       session.clear if session.respond_to?(:clear)
+      message = "Logout successful - session cleared"
     rescue => e
       Rails.logger.warn "Session clear failed: #{e.message}"
+      message = "Logout completed - session clear failed"
     end
     
-    render json: { message: "Logout successful" }
+    render json: { 
+      message: message,
+      timestamp: Time.current
+    }
   end
   
   def refresh_token
-    render json: { message: "Refresh token endpoint working" }
+    render json: { 
+      message: "Refresh token endpoint working",
+      note: "Not implemented yet"
+    }
   end
   
   private
@@ -92,7 +136,7 @@ class Api::Auth::OauthController < ApplicationController
   
   # Store OAuth parameters safely
   def store_oauth_params
-    # Use string keys instead of symbols to avoid type conversion issues
+    # Use string keys to avoid type conversion issues
     session['code_challenge'] = params[:code_challenge].to_s if params[:code_challenge]
     session['code_challenge_method'] = params[:code_challenge_method].to_s || 'S256'
     session['state'] = params[:state].to_s if params[:state]
