@@ -1,11 +1,11 @@
 # app/controllers/api/auth/oauth_controller.rb
-# Fixed to prevent double render/redirect errors
+# Fixed syntax errors and improved error handling
 
 class Api::Auth::OauthController < ApplicationController
   skip_before_action :authenticate_user!, only: [:authorize, :callback, :token_exchange, :session, :logout, :refresh_token]
   
   def authorize
-    Rails.logger.info "🚀 OAuth authorize endpoint accessed"
+    Rails.logger.info "OAuth authorize endpoint accessed"
     Rails.logger.info "Params: #{params.inspect}"
     
     begin
@@ -15,7 +15,7 @@ class Api::Auth::OauthController < ApplicationController
           error: 'Sessions not available',
           message: 'API-only Rails session configuration issue' 
         }, status: :internal_server_error
-        return # IMPORTANT: explicit return after render
+        return
       end
       
       # Check environment variables
@@ -24,7 +24,7 @@ class Api::Auth::OauthController < ApplicationController
           error: 'OAuth not configured', 
           missing: missing_env_vars 
         }, status: :internal_server_error
-        return # IMPORTANT: explicit return after render
+        return
       end
       
       # Store parameters safely
@@ -33,13 +33,13 @@ class Api::Auth::OauthController < ApplicationController
       # Build Google OAuth URL
       google_auth_url = build_google_auth_url
       
-      Rails.logger.info "🔗 Redirecting to Google: #{google_auth_url}"
+      Rails.logger.info "Redirecting to Google: #{google_auth_url}"
       
       # Only redirect - no render after this point
       redirect_to google_auth_url, allow_other_host: true
       
     rescue => e
-      Rails.logger.error "❌ OAuth authorize error: #{e.message}"
+      Rails.logger.error "OAuth authorize error: #{e.message}"
       Rails.logger.error e.backtrace.first(5).join("\n")
       
       # Only render error if we haven't already rendered/redirected
@@ -54,7 +54,7 @@ class Api::Auth::OauthController < ApplicationController
   end
   
   def callback
-    Rails.logger.info "📥 OAuth callback received"
+    Rails.logger.info "OAuth callback received"
     Rails.logger.info "Callback params: #{params.except(:controller, :action).inspect}"
     
     # Validate state parameter
@@ -86,7 +86,7 @@ class Api::Auth::OauthController < ApplicationController
   end
   
   def token_exchange
-    Rails.logger.info "🔄 Token exchange request"
+    Rails.logger.info "Token exchange request"
     render json: { 
       message: "Token exchange endpoint working",
       method: request.method,
@@ -95,10 +95,13 @@ class Api::Auth::OauthController < ApplicationController
   end
   
   def session
+    # Get session ID safely
+    session_id = get_session_id
+    
     render json: { 
       message: "Session endpoint working",
       session_available: session_available?,
-      session_id: session.id rescue "unavailable"
+      session_id: session_id
     }
   end
   
@@ -134,6 +137,14 @@ class Api::Auth::OauthController < ApplicationController
     false
   end
   
+  # Get session ID safely
+  def get_session_id
+    session.id
+  rescue => e
+    Rails.logger.warn "Could not get session ID: #{e.message}"
+    "unavailable"
+  end
+  
   # Store OAuth parameters safely
   def store_oauth_params
     # Use string keys to avoid type conversion issues
@@ -147,7 +158,7 @@ class Api::Auth::OauthController < ApplicationController
     oauth_state = SecureRandom.urlsafe_base64(32)
     session['oauth_state'] = oauth_state
     
-    Rails.logger.info "✅ OAuth params stored in session"
+    Rails.logger.info "OAuth params stored in session"
   end
   
   # Check if OAuth is properly configured
