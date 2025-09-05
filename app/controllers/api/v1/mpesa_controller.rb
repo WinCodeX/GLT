@@ -3,7 +3,6 @@ module Api
   module V1
     class MpesaController < ApplicationController
       before_action :authenticate_user!, except: [:callback, :timeout]
-      skip_before_action :verify_authenticity_token, only: [:callback, :timeout]
 
       # POST /api/v1/mpesa/stk_push
       def stk_push
