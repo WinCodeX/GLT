@@ -34,6 +34,7 @@
             color: white;
             padding: 30px;
             text-align: center;
+            position: relative;
         }
 
         .header h1 {
@@ -45,6 +46,25 @@
         .header p {
             font-size: 1.1rem;
             opacity: 0.9;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
         }
 
         .content {
@@ -61,6 +81,14 @@
         @media (max-width: 768px) {
             .payment-sections {
                 grid-template-columns: 1fr;
+            }
+            .logout-btn {
+                position: static;
+                display: block;
+                margin-top: 15px;
+                width: fit-content;
+                margin-left: auto;
+                margin-right: auto;
             }
         }
 
@@ -318,6 +346,31 @@
         .polling-status.show {
             display: block;
         }
+
+        .debug-section {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .debug-section h4 {
+            color: #374151;
+            margin-bottom: 10px;
+            font-family: inherit;
+        }
+
+        .debug-log {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 10px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
@@ -325,6 +378,7 @@
         <div class="header">
             <h1>💳 M-Pesa Payment Portal</h1>
             <p>Secure payments for your packages</p>
+            <a href="<%= sign_out_path %>" method="delete" class="logout-btn">Sign Out</a>
         </div>
 
         <div class="content">
@@ -414,6 +468,16 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Debug Section (Development Only) -->
+            <% if Rails.env.development? %>
+            <div class="debug-section">
+                <h4>🔧 Debug Information</h4>
+                <div id="debugLog" class="debug-log">
+                    <div>Debug log initialized...</div>
+                </div>
+            </div>
+            <% end %>
         </div>
     </div>
 
@@ -423,14 +487,11 @@
         
         class MpesaPaymentPortal {
             constructor() {
-                this.token = '<%= session[:auth_token] if session[:auth_token] %>' || 
-                           localStorage.getItem('auth_token') || 
-                           sessionStorage.getItem('auth_token');
-                
                 this.pollingInterval = null;
                 this.initializeElements();
                 this.loadTransactions();
                 this.bindEvents();
+                this.debugLog('Portal initialized');
             }
 
             initializeElements() {
@@ -441,6 +502,18 @@
                 this.packageSelect = document.getElementById('packageSelect');
                 this.transactionsList = document.getElementById('transactionsList');
                 this.pollingStatus = document.getElementById('pollingStatus');
+                this.debugLogElement = document.getElementById('debugLog');
+            }
+
+            debugLog(message) {
+                console.log(message);
+                if (this.debugLogElement) {
+                    const timestamp = new Date().toLocaleTimeString();
+                    const logEntry = document.createElement('div');
+                    logEntry.textContent = `[${timestamp}] ${message}`;
+                    this.debugLogElement.appendChild(logEntry);
+                    this.debugLogElement.scrollTop = this.debugLogElement.scrollHeight;
+                }
             }
 
             async makeAuthenticatedRequest(url, method = 'GET', body = null) {
@@ -450,29 +523,42 @@
                     'X-CSRF-Token': csrfToken
                 };
 
-                // Add authorization header if token exists
-                if (this.token) {
-                    headers['Authorization'] = `Bearer ${this.token}`;
-                }
-
-                const options = { method, headers };
+                // For web session authentication, we rely on cookies (no Authorization header needed)
+                const options = { 
+                    method, 
+                    headers,
+                    credentials: 'same-origin' // Include cookies for session authentication
+                };
 
                 if (body) {
                     options.body = JSON.stringify(body);
                 }
 
+                this.debugLog(`Making ${method} request to ${url}`);
+                if (body) this.debugLog(`Request body: ${JSON.stringify(body)}`);
+
                 const response = await fetch(url, options);
-                return response.json();
+                const data = await response.json();
+                
+                this.debugLog(`Response status: ${response.status}`);
+                this.debugLog(`Response data: ${JSON.stringify(data)}`);
+                
+                return data;
             }
 
             async loadTransactions() {
                 try {
+                    this.debugLog('Loading transactions...');
                     const response = await this.makeAuthenticatedRequest('/mpesa_payments/transactions');
                     
                     if (response.success) {
                         this.renderTransactions(response.transactions);
+                        this.debugLog(`Loaded ${response.transactions.length} transactions`);
+                    } else {
+                        this.debugLog('Failed to load transactions: ' + JSON.stringify(response));
                     }
                 } catch (error) {
+                    this.debugLog('Transaction loading error: ' + error.message);
                     console.error('Failed to load transactions:', error);
                     this.transactionsList.innerHTML = '<div style="color: #ef4444; text-align: center; padding: 20px;">Failed to load transactions</div>';
                 }
@@ -510,18 +596,30 @@
                 const selectedOption = e.target.selectedOptions[0];
                 if (selectedOption && selectedOption.dataset.cost) {
                     document.getElementById('amount').value = selectedOption.dataset.cost;
+                    this.debugLog(`Package selected: ${selectedOption.textContent.trim()}`);
                 }
             }
 
             async handleStkPush(e) {
                 e.preventDefault();
                 
-                const phoneNumber = '+254' + document.getElementById('phoneNumber').value;
+                const phoneNumber = '+254' + document.getElementById('phoneNumber').value.trim();
                 const amount = document.getElementById('amount').value;
                 const packageId = this.packageSelect.value;
 
+                this.debugLog(`STK Push attempt - Phone: ${phoneNumber}, Amount: ${amount}, Package: ${packageId}`);
+
                 if (!packageId) {
                     this.showStatus('Please select a package', 'error');
+                    this.debugLog('STK Push failed: No package selected');
+                    return;
+                }
+
+                // Validate phone number format
+                const phoneRegex = /^\+254[17]\d{8}$/;
+                if (!phoneRegex.test(phoneNumber)) {
+                    this.showStatus('Please enter a valid Kenyan phone number (format: 712345678)', 'error');
+                    this.debugLog('STK Push failed: Invalid phone number format');
                     return;
                 }
 
@@ -529,15 +627,19 @@
                 this.showStatus('Initiating M-Pesa payment...', 'pending');
 
                 try {
-                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/stk_push', 'POST', {
+                    const requestData = {
                         phone_number: phoneNumber,
                         amount: parseFloat(amount),
                         package_id: packageId
-                    });
+                    };
+
+                    this.debugLog('Sending STK Push request...');
+                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/stk_push', 'POST', requestData);
 
                     if (response.status === 'success') {
                         this.showStatus(response.message, 'success');
                         document.getElementById('checkoutRequestId').value = response.checkout_request_id;
+                        this.debugLog(`STK Push successful: ${response.checkout_request_id}`);
                         
                         // Start polling for status
                         this.startPolling(response.checkout_request_id);
@@ -546,10 +648,12 @@
                         setTimeout(() => this.loadTransactions(), 1000);
                     } else {
                         this.showStatus(response.message || 'Payment initiation failed', 'error');
+                        this.debugLog(`STK Push failed: ${response.message}`);
                     }
                 } catch (error) {
+                    this.debugLog(`STK Push error: ${error.message}`);
                     console.error('STK Push error:', error);
-                    this.showStatus('Payment request failed. Please try again.', 'error');
+                    this.showStatus('Payment request failed. Please check your internet connection and try again.', 'error');
                 }
 
                 this.setButtonLoading('stkButton', false);
@@ -558,7 +662,14 @@
             async handleQueryStatus(e) {
                 e.preventDefault();
                 
-                const checkoutRequestId = document.getElementById('checkoutRequestId').value;
+                const checkoutRequestId = document.getElementById('checkoutRequestId').value.trim();
+
+                if (!checkoutRequestId) {
+                    this.showStatus('Please enter a checkout request ID', 'error');
+                    return;
+                }
+
+                this.debugLog(`Querying status for: ${checkoutRequestId}`);
 
                 this.setButtonLoading('queryButton', true);
                 this.showStatus('Checking payment status...', 'pending');
@@ -577,12 +688,16 @@
                                       response.status === 'completed' ? 'success' : 
                                       response.status === 'failed' ? 'error' : 'pending');
                         
+                        this.debugLog(`Status check result: ${response.status} - ${response.result_desc}`);
+                        
                         // Reload transactions
                         await this.loadTransactions();
                     } else {
                         this.showStatus(response.message || 'Status check failed', 'error');
+                        this.debugLog(`Status check failed: ${response.message}`);
                     }
                 } catch (error) {
+                    this.debugLog(`Status check error: ${error.message}`);
                     console.error('Query status error:', error);
                     this.showStatus('Failed to check status. Please try again.', 'error');
                 }
@@ -592,6 +707,7 @@
 
             startPolling(checkoutRequestId) {
                 this.pollingStatus.classList.add('show');
+                this.debugLog(`Starting polling for: ${checkoutRequestId}`);
                 
                 this.pollingInterval = setInterval(async () => {
                     try {
@@ -599,18 +715,23 @@
                             checkout_request_id: checkoutRequestId
                         });
 
+                        this.debugLog(`Polling result: ${JSON.stringify(response)}`);
+
                         if (response.status === 'success' && response.status !== 'pending') {
                             this.stopPolling();
                             
                             if (response.status === 'completed') {
                                 this.showStatus('✅ Payment completed successfully!', 'success');
+                                this.debugLog('Payment completed successfully');
                             } else {
                                 this.showStatus('❌ Payment failed', 'error');
+                                this.debugLog('Payment failed');
                             }
                             
                             await this.loadTransactions();
                         }
                     } catch (error) {
+                        this.debugLog(`Polling error: ${error.message}`);
                         console.error('Polling error:', error);
                     }
                 }, 3000); // Poll every 3 seconds
@@ -623,6 +744,7 @@
                 if (this.pollingInterval) {
                     clearInterval(this.pollingInterval);
                     this.pollingInterval = null;
+                    this.debugLog('Polling stopped');
                 }
                 this.pollingStatus.classList.remove('show');
             }
