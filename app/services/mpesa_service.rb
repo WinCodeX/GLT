@@ -6,9 +6,13 @@ class MpesaService
   require 'base64'
   require 'json'
 
-  BASE_URL = Rails.env.production? ? 
-    'https://api.safaricom.co.ke' : 
-    'https://sandbox.safaricom.co.ke'
+  # Force sandbox for now since we're using sandbox credentials
+  BASE_URL = 'https://sandbox.safaricom.co.ke'
+  
+  # Later when you have production credentials, use:
+  # BASE_URL = Rails.env.production? ? 
+  #   'https://api.safaricom.co.ke' : 
+  #   'https://sandbox.safaricom.co.ke'
 
   def self.initiate_stk_push(phone_number:, amount:, account_reference:, transaction_desc:)
     begin
@@ -136,6 +140,10 @@ class MpesaService
       cached_token = Rails.cache.read(cache_key)
       return cached_token if cached_token
 
+      # Debug: Log environment and URL being used
+      Rails.logger.info "Rails Environment: #{Rails.env}"
+      Rails.logger.info "BASE_URL: #{BASE_URL}"
+      
       # Debug: Log the credentials being used
       Rails.logger.info "Consumer Key: #{consumer_key}"
       Rails.logger.info "Consumer Secret: #{consumer_secret[0..5]}..." # Only log first 6 chars for security
@@ -145,6 +153,8 @@ class MpesaService
 
       # Use GET request to match working Postman request
       url = URI("#{BASE_URL}/oauth/v1/generate?grant_type=client_credentials")
+      
+      Rails.logger.info "Full URL being requested: #{url}"
       
       https = Net::HTTP.new(url.host, url.port)
       https.use_ssl = true
