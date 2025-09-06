@@ -22,6 +22,14 @@ Rails.application.routes.draw do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
   end
 
+
+
+resources :mpesa_payments, only: [:index] do
+    collection do
+      get :transactions
+    end
+  end
+
   # ==========================================
   # 🔐 NEW: EXPO-AUTH-SESSION OAUTH ROUTES
   # ==========================================
