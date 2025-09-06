@@ -1,6 +1,10 @@
 # app/services/mpesa_service.rb
 class MpesaService
   include HTTParty
+  require 'net/http'
+  require 'uri'
+  require 'base64'
+  require 'json'
 
   BASE_URL = Rails.env.production? ? 
     'https://api.safaricom.co.ke' : 
@@ -103,6 +107,26 @@ class MpesaService
     end
   end
 
+  # Debug method to test environment variables
+  def self.test_environment
+    Rails.logger.info "🔍 Testing M-Pesa Environment Variables:"
+    Rails.logger.info "Rails Environment: #{Rails.env}"
+    Rails.logger.info "All ENV keys: #{ENV.keys.count} total"
+    Rails.logger.info "M-Pesa related ENV keys: #{ENV.keys.select { |k| k.include?('MPESA') }}"
+    
+    begin
+      consumer_key
+      consumer_secret  
+      business_short_code
+      passkey
+      Rails.logger.info "✅ All M-Pesa environment variables loaded successfully"
+      return true
+    rescue => e
+      Rails.logger.error "❌ Environment variable error: #{e.message}"
+      return false
+    end
+  end
+
   private
 
   def self.get_access_token
@@ -112,59 +136,101 @@ class MpesaService
       cached_token = Rails.cache.read(cache_key)
       return cached_token if cached_token
 
+      # Debug: Log the credentials being used
+      Rails.logger.info "Consumer Key: #{consumer_key}"
+      Rails.logger.info "Consumer Secret: #{consumer_secret[0..5]}..." # Only log first 6 chars for security
+      
       credentials = Base64.strict_encode64("#{consumer_key}:#{consumer_secret}")
+      Rails.logger.info "Encoded credentials: #{credentials[0..20]}..." # Only log first 20 chars
 
-      # FIXED: Changed from GET to POST to match Safaricom's example
-      response = HTTParty.post(
-        "#{BASE_URL}/oauth/v1/generate?grant_type=client_credentials",
-        headers: {
-          'Authorization' => "Basic #{credentials}",
-          'Content-Type' => 'application/json'
-        },
-        timeout: 30
-      )
+      # Use GET request to match working Postman request
+      url = URI("#{BASE_URL}/oauth/v1/generate?grant_type=client_credentials")
+      
+      https = Net::HTTP.new(url.host, url.port)
+      https.use_ssl = true
+      
+      # FIXED: Use GET request instead of POST to match working Postman
+      request = Net::HTTP::Get.new(url)
+      request["Authorization"] = "Basic #{credentials}"
+      
+      Rails.logger.info "Making GET request to: #{url}"
+      Rails.logger.info "Authorization header: Basic #{credentials[0..20]}..."
+      
+      response = https.request(request)
+      
+      Rails.logger.info "Response code: #{response.code}"
+      Rails.logger.info "Response body: #{response.body}"
 
-      Rails.logger.info "Access token response: #{response.body}"
-
-      if response.success? && response.parsed_response['access_token']
-        access_token = response.parsed_response['access_token']
+      if response.code == '200'
+        result = JSON.parse(response.body)
+        access_token = result['access_token']
         
-        # Cache for 55 minutes
-        Rails.cache.write(cache_key, access_token, expires_in: 55.minutes)
-        
-        access_token
+        if access_token
+          # Cache for 55 minutes
+          Rails.cache.write(cache_key, access_token, expires_in: 55.minutes)
+          Rails.logger.info "Access token generated successfully"
+          return access_token
+        else
+          Rails.logger.error "No access token in response: #{response.body}"
+          return nil
+        end
       else
-        Rails.logger.error "Failed to get access token: #{response.body}"
-        nil
+        Rails.logger.error "Failed to get access token - Code: #{response.code}, Body: #{response.body}"
+        return nil
       end
 
     rescue => e
       Rails.logger.error "Access token error: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       nil
     end
   end
 
   def self.consumer_key
-    ENV.fetch('MPESA_CONSUMER_KEY') do
+    key = ENV['MPESA_CONSUMER_KEY']
+    Rails.logger.info "MPESA_CONSUMER_KEY present: #{key.present?}"
+    Rails.logger.info "MPESA_CONSUMER_KEY value: #{key ? key[0..10] + '...' : 'nil'}"
+    
+    unless key.present?
+      Rails.logger.error "❌ MPESA_CONSUMER_KEY not found in environment"
+      Rails.logger.error "Available ENV keys with MPESA: #{ENV.keys.select { |k| k.include?('MPESA') }}"
       raise 'MPESA_CONSUMER_KEY environment variable not set'
     end
+    key
   end
 
   def self.consumer_secret
-    ENV.fetch('MPESA_CONSUMER_SECRET') do
+    secret = ENV['MPESA_CONSUMER_SECRET']
+    Rails.logger.info "MPESA_CONSUMER_SECRET present: #{secret.present?}"
+    Rails.logger.info "MPESA_CONSUMER_SECRET value: #{secret ? secret[0..10] + '...' : 'nil'}"
+    
+    unless secret.present?
+      Rails.logger.error "❌ MPESA_CONSUMER_SECRET not found in environment"
       raise 'MPESA_CONSUMER_SECRET environment variable not set'
     end
+    secret
   end
 
   def self.business_short_code
-    ENV.fetch('MPESA_BUSINESS_SHORT_CODE') do
+    code = ENV['MPESA_BUSINESS_SHORT_CODE']
+    Rails.logger.info "MPESA_BUSINESS_SHORT_CODE: #{code}"
+    
+    unless code.present?
+      Rails.logger.error "❌ MPESA_BUSINESS_SHORT_CODE not found in environment"
       raise 'MPESA_BUSINESS_SHORT_CODE environment variable not set'
     end
+    code
   end
 
   def self.passkey
-    ENV.fetch('MPESA_PASSKEY') do
+    key = ENV['MPESA_PASSKEY']
+    Rails.logger.info "MPESA_PASSKEY present: #{key.present?}"
+    Rails.logger.info "MPESA_PASSKEY value: #{key ? key[0..10] + '...' : 'nil'}"
+    
+    unless key.present?
+      Rails.logger.error "❌ MPESA_PASSKEY not found in environment"
       raise 'MPESA_PASSKEY environment variable not set'
     end
+    key
   end
 end
