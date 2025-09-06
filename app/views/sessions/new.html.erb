@@ -1,0 +1,280 @@
+<!-- app/views/sessions/new.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In - GLT Package Delivery</title>
+    <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .sign-in-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+
+        .form-container {
+            padding: 40px 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #374151;
+            font-weight: 600;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #10b981;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .alert-error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #dc2626;
+        }
+
+        .alert-success {
+            background: #ecfdf5;
+            border: 1px solid #bbf7d0;
+            color: #059669;
+        }
+
+        .forgot-password {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .forgot-password a {
+            color: #6b7280;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .forgot-password a:hover {
+            color: #10b981;
+        }
+
+        .loading {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .demo-credentials {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #92400e;
+        }
+
+        .demo-credentials h4 {
+            margin-bottom: 8px;
+            color: #d97706;
+        }
+
+        .demo-credentials code {
+            background: rgba(255,255,255,0.7);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="sign-in-container">
+        <div class="header">
+            <h1>🏦 GLT Delivery</h1>
+            <p>Sign in to your account</p>
+        </div>
+
+        <div class="form-container">
+            <!-- Flash Messages -->
+            <% if flash[:alert] %>
+                <div class="alert alert-error">
+                    <%= flash[:alert] %>
+                </div>
+            <% end %>
+
+            <% if flash[:notice] %>
+                <div class="alert alert-success">
+                    <%= flash[:notice] %>
+                </div>
+            <% end %>
+
+            <!-- Demo Credentials (for development) -->
+            <% if Rails.env.development? %>
+                <div class="demo-credentials">
+                    <h4>Demo Account</h4>
+                    <p>Email: <code>admin@example.com</code></p>
+                    <p>Password: <code>password</code></p>
+                    <small>Click "Use Demo" to auto-fill</small>
+                </div>
+            <% end %>
+
+            <%= form_with(model: @user, url: sign_in_path, local: true, id: 'sign-in-form') do |form| %>
+                <div class="form-group">
+                    <%= form.label :email, 'Email Address' %>
+                    <%= form.email_field :email, class: 'form-control', placeholder: 'your@email.com', required: true %>
+                </div>
+
+                <div class="form-group">
+                    <%= form.label :password, 'Password' %>
+                    <%= form.password_field :password, class: 'form-control', placeholder: 'Your password', required: true %>
+                </div>
+
+                <button type="submit" class="btn" id="sign-in-btn">
+                    <span class="loading" id="loading"></span>
+                    <span id="btn-text">Sign In</span>
+                </button>
+
+                <% if Rails.env.development? %>
+                    <button type="button" class="btn" id="demo-btn" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); margin-top: 10px;">
+                        Use Demo Account
+                    </button>
+                <% end %>
+            <% end %>
+
+            <div class="forgot-password">
+                <a href="#">Forgot your password?</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('sign-in-form');
+            const signInBtn = document.getElementById('sign-in-btn');
+            const loading = document.getElementById('loading');
+            const btnText = document.getElementById('btn-text');
+            const demoBtn = document.getElementById('demo-btn');
+
+            // Handle form submission
+            form.addEventListener('submit', function() {
+                signInBtn.disabled = true;
+                loading.style.display = 'inline-block';
+                btnText.textContent = 'Signing in...';
+            });
+
+            // Demo account auto-fill (development only)
+            if (demoBtn) {
+                demoBtn.addEventListener('click', function() {
+                    document.getElementById('user_email').value = 'admin@example.com';
+                    document.getElementById('user_password').value = 'password';
+                });
+            }
+
+            // Auto-focus email field
+            const emailField = document.getElementById('user_email');
+            if (emailField) {
+                emailField.focus();
+            }
+
+            // Enter key handling
+            document.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    form.submit();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
