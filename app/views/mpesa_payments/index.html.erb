@@ -378,7 +378,7 @@
         <div class="header">
             <h1>💳 M-Pesa Payment Portal</h1>
             <p>Secure payments for your packages</p>
-            <a href="<%= sign_out_path %>" method="delete" class="logout-btn">Sign Out</a>
+            <a href="/logout" class="logout-btn">Sign Out</a>
         </div>
 
         <div class="content">
@@ -634,7 +634,6 @@
                     };
 
                     this.debugLog('Sending STK Push request to web endpoint...');
-                    // FIXED: Now calling web endpoint instead of API endpoint
                     const response = await this.makeAuthenticatedRequest('/mpesa/stk_push', 'POST', requestData);
 
                     if (response.status === 'success') {
@@ -679,21 +678,20 @@
                 this.showStatus('Checking payment status...', 'pending');
 
                 try {
-                    // FIXED: Now calling web endpoint instead of API endpoint
                     const response = await this.makeAuthenticatedRequest('/mpesa/query_status', 'POST', {
                         checkout_request_id: checkoutRequestId
                     });
 
                     if (response.status === 'success') {
-                        const statusText = response.status === 'completed' ? '✅ Payment Completed' : 
-                                         response.status === 'failed' ? '❌ Payment Failed' : 
+                        const statusText = response.transaction_status === 'completed' ? '✅ Payment Completed' : 
+                                         response.transaction_status === 'failed' ? '❌ Payment Failed' : 
                                          '⏳ Payment Pending';
                         
                         this.showStatus(`${statusText}: ${response.result_desc}`, 
-                                      response.status === 'completed' ? 'success' : 
-                                      response.status === 'failed' ? 'error' : 'pending');
+                                      response.transaction_status === 'completed' ? 'success' : 
+                                      response.transaction_status === 'failed' ? 'error' : 'pending');
                         
-                        this.debugLog(`Status check result: ${response.status} - ${response.result_desc}`);
+                        this.debugLog(`Status check result: ${response.transaction_status} - ${response.result_desc}`);
                         
                         // Reload transactions
                         await this.loadTransactions();
@@ -719,17 +717,16 @@
                 
                 this.pollingInterval = setInterval(async () => {
                     try {
-                        // FIXED: Now calling web endpoint instead of API endpoint
                         const response = await this.makeAuthenticatedRequest('/mpesa/query_status', 'POST', {
                             checkout_request_id: checkoutRequestId
                         });
 
                         this.debugLog(`Polling result: ${JSON.stringify(response)}`);
 
-                        if (response.status === 'success' && response.status !== 'pending') {
+                        if (response.status === 'success' && response.transaction_status !== 'pending') {
                             this.stopPolling();
                             
-                            if (response.status === 'completed') {
+                            if (response.transaction_status === 'completed') {
                                 this.showStatus('✅ Payment completed successfully!', 'success');
                                 this.debugLog('Payment completed successfully');
                             } else {
