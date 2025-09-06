@@ -128,7 +128,7 @@ class MpesaController < WebApplicationController
         render json: {
           status: 'success',
           message: 'Transaction status retrieved successfully',
-          status: status,
+          transaction_status: status,
           result_code: result[:data][:ResultCode],
           result_desc: result[:data][:ResultDesc]
         }
