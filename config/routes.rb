@@ -38,6 +38,11 @@ Rails.application.routes.draw do
     end
   end
 
+scope :mpesa do
+  post 'stk_push', to: 'mpesa#stk_push'
+  post 'query_status', to: 'mpesa#query_status'
+end
+
   # ==========================================
   # 🔐 NEW: EXPO-AUTH-SESSION OAUTH ROUTES
   # ==========================================
