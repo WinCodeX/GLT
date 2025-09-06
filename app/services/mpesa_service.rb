@@ -31,7 +31,7 @@ class MpesaService
         PartyA: phone_number,
         PartyB: business_short_code,
         PhoneNumber: phone_number,
-        CallBackURL: "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/callback",
+        CallBackURL: "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/mpesa/callback",
         AccountReference: account_reference,
         TransactionDesc: transaction_desc
       }
