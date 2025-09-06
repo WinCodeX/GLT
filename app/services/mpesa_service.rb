@@ -114,7 +114,8 @@ class MpesaService
 
       credentials = Base64.strict_encode64("#{consumer_key}:#{consumer_secret}")
 
-      response = HTTParty.get(
+      # FIXED: Changed from GET to POST to match Safaricom's example
+      response = HTTParty.post(
         "#{BASE_URL}/oauth/v1/generate?grant_type=client_credentials",
         headers: {
           'Authorization' => "Basic #{credentials}",
@@ -122,6 +123,8 @@ class MpesaService
         },
         timeout: 30
       )
+
+      Rails.logger.info "Access token response: #{response.body}"
 
       if response.success? && response.parsed_response['access_token']
         access_token = response.parsed_response['access_token']
