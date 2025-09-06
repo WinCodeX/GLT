@@ -14,13 +14,16 @@ class MpesaService
   #   'https://api.safaricom.co.ke' : 
   #   'https://sandbox.safaricom.co.ke'
 
-  def self.initiate_stk_push(phone_number:, amount:, account_reference:, transaction_desc:)
+  def self.initiate_stk_push(phone_number:, amount:, account_reference:, transaction_desc:, callback_url: nil)
     begin
       access_token = get_access_token
       return { success: false, message: 'Failed to get access token' } unless access_token
 
       timestamp = Time.current.strftime('%Y%m%d%H%M%S')
       password = Base64.strict_encode64("#{business_short_code}#{passkey}#{timestamp}")
+
+      # Use provided callback URL or default to web controller endpoint
+      callback_endpoint = callback_url || "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/mpesa/callback"
 
       payload = {
         BusinessShortCode: business_short_code,
@@ -31,10 +34,12 @@ class MpesaService
         PartyA: phone_number,
         PartyB: business_short_code,
         PhoneNumber: phone_number,
-        CallBackURL: "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/mpesa/callback",
+        CallBackURL: callback_endpoint,
         AccountReference: account_reference,
         TransactionDesc: transaction_desc
       }
+
+      Rails.logger.info "STK Push using callback URL: #{callback_endpoint}"
 
       response = HTTParty.post(
         "#{BASE_URL}/mpesa/stkpush/v1/processrequest",
