@@ -1,9 +1,7 @@
-# config/routes.rb - Complete OAuth routing for expo-auth-session
+# Replace your current routes.rb with this - ONLY change the root route
 
 Rails.application.routes.draw do
-
-
-# ==========================================
+  # ==========================================
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
   # ==========================================
   
@@ -12,9 +10,6 @@ Rails.application.routes.draw do
   post '/sign_in', to: 'sessions#create'
   delete '/sign_out', to: 'sessions#destroy', as: :sign_out
   get '/logout', to: 'sessions#destroy'  # Alternative logout path
-  
-  # Redirect root to sign in if not authenticated
-  root to: redirect('/sign_in')
 
   # ==========================================
   # 🔐 AUTHENTICATION (Devise) - Must be first
@@ -37,9 +32,7 @@ Rails.application.routes.draw do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
   end
 
-
-
-resources :mpesa_payments, only: [:index] do
+  resources :mpesa_payments, only: [:index] do
     collection do
       get :transactions
     end
@@ -76,13 +69,12 @@ resources :mpesa_payments, only: [:index] do
       # Legacy Google login route (maintain compatibility) - keep in sessions
       post :google_login, to: 'sessions#google_login'
 
-
-scope :mpesa do
-      post 'stk_push', to: 'mpesa#stk_push'
-      post 'query_status', to: 'mpesa#query_status'
-      post 'callback', to: 'mpesa#callback'
-      post 'timeout', to: 'mpesa#timeout'
-    end
+      scope :mpesa do
+        post 'stk_push', to: 'mpesa#stk_push'
+        post 'query_status', to: 'mpesa#query_status'
+        post 'callback', to: 'mpesa#callback'
+        post 'timeout', to: 'mpesa#timeout'
+      end
     end
   end
 
@@ -490,7 +482,9 @@ scope :mpesa do
   # 🔀 CATCH-ALL AND REDIRECTS
   # ==========================================
   
-  root 'api/v1/status#ping'
+  # FIXED: Use a conditional root that redirects unauthenticated users to sign in
+  # but allows API access to work normally
+  root to: 'sessions#redirect_root'
   
   get '/docs', to: 'documentation#index'
   get '/api/docs', to: 'documentation#api_docs'
