@@ -1,6 +1,7 @@
 # app/controllers/mpesa_payments_controller.rb
 class MpesaPaymentsController < ApplicationController
   before_action :authenticate_user!
+  before_action :redirect_if_not_authenticated
 
   # GET /mpesa_payments
   def index
@@ -36,5 +37,13 @@ class MpesaPaymentsController < ApplicationController
         }
       end
     }
+  end
+
+  private
+
+  def redirect_if_not_authenticated
+    unless user_signed_in?
+      redirect_to sign_in_path and return
+    end
   end
 end
