@@ -1,5 +1,9 @@
 # app/controllers/mpesa_controller.rb (web version)
 class MpesaController < WebApplicationController
+  # Skip authentication for M-Pesa callbacks
+  skip_before_action :authenticate_user!, only: [:callback, :timeout]
+  skip_before_action :verify_authenticity_token, only: [:callback, :timeout]
+  
   # Web-based M-Pesa endpoints that use session authentication
   
   # POST /mpesa/stk_push
@@ -150,6 +154,113 @@ class MpesaController < WebApplicationController
         code: 'internal_error',
         debug: Rails.env.development? ? e.message : nil
       }, status: :internal_server_error
+    end
+  end
+
+  # POST /mpesa/callback (from Safaricom)
+  def callback
+    begin
+      Rails.logger.info "M-Pesa callback received: #{params.inspect}"
+
+      # Extract callback data
+      body = params[:Body] || params
+      stk_callback = body[:stkCallback] || body[:STKCallback]
+
+      unless stk_callback
+        return render json: { ResultCode: 1, ResultDesc: 'Invalid callback format' }
+      end
+
+      checkout_request_id = stk_callback[:CheckoutRequestID]
+      result_code = stk_callback[:ResultCode]
+      result_desc = stk_callback[:ResultDesc]
+
+      # Find transaction
+      transaction = MpesaTransaction.find_by(checkout_request_id: checkout_request_id)
+
+      if transaction
+        # Update transaction
+        if result_code == 0
+          # Success - extract callback metadata
+          callback_metadata = stk_callback[:CallbackMetadata]
+          mpesa_receipt_number = nil
+          phone_number = nil
+          amount = nil
+
+          if callback_metadata && callback_metadata[:Item]
+            callback_metadata[:Item].each do |item|
+              case item[:Name]
+              when 'MpesaReceiptNumber'
+                mpesa_receipt_number = item[:Value]
+              when 'PhoneNumber'
+                phone_number = item[:Value]
+              when 'Amount'
+                amount = item[:Value]
+              end
+            end
+          end
+
+          transaction.update!(
+            status: 'completed',
+            result_code: result_code,
+            result_desc: result_desc,
+            mpesa_receipt_number: mpesa_receipt_number,
+            callback_phone_number: phone_number,
+            callback_amount: amount
+          )
+
+          # Update package status
+          package = transaction.package
+          if package && package.state == 'pending_unpaid'
+            package.update!(state: 'pending')
+            Rails.logger.info "Package #{package.code} status updated to pending after successful payment"
+          end
+
+        else
+          # Failed
+          transaction.update!(
+            status: 'failed',
+            result_code: result_code,
+            result_desc: result_desc
+          )
+        end
+
+        Rails.logger.info "Transaction #{checkout_request_id} updated: #{transaction.status}"
+      else
+        Rails.logger.warn "Transaction not found for checkout_request_id: #{checkout_request_id}"
+      end
+
+      # Always respond with success to Safaricom
+      render json: { ResultCode: 0, ResultDesc: 'Success' }
+
+    rescue => e
+      Rails.logger.error "M-Pesa callback error: #{e.message}"
+      render json: { ResultCode: 1, ResultDesc: 'Internal error' }
+    end
+  end
+
+  # POST /mpesa/timeout (from Safaricom)
+  def timeout
+    begin
+      Rails.logger.info "M-Pesa timeout received: #{params.inspect}"
+
+      checkout_request_id = params[:CheckoutRequestID]
+      
+      if checkout_request_id
+        transaction = MpesaTransaction.find_by(checkout_request_id: checkout_request_id)
+        if transaction
+          transaction.update!(
+            status: 'timeout',
+            result_desc: 'Transaction timeout'
+          )
+          Rails.logger.info "Transaction #{checkout_request_id} marked as timeout"
+        end
+      end
+
+      render json: { ResultCode: 0, ResultDesc: 'Success' }
+
+    rescue => e
+      Rails.logger.error "M-Pesa timeout error: #{e.message}"
+      render json: { ResultCode: 1, ResultDesc: 'Internal error' }
     end
   end
 
