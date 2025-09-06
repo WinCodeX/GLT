@@ -1,5 +1,6 @@
+
 # app/controllers/sessions_controller.rb
-class SessionsController < ApplicationController
+class SessionsController < WebApplicationController
   skip_before_action :authenticate_user!, only: [:new, :create, :redirect_root]
   
   # GET / (root path handler)
