@@ -1,6 +1,21 @@
 # config/routes.rb - Complete OAuth routing for expo-auth-session
 
 Rails.application.routes.draw do
+
+
+# ==========================================
+  # 🔐 WEB AUTHENTICATION (Simple Sign In)
+  # ==========================================
+  
+  # Simple web-based sign in/out
+  get '/sign_in', to: 'sessions#new', as: :sign_in
+  post '/sign_in', to: 'sessions#create'
+  delete '/sign_out', to: 'sessions#destroy', as: :sign_out
+  get '/logout', to: 'sessions#destroy'  # Alternative logout path
+  
+  # Redirect root to sign in if not authenticated
+  root to: redirect('/sign_in')
+
   # ==========================================
   # 🔐 AUTHENTICATION (Devise) - Must be first
   # ==========================================
