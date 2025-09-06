@@ -633,8 +633,9 @@
                         package_id: packageId
                     };
 
-                    this.debugLog('Sending STK Push request...');
-                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/stk_push', 'POST', requestData);
+                    this.debugLog('Sending STK Push request to web endpoint...');
+                    // FIXED: Now calling web endpoint instead of API endpoint
+                    const response = await this.makeAuthenticatedRequest('/mpesa/stk_push', 'POST', requestData);
 
                     if (response.status === 'success') {
                         this.showStatus(response.message, 'success');
@@ -649,6 +650,9 @@
                     } else {
                         this.showStatus(response.message || 'Payment initiation failed', 'error');
                         this.debugLog(`STK Push failed: ${response.message}`);
+                        if (response.debug) {
+                            this.debugLog(`Debug info: ${response.debug}`);
+                        }
                     }
                 } catch (error) {
                     this.debugLog(`STK Push error: ${error.message}`);
@@ -675,7 +679,8 @@
                 this.showStatus('Checking payment status...', 'pending');
 
                 try {
-                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/query_status', 'POST', {
+                    // FIXED: Now calling web endpoint instead of API endpoint
+                    const response = await this.makeAuthenticatedRequest('/mpesa/query_status', 'POST', {
                         checkout_request_id: checkoutRequestId
                     });
 
@@ -695,6 +700,9 @@
                     } else {
                         this.showStatus(response.message || 'Status check failed', 'error');
                         this.debugLog(`Status check failed: ${response.message}`);
+                        if (response.debug) {
+                            this.debugLog(`Debug info: ${response.debug}`);
+                        }
                     }
                 } catch (error) {
                     this.debugLog(`Status check error: ${error.message}`);
@@ -711,7 +719,8 @@
                 
                 this.pollingInterval = setInterval(async () => {
                     try {
-                        const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/query_status', 'POST', {
+                        // FIXED: Now calling web endpoint instead of API endpoint
+                        const response = await this.makeAuthenticatedRequest('/mpesa/query_status', 'POST', {
                             checkout_request_id: checkoutRequestId
                         });
 
