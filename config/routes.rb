@@ -41,6 +41,8 @@ Rails.application.routes.draw do
 scope :mpesa do
   post 'stk_push', to: 'mpesa#stk_push'
   post 'query_status', to: 'mpesa#query_status'
+post '/mpesa/callback', to: 'mpesa#callback'
+post '/mpesa/timeout', to: 'mpesa#timeout'
 end
 
   # ==========================================
