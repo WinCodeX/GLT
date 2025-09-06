@@ -1,0 +1,656 @@
+<!-- app/views/mpesa_payments/index.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M-Pesa Payment Portal</title>
+    <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .payment-sections {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        @media (max-width: 768px) {
+            .payment-sections {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .section {
+            background: #f8fafc;
+            border-radius: 15px;
+            padding: 30px;
+            border: 2px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+
+        .section:hover {
+            border-color: #10b981;
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.1);
+        }
+
+        .section h2 {
+            color: #1f2937;
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-icon {
+            width: 30px;
+            height: 30px;
+            background: #10b981;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: white;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #374151;
+            font-weight: 600;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #10b981;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .package-selector {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f0fdf4;
+            border-radius: 10px;
+            border: 2px solid #bbf7d0;
+        }
+
+        .package-selector h3 {
+            color: #15803d;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .status-display {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .status-success {
+            background: #ecfdf5;
+            border: 2px solid #bbf7d0;
+            color: #15803d;
+        }
+
+        .status-error {
+            background: #fef2f2;
+            border: 2px solid #fecaca;
+            color: #dc2626;
+        }
+
+        .status-pending {
+            background: #fefce8;
+            border: 2px solid #fde68a;
+            color: #d97706;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .phone-input {
+            position: relative;
+        }
+
+        .phone-prefix {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6b7280;
+            font-weight: 600;
+        }
+
+        .phone-input input {
+            padding-left: 60px;
+        }
+
+        .transactions-section {
+            margin-top: 40px;
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .transactions-section h3 {
+            color: #1f2937;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+        }
+
+        .transaction-item {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .transaction-item.completed {
+            border-left-color: #10b981;
+        }
+
+        .transaction-item.failed {
+            border-left-color: #ef4444;
+        }
+
+        .transaction-item.pending {
+            border-left-color: #f59e0b;
+        }
+
+        .transaction-info {
+            flex: 1;
+        }
+
+        .transaction-amount {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .transaction-details {
+            font-size: 0.9rem;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+
+        .transaction-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .transaction-status.completed {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .transaction-status.failed {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .transaction-status.pending {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .user-info {
+            background: #e0f2fe;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border-left: 4px solid #0ea5e9;
+        }
+
+        .polling-status {
+            background: #fef3c7;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.9rem;
+            color: #92400e;
+            display: none;
+        }
+
+        .polling-status.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💳 M-Pesa Payment Portal</h1>
+            <p>Secure payments for your packages</p>
+        </div>
+
+        <div class="content">
+            <!-- User Info -->
+            <div class="user-info">
+                <strong>Welcome, <%= current_user.email %></strong>
+                <span style="margin-left: 20px; color: #6b7280;">Ready to make payments</span>
+            </div>
+
+            <!-- Package Selector -->
+            <div class="package-selector">
+                <h3>📦 Select Package to Pay For</h3>
+                <select id="packageSelect" class="form-control">
+                    <option value="">Select a package...</option>
+                    <% @packages.each do |package| %>
+                        <option value="<%= package.id %>" data-cost="<%= package.cost %>">
+                            <%= package.code %> - <%= package.receiver_name %> - KES <%= package.cost %> (<%= package.state %>)
+                        </option>
+                    <% end %>
+                </select>
+                <small style="color: #6b7280; display: block; margin-top: 5px;">
+                    Choose a package that needs payment
+                </small>
+            </div>
+
+            <div class="payment-sections">
+                <!-- STK Push Section -->
+                <div class="section">
+                    <h2>
+                        <span class="section-icon">📱</span>
+                        M-Pesa STK Push
+                    </h2>
+                    <form id="stkForm">
+                        <div class="form-group">
+                            <label for="phoneNumber">Phone Number</label>
+                            <div class="phone-input">
+                                <span class="phone-prefix">+254</span>
+                                <input type="tel" id="phoneNumber" class="form-control" 
+                                       placeholder="712345678" maxlength="9" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="amount">Amount (KES)</label>
+                            <input type="number" id="amount" class="form-control" 
+                                   placeholder="100" min="1" step="0.01" required>
+                        </div>
+                        <button type="submit" class="btn" id="stkButton">
+                            Send M-Pesa Prompt
+                        </button>
+                        <div id="pollingStatus" class="polling-status">
+                            <span class="loading"></span>
+                            Waiting for payment confirmation...
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Query Status Section -->
+                <div class="section">
+                    <h2>
+                        <span class="section-icon">🔍</span>
+                        Check Payment Status
+                    </h2>
+                    <form id="queryForm">
+                        <div class="form-group">
+                            <label for="checkoutRequestId">Checkout Request ID</label>
+                            <input type="text" id="checkoutRequestId" class="form-control" 
+                                   placeholder="ws_CO_..." required>
+                        </div>
+                        <button type="submit" class="btn" id="queryButton">
+                            Check Status
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Status Display -->
+            <div id="statusDisplay" class="status-display">
+                <div id="statusContent"></div>
+            </div>
+
+            <!-- Recent Transactions -->
+            <div class="transactions-section">
+                <h3>📄 Recent Transactions</h3>
+                <div id="transactionsList">
+                    <div style="color: #6b7280; text-align: center; padding: 20px;">
+                        Loading transactions...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Get CSRF token for Rails
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        class MpesaPaymentPortal {
+            constructor() {
+                this.token = '<%= session[:auth_token] if session[:auth_token] %>' || 
+                           localStorage.getItem('auth_token') || 
+                           sessionStorage.getItem('auth_token');
+                
+                this.pollingInterval = null;
+                this.initializeElements();
+                this.loadTransactions();
+                this.bindEvents();
+            }
+
+            initializeElements() {
+                this.stkForm = document.getElementById('stkForm');
+                this.queryForm = document.getElementById('queryForm');
+                this.statusDisplay = document.getElementById('statusDisplay');
+                this.statusContent = document.getElementById('statusContent');
+                this.packageSelect = document.getElementById('packageSelect');
+                this.transactionsList = document.getElementById('transactionsList');
+                this.pollingStatus = document.getElementById('pollingStatus');
+            }
+
+            async makeAuthenticatedRequest(url, method = 'GET', body = null) {
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                };
+
+                // Add authorization header if token exists
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+
+                const options = { method, headers };
+
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(url, options);
+                return response.json();
+            }
+
+            async loadTransactions() {
+                try {
+                    const response = await this.makeAuthenticatedRequest('/mpesa_payments/transactions');
+                    
+                    if (response.success) {
+                        this.renderTransactions(response.transactions);
+                    }
+                } catch (error) {
+                    console.error('Failed to load transactions:', error);
+                    this.transactionsList.innerHTML = '<div style="color: #ef4444; text-align: center; padding: 20px;">Failed to load transactions</div>';
+                }
+            }
+
+            renderTransactions(transactions) {
+                if (transactions.length === 0) {
+                    this.transactionsList.innerHTML = '<div style="color: #6b7280; text-align: center; padding: 20px;">No transactions found</div>';
+                    return;
+                }
+
+                this.transactionsList.innerHTML = transactions.map(tx => `
+                    <div class="transaction-item ${tx.status}">
+                        <div class="transaction-info">
+                            <div class="transaction-amount">KES ${tx.amount}</div>
+                            <div class="transaction-details">
+                                ${tx.package ? `Package: ${tx.package.code}` : 'No package'} • 
+                                ${tx.phone_number} • 
+                                ${new Date(tx.created_at).toLocaleString()}
+                                ${tx.mpesa_receipt_number ? `• Receipt: ${tx.mpesa_receipt_number}` : ''}
+                            </div>
+                        </div>
+                        <div class="transaction-status ${tx.status}">${tx.status}</div>
+                    </div>
+                `).join('');
+            }
+
+            bindEvents() {
+                this.stkForm.addEventListener('submit', (e) => this.handleStkPush(e));
+                this.queryForm.addEventListener('submit', (e) => this.handleQueryStatus(e));
+                this.packageSelect.addEventListener('change', (e) => this.handlePackageSelect(e));
+            }
+
+            handlePackageSelect(e) {
+                const selectedOption = e.target.selectedOptions[0];
+                if (selectedOption && selectedOption.dataset.cost) {
+                    document.getElementById('amount').value = selectedOption.dataset.cost;
+                }
+            }
+
+            async handleStkPush(e) {
+                e.preventDefault();
+                
+                const phoneNumber = '+254' + document.getElementById('phoneNumber').value;
+                const amount = document.getElementById('amount').value;
+                const packageId = this.packageSelect.value;
+
+                if (!packageId) {
+                    this.showStatus('Please select a package', 'error');
+                    return;
+                }
+
+                this.setButtonLoading('stkButton', true);
+                this.showStatus('Initiating M-Pesa payment...', 'pending');
+
+                try {
+                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/stk_push', 'POST', {
+                        phone_number: phoneNumber,
+                        amount: parseFloat(amount),
+                        package_id: packageId
+                    });
+
+                    if (response.status === 'success') {
+                        this.showStatus(response.message, 'success');
+                        document.getElementById('checkoutRequestId').value = response.checkout_request_id;
+                        
+                        // Start polling for status
+                        this.startPolling(response.checkout_request_id);
+                        
+                        // Reload transactions
+                        setTimeout(() => this.loadTransactions(), 1000);
+                    } else {
+                        this.showStatus(response.message || 'Payment initiation failed', 'error');
+                    }
+                } catch (error) {
+                    console.error('STK Push error:', error);
+                    this.showStatus('Payment request failed. Please try again.', 'error');
+                }
+
+                this.setButtonLoading('stkButton', false);
+            }
+
+            async handleQueryStatus(e) {
+                e.preventDefault();
+                
+                const checkoutRequestId = document.getElementById('checkoutRequestId').value;
+
+                this.setButtonLoading('queryButton', true);
+                this.showStatus('Checking payment status...', 'pending');
+
+                try {
+                    const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/query_status', 'POST', {
+                        checkout_request_id: checkoutRequestId
+                    });
+
+                    if (response.status === 'success') {
+                        const statusText = response.status === 'completed' ? '✅ Payment Completed' : 
+                                         response.status === 'failed' ? '❌ Payment Failed' : 
+                                         '⏳ Payment Pending';
+                        
+                        this.showStatus(`${statusText}: ${response.result_desc}`, 
+                                      response.status === 'completed' ? 'success' : 
+                                      response.status === 'failed' ? 'error' : 'pending');
+                        
+                        // Reload transactions
+                        await this.loadTransactions();
+                    } else {
+                        this.showStatus(response.message || 'Status check failed', 'error');
+                    }
+                } catch (error) {
+                    console.error('Query status error:', error);
+                    this.showStatus('Failed to check status. Please try again.', 'error');
+                }
+
+                this.setButtonLoading('queryButton', false);
+            }
+
+            startPolling(checkoutRequestId) {
+                this.pollingStatus.classList.add('show');
+                
+                this.pollingInterval = setInterval(async () => {
+                    try {
+                        const response = await this.makeAuthenticatedRequest('/api/v1/mpesa/query_status', 'POST', {
+                            checkout_request_id: checkoutRequestId
+                        });
+
+                        if (response.status === 'success' && response.status !== 'pending') {
+                            this.stopPolling();
+                            
+                            if (response.status === 'completed') {
+                                this.showStatus('✅ Payment completed successfully!', 'success');
+                            } else {
+                                this.showStatus('❌ Payment failed', 'error');
+                            }
+                            
+                            await this.loadTransactions();
+                        }
+                    } catch (error) {
+                        console.error('Polling error:', error);
+                    }
+                }, 3000); // Poll every 3 seconds
+
+                // Stop polling after 2 minutes
+                setTimeout(() => this.stopPolling(), 120000);
+            }
+
+            stopPolling() {
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                    this.pollingInterval = null;
+                }
+                this.pollingStatus.classList.remove('show');
+            }
+
+            setButtonLoading(buttonId, loading) {
+                const button = document.getElementById(buttonId);
+                const originalText = button.textContent;
+                
+                if (loading) {
+                    button.innerHTML = '<span class="loading"></span>Processing...';
+                    button.disabled = true;
+                } else {
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
+            }
+
+            showStatus(message, type) {
+                this.statusDisplay.className = `status-display status-${type}`;
+                this.statusContent.innerHTML = message;
+                this.statusDisplay.style.display = 'block';
+            }
+        }
+
+        // Initialize the portal when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new MpesaPaymentPortal();
+        });
+    </script>
+</body>
+</html>
