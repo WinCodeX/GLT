@@ -27,12 +27,16 @@ module Api
             return error_response('Package cannot be paid at this time', 'invalid_state', :unprocessable_entity)
           end
 
-          # Initiate STK push
+          # Build API callback URL
+          api_callback_url = "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/callback"
+
+          # Initiate STK push with API callback URL
           result = MpesaService.initiate_stk_push(
             phone_number: phone_number,
             amount: amount,
             account_reference: package.code,
-            transaction_desc: "Payment for package #{package.code}"
+            transaction_desc: "Payment for package #{package.code}",
+            callback_url: api_callback_url
           )
 
           if result[:success]
@@ -63,7 +67,8 @@ module Api
           end
 
         rescue => e
-          Rails.logger.error "M-Pesa STK Push error: #{e.message}"
+          Rails.logger.error "API M-Pesa STK Push error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           error_response(
             'Payment initiation failed',
             'internal_error',
@@ -110,7 +115,7 @@ module Api
 
             success_response(
               {
-                status: status,
+                transaction_status: status,
                 result_code: result[:data][:ResultCode],
                 result_desc: result[:data][:ResultDesc]
               },
@@ -125,7 +130,8 @@ module Api
           end
 
         rescue => e
-          Rails.logger.error "M-Pesa query error: #{e.message}"
+          Rails.logger.error "API M-Pesa query error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           error_response(
             'Failed to query transaction status',
             'internal_error',
@@ -137,7 +143,7 @@ module Api
       # POST /api/v1/mpesa/callback (from Safaricom)
       def callback
         begin
-          Rails.logger.info "M-Pesa callback received: #{params.inspect}"
+          Rails.logger.info "API M-Pesa callback received: #{params.inspect}"
 
           # Extract callback data
           body = params[:Body] || params
@@ -210,7 +216,7 @@ module Api
           render json: { ResultCode: 0, ResultDesc: 'Success' }
 
         rescue => e
-          Rails.logger.error "M-Pesa callback error: #{e.message}"
+          Rails.logger.error "API M-Pesa callback error: #{e.message}"
           render json: { ResultCode: 1, ResultDesc: 'Internal error' }
         end
       end
@@ -218,7 +224,7 @@ module Api
       # POST /api/v1/mpesa/timeout (from Safaricom)
       def timeout
         begin
-          Rails.logger.info "M-Pesa timeout received: #{params.inspect}"
+          Rails.logger.info "API M-Pesa timeout received: #{params.inspect}"
 
           checkout_request_id = params[:CheckoutRequestID]
           
@@ -236,12 +242,28 @@ module Api
           render json: { ResultCode: 0, ResultDesc: 'Success' }
 
         rescue => e
-          Rails.logger.error "M-Pesa timeout error: #{e.message}"
+          Rails.logger.error "API M-Pesa timeout error: #{e.message}"
           render json: { ResultCode: 1, ResultDesc: 'Internal error' }
         end
       end
 
       private
+
+      def success_response(data, message = 'Success')
+        render json: {
+          status: 'success',
+          message: message,
+          data: data
+        }
+      end
+
+      def error_response(message, code, status)
+        render json: {
+          status: 'error',
+          message: message,
+          code: code
+        }, status: status
+      end
 
       def normalize_phone_number(phone)
         return nil if phone.blank?
