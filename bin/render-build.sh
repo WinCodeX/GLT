@@ -12,7 +12,7 @@ bundle install
 bundle exec rails db:create
 bundle exec rails generate rolify Role User
 #bundle exec rails generate migration #AddPackageSizeToPrices package_size:string
-bundle exec rails db:migrate:down VERSION=20250908135959
+#bundle exec rails db:migrate:down VERSION=20250908135959
 
 bundle exec rails db:migrate
 bundle exec rails active_storage:install
