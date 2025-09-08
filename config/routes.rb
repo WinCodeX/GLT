@@ -1,5 +1,4 @@
-# Replace your current routes.rb with this - ONLY change the root route
-
+# config/routes.rb
 Rails.application.routes.draw do
   # ==========================================
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
@@ -78,7 +77,10 @@ end
 
       scope :mpesa do
         post 'stk_push', to: 'mpesa#stk_push'
+        post 'stk_push_bulk', to: 'mpesa#stk_push_bulk'
         post 'query_status', to: 'mpesa#query_status'
+        post 'verify_manual', to: 'mpesa#verify_manual'
+        post 'verify_manual_bulk', to: 'mpesa#verify_manual_bulk'
         post 'callback', to: 'mpesa#callback'
         post 'timeout', to: 'mpesa#timeout'
       end
@@ -152,8 +154,16 @@ end
         end
       end
 
-      # Businesses
-      resources :businesses, only: [:create, :index, :show], defaults: { format: :json }
+      # Businesses - UPDATED with full CRUD and categories support
+      resources :businesses do
+        member do
+          post :add_categories
+          delete :remove_category
+        end
+      end
+      
+      # Categories routes
+      resources :categories, only: [:index, :show]
 
       # ==========================================
       # 📦 PACKAGE MANAGEMENT & SCANNING SYSTEM
