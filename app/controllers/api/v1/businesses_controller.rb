@@ -8,41 +8,41 @@ module Api
       before_action :authorize_business_owner, only: [:update, :destroy]
 
       def create
-        business = Business.new(business_params.except(:category_ids))
-        business.owner = current_user
+  business = Business.new(business_params.except(:category_ids))
+  business.owner = current_user
 
-        ActiveRecord::Base.transaction do
-          if business.save
-            # Add categories if provided
-            if params[:business][:category_ids].present?
-              category_ids = params[:business][:category_ids].first(5) # Limit to 5
-              valid_categories = Category.active.where(id: category_ids)
-              business.categories = valid_categories
-            end
+  # Assign categories BEFORE saving so validation passes
+  if params[:business][:category_ids].present?
+    category_ids = params[:business][:category_ids].first(5) # Limit to 5
+    valid_categories = Category.active.where(id: category_ids)
+    business.categories = valid_categories
+  end
 
-            # Create owner relationship
-            UserBusiness.create!(user: current_user, business: business, role: 'owner')
+  ActiveRecord::Base.transaction do
+    if business.save
+      # Create owner relationship
+      UserBusiness.create!(user: current_user, business: business, role: 'owner')
 
-            render json: { 
-              success: true, 
-              message: "Business created successfully",
-              business: business_json(business)
-            }, status: :created
-          else
-            render json: { 
-              success: false,
-              message: "Failed to create business",
-              errors: business.errors.full_messages 
-            }, status: :unprocessable_entity
-          end
-        end
-      rescue ActiveRecord::RecordInvalid => e
-        render json: { 
-          success: false,
-          message: "Validation failed",
-          errors: [e.message]
-        }, status: :unprocessable_entity
-      end
+      render json: { 
+        success: true, 
+        message: "Business created successfully",
+        business: business_json(business)
+      }, status: :created
+    else
+      render json: { 
+        success: false,
+        message: "Failed to create business",
+        errors: business.errors.full_messages 
+      }, status: :unprocessable_entity
+    end
+  end
+rescue ActiveRecord::RecordInvalid => e
+  render json: { 
+    success: false,
+    message: "Validation failed",
+    errors: [e.message]
+  }, status: :unprocessable_entity
+end
 
       def update
         ActiveRecord::Base.transaction do
