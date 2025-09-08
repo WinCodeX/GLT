@@ -69,7 +69,7 @@ ActiveRecord::Base.transaction do
       password: "Leviathan@Xcode",
       first_name: "Xs",
       last_name: "",
-      phone_number: "+254700000002",  # Fixed: using phone_number
+      phone_number: "+254712293377",  # Fixed: using phone_number
       role: :client
     )
     
@@ -78,7 +78,7 @@ ActiveRecord::Base.transaction do
       password: "Password123",
       first_name: "Glen",
       last_name: "",
-      phone_number: "+254700000003",  # Fixed: using phone_number
+      phone_number: "+254712293377",  # Fixed: using phone_number
       role: :admin
     )
     
@@ -260,6 +260,59 @@ end
       puts "  ✓ Agent ready: #{agent.name} in #{area.name}, #{area.location.name}"
     end
     
+    # === CATEGORIES SETUP ===
+    puts "🏷️ Setting up business categories..."
+    
+    categories_data = [
+      { name: "Books", description: "Books, literature, educational materials" },
+      { name: "Clothes", description: "Clothing and fashion items" },
+      { name: "Accessories", description: "Fashion and personal accessories" },
+      { name: "Adult Content", description: "Adult-oriented products and materials" },
+      { name: "African Inspired", description: "African-inspired products and crafts" },
+      { name: "Agricultural equipment", description: "Farming and agricultural tools" },
+      { name: "Apparel", description: "General clothing and apparel" },
+      { name: "Arts and Design", description: "Art supplies and design materials" },
+      { name: "Baby Products", description: "Baby care and children's products" },
+      { name: "Bags", description: "Bags, luggage, and carrying cases" },
+      { name: "Bakery, Pantry and Kitchen", description: "Baking supplies, pantry items, and kitchen equipment" },
+      { name: "Beauty", description: "Beauty products and cosmetics" },
+      { name: "Camping & Outdoor", description: "Camping and outdoor recreation equipment" },
+      { name: "Car accessories", description: "Automotive accessories and parts" },
+      { name: "Detergents and cleaning products", description: "Cleaning supplies and detergents" },
+      { name: "Electronics", description: "Electronic devices and gadgets" },
+      { name: "Furniture/upholstery", description: "Furniture and upholstery items" },
+      { name: "Games", description: "Games, toys, and entertainment" },
+      { name: "Gifts", description: "Gift items and novelties" },
+      { name: "Home and Garden", description: "Home improvement and gardening supplies" },
+      { name: "Jewellery", description: "Jewelry and precious accessories" },
+      { name: "Medical equipments", description: "Medical devices and healthcare equipment" },
+      { name: "Organic products", description: "Organic and natural products" },
+      { name: "Perfume", description: "Perfumes and fragrances" },
+      { name: "Phone accessories", description: "Mobile phone accessories and cases" },
+      { name: "Plumbing and water supply", description: "Plumbing fixtures and water supply equipment" },
+      { name: "Sports Wear and Improvement", description: "Sports equipment and athletic wear" },
+      { name: "Stationery", description: "Office and school stationery supplies" },
+      { name: "Utensils", description: "Kitchen utensils and cooking tools" },
+      { name: "Other", description: "Miscellaneous products and services" }
+    ].freeze
+    
+    categories_data.each do |category_data|
+      category = Category.find_or_create_by!(name: category_data[:name]) do |c|
+        c.description = category_data[:description]
+        c.active = true
+      end
+      
+      # Update description if different
+      if category.description != category_data[:description]
+        category.update!(description: category_data[:description])
+        puts "  ✓ Updated category: #{category.name}"
+      else
+        puts "  ✓ Category ready: #{category.name}"
+      end
+    end
+    
+    puts "  📋 Total categories in system: #{Category.count}"
+    
     # === PRICING SETUP ===
     puts "💰 Setting up pricing matrix..."
     
@@ -339,6 +392,7 @@ end
     puts "  🗺️ Locations: #{Location.count}"
     puts "  🏢 Areas: #{Area.count}"
     puts "  👥 Agents: #{Agent.count}"
+    puts "  🏷️ Categories: #{Category.count}"
     puts "  💰 Prices: #{Price.count}"
     
     puts "\n🚀 System ready for package operations!"
