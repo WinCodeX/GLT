@@ -51,7 +51,7 @@ class Package < ApplicationRecord
   validates :origin_area_id, :destination_area_id, presence: true, unless: :location_based_delivery?
 
   # UPDATED: Package size validation for home/office deliveries
-  validates :package_size, presence: true, if: :requires_package_size?
+  #validates :package_size, presence: true, if: :requires_package_size?
   validates :special_instructions, presence: true, if: :requires_special_instructions?
 
   # Additional validation for fragile packages
