@@ -7,10 +7,14 @@ class Price < ApplicationRecord
   belongs_to :destination_agent, class_name: 'Agent', optional: true
 
   enum delivery_type: {
-    doorstep: 'doorstep',
-    agent: 'agent',
-    mixed: 'mixed'
-  }
+  doorstep: 'doorstep',
+  home: 'home',
+  office: 'office',
+  agent: 'agent',
+  fragile: 'fragile',
+  collection: 'collection',
+  mixed: 'mixed'
+}
 
   validates :cost, presence: true, numericality: { greater_than: 0 }
   validates :delivery_type, presence: true
