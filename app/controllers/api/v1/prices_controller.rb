@@ -1,4 +1,4 @@
-# app/controllers/api/v1/prices_controller.rb - UPDATED: Added support for fragile, home, office, and collection pricing
+# app/controllers/api/v1/prices_controller.rb - FIXED: Resolved 404 issues and parameter handling
 
 module Api
   module V1
@@ -30,48 +30,79 @@ module Api
         end
       end
 
-      # ADDED: Calculate pricing for all delivery types based on areas and package size
+      # FIXED: Calculate pricing - handles both GET and POST requests
       def calculate
-        begin
-          origin_area_id = params[:origin_area_id]
-          destination_area_id = params[:destination_area_id]
-          package_size = params[:package_size] || 'medium'
+        # Handle both GET params and POST body
+        origin_area_id = params[:origin_area_id] || request_params[:origin_area_id]
+        destination_area_id = params[:destination_area_id] || request_params[:destination_area_id]
+        delivery_type = params[:delivery_type] || request_params[:delivery_type] || 'home'
+        package_size = params[:package_size] || request_params[:package_size] || 'medium'
 
-          if origin_area_id.blank? || destination_area_id.blank?
-            render json: {
-              success: false,
-              message: 'Origin area and destination area are required'
-            }, status: :bad_request
-            return
-          end
-
-          # Find areas
-          origin_area = Area.find_by(id: origin_area_id)
-          destination_area = Area.find_by(id: destination_area_id)
-
-          unless origin_area && destination_area
-            render json: {
-              success: false,
-              message: 'Invalid area IDs provided'
-            }, status: :bad_request
-            return
-          end
-
-          # Calculate pricing for all delivery types
-          pricing_result = calculate_all_delivery_types(origin_area, destination_area, package_size)
-
+        # Validate required parameters
+        if origin_area_id.blank? || destination_area_id.blank?
           render json: {
-            success: true,
-            data: pricing_result,
-            message: 'Pricing calculated successfully'
-          }
+            success: false,
+            message: 'Origin area and destination area are required',
+            received_params: {
+              origin_area_id: origin_area_id,
+              destination_area_id: destination_area_id,
+              delivery_type: delivery_type,
+              package_size: package_size
+            }
+          }, status: :bad_request
+          return
+        end
 
+        begin
+          # Find areas with better error handling
+          origin_area = find_area(origin_area_id)
+          destination_area = find_area(destination_area_id)
+
+          # Calculate pricing based on request type
+          if params[:all_types] == 'true' || request_params[:all_types] == 'true'
+            # Calculate for all delivery types
+            pricing_result = calculate_all_delivery_types(origin_area, destination_area, package_size)
+            
+            render json: {
+              success: true,
+              data: pricing_result,
+              route_info: {
+                origin_area: origin_area.name,
+                destination_area: destination_area.name,
+                route_type: determine_route_type(origin_area, destination_area)
+              },
+              message: 'Pricing calculated for all delivery types'
+            }
+          else
+            # Calculate for specific delivery type
+            cost = calculate_single_delivery_type(origin_area, destination_area, delivery_type, package_size)
+            
+            render json: {
+              success: true,
+              cost: cost,
+              delivery_type: delivery_type,
+              package_size: package_size,
+              route_type: determine_route_type(origin_area, destination_area),
+              origin_area: origin_area.name,
+              destination_area: destination_area.name,
+              message: 'Pricing calculated successfully'
+            }
+          end
+
+        rescue ActiveRecord::RecordNotFound => e
+          render json: {
+            success: false,
+            message: 'Area not found',
+            error: e.message
+          }, status: :not_found
         rescue => e
           Rails.logger.error "PricesController#calculate error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          
           render json: {
             success: false,
             message: 'Failed to calculate pricing',
-            error: Rails.env.development? ? e.message : nil
+            error: Rails.env.development? ? e.message : 'Internal server error'
           }, status: :internal_server_error
         end
       end
@@ -94,25 +125,69 @@ module Api
         )
       end
 
-      # ADDED: Calculate pricing for all delivery types
-      def calculate_all_delivery_types(origin_area, destination_area, package_size)
-        # Determine if it's intra-area or inter-area/inter-location
+      # FIXED: Better parameter handling for both GET and POST
+      def request_params
+        if request.post? && request.content_type&.include?('application/json')
+          JSON.parse(request.body.read).with_indifferent_access rescue {}
+        else
+          params
+        end
+      end
+
+      # FIXED: Improved area finding with better error messages
+      def find_area(area_id)
+        area = Area.find_by(id: area_id)
+        raise ActiveRecord::RecordNotFound, "Area with ID #{area_id} not found" unless area
+        area
+      end
+
+      # FIXED: Calculate pricing for a single delivery type
+      def calculate_single_delivery_type(origin_area, destination_area, delivery_type, package_size)
         is_intra_area = origin_area.id == destination_area.id
         is_intra_location = origin_area.location_id == destination_area.location_id
-
-        # Base cost calculation
         base_cost = calculate_base_cost(origin_area, destination_area, is_intra_area, is_intra_location)
-        
-        # Package size multiplier
         size_multiplier = get_package_size_multiplier(package_size)
 
-        # Calculate for each delivery type
+        case delivery_type.downcase
+        when 'fragile'
+          calculate_fragile_price(base_cost, size_multiplier)
+        when 'home', 'doorstep'
+          calculate_home_price(base_cost, size_multiplier, is_intra_area, is_intra_location)
+        when 'office'
+          calculate_office_price(base_cost, size_multiplier, is_intra_area, is_intra_location)
+        when 'collection'
+          calculate_collection_price(base_cost, size_multiplier)
+        when 'agent'
+          calculate_office_price(base_cost, size_multiplier, is_intra_area, is_intra_location) # Agent delivery same as office
+        else
+          calculate_home_price(base_cost, size_multiplier, is_intra_area, is_intra_location) # Default to home delivery
+        end
+      end
+
+      # Calculate pricing for all delivery types
+      def calculate_all_delivery_types(origin_area, destination_area, package_size)
+        is_intra_area = origin_area.id == destination_area.id
+        is_intra_location = origin_area.location_id == destination_area.location_id
+        base_cost = calculate_base_cost(origin_area, destination_area, is_intra_area, is_intra_location)
+        size_multiplier = get_package_size_multiplier(package_size)
+
         {
           fragile: calculate_fragile_price(base_cost, size_multiplier),
           home: calculate_home_price(base_cost, size_multiplier, is_intra_area, is_intra_location),
           office: calculate_office_price(base_cost, size_multiplier, is_intra_area, is_intra_location),
-          collection: calculate_collection_price(base_cost, size_multiplier)
+          collection: calculate_collection_price(base_cost, size_multiplier),
+          agent: calculate_office_price(base_cost, size_multiplier, is_intra_area, is_intra_location) # Agent same as office
         }
+      end
+
+      def determine_route_type(origin_area, destination_area)
+        if origin_area.id == destination_area.id
+          'intra_area'
+        elsif origin_area.location_id == destination_area.location_id
+          'intra_location'
+        else
+          'inter_location'
+        end
       end
 
       def calculate_base_cost(origin_area, destination_area, is_intra_area, is_intra_location)
@@ -121,12 +196,15 @@ module Api
         elsif is_intra_location
           280 # Same location, different areas
         else
-          # Inter-location pricing based on major routes
+          # Inter-location pricing
           calculate_inter_location_cost(origin_area.location, destination_area.location)
         end
       end
 
       def calculate_inter_location_cost(origin_location, destination_location)
+        # FIXED: Handle nil locations gracefully
+        return 350 unless origin_location && destination_location
+
         # Major route pricing
         major_routes = {
           ['Nairobi', 'Mombasa'] => 420,
@@ -146,7 +224,7 @@ module Api
       end
 
       def get_package_size_multiplier(package_size)
-        case package_size
+        case package_size.to_s.downcase
         when 'small'
           0.8
         when 'medium'
@@ -159,7 +237,6 @@ module Api
       end
 
       def calculate_fragile_price(base_cost, size_multiplier)
-        # Fragile items have premium pricing with special handling surcharge
         fragile_base = base_cost * 1.5 # 50% premium for fragile handling
         fragile_surcharge = 100 # Fixed surcharge for special handling
         
@@ -167,7 +244,6 @@ module Api
       end
 
       def calculate_home_price(base_cost, size_multiplier, is_intra_area, is_intra_location)
-        # Home delivery (doorstep) - standard pricing
         home_base = if is_intra_area
           base_cost * 1.2 # 20% premium for doorstep delivery within area
         elsif is_intra_location
@@ -180,7 +256,6 @@ module Api
       end
 
       def calculate_office_price(base_cost, size_multiplier, is_intra_area, is_intra_location)
-        # Office delivery (collect from office) - discounted pricing
         office_discount = 0.75 # 25% discount for office collection
         office_base = base_cost * office_discount
 
@@ -188,7 +263,6 @@ module Api
       end
 
       def calculate_collection_price(base_cost, size_multiplier)
-        # Collection service - premium pricing for pickup service
         collection_base = base_cost * 1.3 # 30% premium for collection service
         collection_surcharge = 50 # Fixed surcharge for collection logistics
         
