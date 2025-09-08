@@ -9,16 +9,17 @@ module Api
 
       def create
   ActiveRecord::Base.transaction do
+    # Build business with owner
     business = Business.new(business_params.except(:category_ids).merge(owner: current_user))
 
-    if business.save
-      # Handle categories safely
-      if params.dig(:business, :category_ids).present?
-        category_ids = params[:business][:category_ids].first(5)
-        valid_categories = Category.active.where(id: category_ids)
-        business.categories = valid_categories
-      end
+    # Attach categories BEFORE save (to satisfy validations)
+    if params.dig(:business, :category_ids).present?
+      category_ids = params[:business][:category_ids].first(5)
+      valid_categories = Category.active.where(id: category_ids)
+      business.categories = valid_categories
+    end
 
+    if business.save
       # Create owner relationship
       UserBusiness.create!(user: current_user, business: business, role: 'owner')
 
