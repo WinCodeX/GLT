@@ -1,4 +1,4 @@
-# db/seeds.rb - UPDATED: Enhanced seed file with comprehensive pricing for all delivery types
+# db/seeds.rb - UPDATED: Enhanced seed file with email confirmation fix
 
 puts "🌱 Starting to seed the database..."
 
@@ -20,14 +20,28 @@ ActiveRecord::Base.transaction do
     
     puts "  📋 Total roles in system: #{Role.count}"
     
-    # === USER CREATION HELPER ===
+    # === USER CREATION HELPER WITH CONFIRMATION FIX ===
     def create_user_safely(email:, password:, first_name:, last_name:, phone_number:, role: nil)
       user = User.find_or_create_by!(email: email) do |u|
         u.password = password
         u.password_confirmation = password
         u.first_name = first_name
         u.last_name = last_name
-        u.phone_number = phone_number  # Fixed: using phone_number not phone
+        u.phone_number = phone_number
+        
+        # 🔧 FIX: Skip email confirmation for seeded users
+        u.skip_confirmation_notification!
+        u.confirmed_at = Time.current
+        u.confirmation_token = nil
+      end
+      
+      # Ensure existing users are also confirmed
+      unless user.confirmed_at.present?
+        user.update!(
+          confirmed_at: Time.current,
+          confirmation_token: nil
+        )
+        puts "  ✓ Confirmed existing user: #{user.email}"
       end
       
       # Add role with proper error handling
@@ -40,6 +54,16 @@ ActiveRecord::Base.transaction do
         end
       elsif role
         puts "  ⚠️  Warning: Role '#{role}' does not exist for user: #{user.email}"
+      end
+      
+      # 🔧 FIX: Verify authentication works immediately
+      if user.valid_password?(password)
+        puts "  ✅ Password verification successful: #{user.email}"
+      else
+        puts "  ❌ Password verification failed: #{user.email}"
+        puts "    - Confirmed: #{user.confirmed_at.present?}"
+        puts "    - Has password: #{user.encrypted_password.present?}"
+        puts "    - Google user: #{user.google_user?}"
       end
       
       puts "  ✓ User ready: #{user.email}#{role ? " (#{role})" : ""}"
@@ -59,7 +83,7 @@ ActiveRecord::Base.transaction do
       password: "SecureSystemPassword123!",
       first_name: "GLT",
       last_name: "System",
-      phone_number: "+254700000000"  # Fixed: using phone_number
+      phone_number: "+254700000000"
     )
     
     # Create main application users
@@ -68,7 +92,7 @@ ActiveRecord::Base.transaction do
       password: "Leviathan@Xcode",
       first_name: "Xs",
       last_name: "",
-      phone_number: "+254712293377",  # Fixed: using phone_number
+      phone_number: "+254712293377",
       role: :client
     )
     
@@ -77,25 +101,25 @@ ActiveRecord::Base.transaction do
       password: "Password123",
       first_name: "Glen",
       last_name: "",
-      phone_number: "+254712293377",  # Fixed: using phone_number
+      phone_number: "+254712293377",
       role: :admin
     )
 
-create_user_safely(
+    create_user_safely(
       email: "glen@glt.co.ke",
       password: "Leviathan@Xcode",
       first_name: "Glen",
       last_name: "",
-      phone_number: "+254712293377",  # Fixed: using phone_number
+      phone_number: "+254712293377",
       role: :admin
     )
 
-create_user_safely(
+    create_user_safely(
       email: "lisa@glt.com",
       password: "Tumaforlife96",
       first_name: "Wambui",
       last_name: "Nganga",
-      phone_number: "+254729688583",  # Fixed: using phone_number
+      phone_number: "+254729688583",
       role: :admin
     )
 
@@ -104,7 +128,7 @@ create_user_safely(
       password: "Tumaforlife96",
       first_name: "Wambui",
       last_name: "Nganga",
-      phone_number: "+254729688583",  # Fixed: using phone_number
+      phone_number: "+254729688583",
       role: :admin
     )
     
@@ -115,7 +139,7 @@ create_user_safely(
         password: "password123",
         first_name: "Test",
         last_name: "User",
-        phone_number: "+254700000001"  # Fixed: using phone_number
+        phone_number: "+254700000001"
       )
       puts "  📧 Dev Test User - Email: test@example.com, Password: password123"
     end
@@ -493,11 +517,43 @@ create_user_safely(
       end
     end
     
+    # === FINAL AUTHENTICATION VERIFICATION ===
+    puts "\n🔐 Final authentication verification..."
+    
+    test_accounts = [
+      { email: "glen@glt.co.ke", password: "Leviathan@Xcode", role: "admin" },
+      { email: "lisa@glt.co.ke", password: "Tumaforlife96", role: "admin" },
+      { email: "lisa@glt.com", password: "Tumaforlife96", role: "admin" },
+      { email: "admin@example.com", password: "Password123", role: "admin" },
+      { email: "glenwinterg970@gmail.com", password: "Leviathan@Xcode", role: "client" }
+    ]
+    
+    test_accounts.each do |account|
+      user = User.find_by(email: account[:email])
+      if user
+        auth_success = user.valid_password?(account[:password])
+        confirmed = user.confirmed_at.present?
+        correct_role = user.primary_role == account[:role]
+        
+        if auth_success && confirmed && correct_role
+          puts "  ✅ #{account[:email]}: READY FOR LOGIN"
+        else
+          puts "  ❌ #{account[:email]}: ISSUE DETECTED"
+          puts "    - Auth: #{auth_success ? 'OK' : 'FAIL'}"
+          puts "    - Confirmed: #{confirmed ? 'OK' : 'FAIL'}"
+          puts "    - Role: #{correct_role ? 'OK' : 'FAIL'} (expected #{account[:role]}, got #{user.primary_role})"
+        end
+      else
+        puts "  ❌ #{account[:email]}: USER NOT FOUND"
+      end
+    end
+    
     # === COMPLETION SUMMARY ===
     puts "\n🎉 Database seeding completed successfully!"
     puts "📊 Final counts:"
     puts "  🔐 Roles: #{Role.count}"
     puts "  👤 Users: #{User.count}"
+    puts "  ✉️  Confirmed users: #{User.where.not(confirmed_at: nil).count}"
     puts "  🗺️ Locations: #{Location.count}"
     puts "  🏢 Areas: #{Area.count}"
     puts "  👥 Agents: #{Agent.count}"
@@ -505,8 +561,10 @@ create_user_safely(
     puts "  💰 Prices: #{Price.count}"
     
     puts "\n🚀 System ready for enhanced package operations!"
-    puts "\n💡 Test credentials:"
-    puts "  📧 Admin: admin@example.com / Password123"
+    puts "\n💡 Test credentials (all accounts confirmed and ready):"
+    puts "  📧 Primary Admin: glen@glt.co.ke / Leviathan@Xcode"
+    puts "  📧 Secondary Admin: lisa@glt.co.ke / Tumaforlife96"
+    puts "  📧 Alt Admin: admin@example.com / Password123"
     puts "  📧 Client: glenwinterg970@gmail.com / Leviathan@Xcode"
     if Rails.env.development?
       puts "  📧 Test: test@example.com / password123"
