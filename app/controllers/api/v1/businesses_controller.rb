@@ -8,58 +8,102 @@ module Api
       before_action :authorize_business_owner, only: [:update, :destroy]
 
       def create
-  ActiveRecord::Base.transaction do
-    # Build business with owner
-    business = Business.new(business_params.except(:category_ids).merge(owner: current_user))
+        ActiveRecord::Base.transaction do
+          Rails.logger.info "Creating business for user #{current_user.id} with params: #{business_params}"
+          
+          # Build business with owner but don't save yet
+          @business = Business.new(business_params.except(:category_ids))
+          @business.owner = current_user
 
-    # Attach categories BEFORE save (to satisfy validations)
-    if params.dig(:business, :category_ids).present?
-      category_ids = params[:business][:category_ids].first(5)
-      valid_categories = Category.active.where(id: category_ids)
-      business.categories = valid_categories
-    end
+          # Handle categories BEFORE validation
+          if params.dig(:business, :category_ids).present?
+            category_ids = Array(params[:business][:category_ids]).first(5)
+            Rails.logger.info "Attaching categories: #{category_ids}"
+            
+            valid_categories = Category.active.where(id: category_ids)
+            Rails.logger.info "Found valid categories: #{valid_categories.pluck(:id)}"
+            
+            if valid_categories.empty?
+              return render json: { 
+                success: false,
+                message: "No valid categories found",
+                errors: ["Please select at least one valid category"]
+              }, status: :unprocessable_entity
+            end
+            
+            # Attach categories to the business object (not persisted yet)
+            @business.categories = valid_categories
+          else
+            return render json: { 
+              success: false,
+              message: "Categories are required",
+              errors: ["Please select at least one category"]
+            }, status: :unprocessable_entity
+          end
 
-    if business.save
-      # Create owner relationship
-      UserBusiness.create!(user: current_user, business: business, role: 'owner')
+          # Validate the business with categories attached
+          unless @business.valid?
+            Rails.logger.error "Business validation failed: #{@business.errors.full_messages}"
+            return render json: { 
+              success: false,
+              message: "Validation failed",
+              errors: @business.errors.full_messages 
+            }, status: :unprocessable_entity
+          end
 
-      render json: { 
-        success: true, 
-        message: "Business created successfully",
-        business: business_json(business)
-      }, status: :created
-    else
-      render json: { 
-        success: false,
-        message: "Failed to create business",
-        errors: business.errors.full_messages 
-      }, status: :unprocessable_entity
-    end
-  end
-rescue ActiveRecord::RecordInvalid => e
-  render json: { 
-    success: false,
-    message: "Validation failed",
-    errors: [e.message]
-  }, status: :unprocessable_entity
-end
+          # Save the business (this will save the business and create category associations)
+          if @business.save!
+            Rails.logger.info "Business created successfully: #{@business.id}"
+            
+            # Note: UserBusiness relationship is not needed since we already have owner
+            # The owner relationship is sufficient for business ownership
+            
+            render json: { 
+              success: true, 
+              message: "Business created successfully",
+              data: { business: business_json(@business) }
+            }, status: :created
+          end
+
+        rescue ActiveRecord::RecordInvalid => e
+          Rails.logger.error "Business creation validation error: #{e.message}"
+          render json: { 
+            success: false,
+            message: "Validation failed",
+            errors: [e.message]
+          }, status: :unprocessable_entity
+          
+        rescue StandardError => e
+          Rails.logger.error "Business creation error: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          render json: { 
+            success: false,
+            message: "Failed to create business",
+            errors: ["An unexpected error occurred. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
 
       def update
         ActiveRecord::Base.transaction do
+          Rails.logger.info "Updating business #{@business.id} with params: #{business_params}"
+          
           if @business.update(business_params.except(:category_ids))
             # Update categories if provided
-            if params[:business][:category_ids].present?
-              category_ids = params[:business][:category_ids].first(5) # Limit to 5
+            if params.dig(:business, :category_ids).present?
+              category_ids = Array(params[:business][:category_ids]).first(5)
               valid_categories = Category.active.where(id: category_ids)
+              Rails.logger.info "Updating categories to: #{valid_categories.pluck(:id)}"
               @business.categories = valid_categories
             end
 
             render json: { 
               success: true, 
               message: "Business updated successfully",
-              business: business_json(@business)
+              data: { business: business_json(@business) }
             }, status: :ok
           else
+            Rails.logger.error "Business update validation failed: #{@business.errors.full_messages}"
             render json: { 
               success: false,
               message: "Failed to update business",
@@ -68,57 +112,89 @@ end
           end
         end
       rescue ActiveRecord::RecordInvalid => e
+        Rails.logger.error "Business update validation error: #{e.message}"
         render json: { 
           success: false,
           message: "Validation failed",
           errors: [e.message]
         }, status: :unprocessable_entity
+      rescue StandardError => e
+        Rails.logger.error "Business update error: #{e.class} - #{e.message}"
+        render json: { 
+          success: false,
+          message: "Failed to update business",
+          errors: ["An unexpected error occurred. Please try again."]
+        }, status: :internal_server_error
       end
 
       def index
-        owned_businesses = current_user.user_businesses
-                                      .includes(business: :categories)
-                                      .where(role: 'owner')
-                                      .map(&:business)
+        begin
+          # Get businesses where user is owner through the owner relationship
+          owned_businesses = Business.includes(:categories, :owner)
+                                   .where(owner: current_user)
+                                   .order(created_at: :desc)
 
-        joined_businesses = current_user.user_businesses
-                                       .includes(business: :categories)
-                                       .where(role: 'staff')
-                                       .map(&:business)
+          # Get businesses where user is staff through UserBusiness relationship
+          joined_businesses = current_user.user_businesses
+                                         .includes(business: [:categories, :owner])
+                                         .where(role: 'staff')
+                                         .map(&:business)
 
-        render json: {
-          success: true,
-          data: {
-            owned: owned_businesses.map { |business| business_json(business) },
-            joined: joined_businesses.map { |business| business_json(business) }
-          },
-          meta: {
-            owned_count: owned_businesses.length,
-            joined_count: joined_businesses.length,
-            total_count: owned_businesses.length + joined_businesses.length
-          }
-        }, status: :ok
+          Rails.logger.info "User #{current_user.id} has #{owned_businesses.count} owned and #{joined_businesses.count} joined businesses"
+
+          render json: {
+            success: true,
+            data: {
+              owned: owned_businesses.map { |business| business_json(business) },
+              joined: joined_businesses.map { |business| business_json(business) }
+            },
+            meta: {
+              owned_count: owned_businesses.count,
+              joined_count: joined_businesses.count,
+              total_count: owned_businesses.count + joined_businesses.count
+            }
+          }, status: :ok
+          
+        rescue StandardError => e
+          Rails.logger.error "Error fetching businesses: #{e.class} - #{e.message}"
+          render json: {
+            success: false,
+            message: "Failed to fetch businesses",
+            errors: ["Unable to load businesses. Please try again."]
+          }, status: :internal_server_error
+        end
       end
 
       def show
         render json: {
           success: true,
-          business: business_json(@business, include_owner: true, include_stats: true)
+          data: { business: business_json(@business, include_owner: true, include_stats: true) }
         }, status: :ok
       end
 
       def destroy
-        if @business.destroy
-          render json: {
-            success: true,
-            message: "Business deleted successfully"
-          }, status: :ok
-        else
+        begin
+          if @business.destroy
+            Rails.logger.info "Business #{@business.id} deleted successfully"
+            render json: {
+              success: true,
+              message: "Business deleted successfully"
+            }, status: :ok
+          else
+            Rails.logger.error "Failed to delete business #{@business.id}: #{@business.errors.full_messages}"
+            render json: {
+              success: false,
+              message: "Failed to delete business",
+              errors: @business.errors.full_messages
+            }, status: :unprocessable_entity
+          end
+        rescue StandardError => e
+          Rails.logger.error "Error deleting business: #{e.class} - #{e.message}"
           render json: {
             success: false,
             message: "Failed to delete business",
-            errors: @business.errors.full_messages
-          }, status: :unprocessable_entity
+            errors: ["An unexpected error occurred. Please try again."]
+          }, status: :internal_server_error
         end
       end
 
@@ -152,7 +228,9 @@ end
       end
 
       def business_params
-        params.require(:business).permit(:name, :phone_number, category_ids: [])
+        permitted_params = params.require(:business).permit(:name, :phone_number, category_ids: [])
+        Rails.logger.info "Permitted params: #{permitted_params}"
+        permitted_params
       end
 
       def business_json(business, include_owner: false, include_stats: false)
@@ -168,11 +246,11 @@ end
               description: category.description
             }
           end,
-          created_at: business.created_at,
-          updated_at: business.updated_at
+          created_at: business.created_at.iso8601,
+          updated_at: business.updated_at.iso8601
         }
 
-        if include_owner
+        if include_owner && business.owner
           json[:owner] = {
             id: business.owner.id,
             email: business.owner.email,
@@ -182,7 +260,7 @@ end
 
         if include_stats
           json[:stats] = {
-            total_users: business.users.count,
+            total_users: business.users.count + 1, # +1 for owner
             category_count: business.categories.count
           }
         end
