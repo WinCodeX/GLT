@@ -16,7 +16,7 @@ module Api
         resource = User.find_for_database_authentication(email: params[:user][:email])
         
         if resource&.valid_password?(params[:user][:password])
-          if resource.confirmed_at.present?
+          #if resource.confirmed_at.present?
             # Sign in the user
             sign_in(resource)
             resource.mark_online! if resource.respond_to?(:mark_online!)
