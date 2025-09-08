@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_05_184753) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_08_082313) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -64,6 +64,16 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_05_184753) do
     t.index ["location_id"], name: "index_areas_on_location_id"
   end
 
+  create_table "business_categories", force: :cascade do |t|
+    t.bigint "business_id", null: false
+    t.bigint "category_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["business_id", "category_id"], name: "index_business_categories_on_business_and_category", unique: true
+    t.index ["business_id"], name: "index_business_categories_on_business_id"
+    t.index ["category_id"], name: "index_business_categories_on_category_id"
+  end
+
   create_table "business_invites", force: :cascade do |t|
     t.string "code", null: false
     t.bigint "inviter_id", null: false
@@ -82,7 +92,21 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_05_184753) do
     t.bigint "owner_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "phone_number"
     t.index ["owner_id"], name: "index_businesses_on_owner_id"
+    t.index ["phone_number"], name: "index_businesses_on_phone_number"
+  end
+
+  create_table "categories", force: :cascade do |t|
+    t.string "name", null: false
+    t.string "slug", null: false
+    t.text "description"
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["active"], name: "index_categories_on_active"
+    t.index ["name"], name: "index_categories_on_name"
+    t.index ["slug"], name: "index_categories_on_slug", unique: true
   end
 
   create_table "conversation_participants", force: :cascade do |t|
@@ -329,6 +353,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_05_184753) do
   add_foreign_key "agents", "areas"
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
+  add_foreign_key "business_categories", "businesses"
+  add_foreign_key "business_categories", "categories"
   add_foreign_key "business_invites", "businesses"
   add_foreign_key "business_invites", "users", column: "inviter_id"
   add_foreign_key "businesses", "users", column: "owner_id"
