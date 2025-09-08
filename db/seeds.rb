@@ -1,5 +1,4 @@
-# db/seeds.rb
-# Production-ready seed file with proper attribute names and error handling
+# db/seeds.rb - UPDATED: Enhanced seed file with comprehensive pricing for all delivery types
 
 puts "🌱 Starting to seed the database..."
 
@@ -94,25 +93,22 @@ ActiveRecord::Base.transaction do
       puts "  📧 Dev Test User - Email: test@example.com, Password: password123"
     end
     
+    # === PACKAGE STATE FIX ===
+    puts "📦 Updating existing packages to 'pending' state..."
 
+    # Example: find by tracking codes NRB-001 and NRB-001-MCH
+    package_codes = ["NRB-001", "NRB-001-MCH"]
 
-# === PACKAGE STATE FIX ===
-puts "📦 Updating existing packages to 'pending' state..."
-
-# Example: find by tracking codes NRB-001 and NRB-001-MCH
-package_codes = ["NRB-001", "NRB-001-MCH"]
-
-package_codes.each do |code|
-  package = Package.find_by(code: code)
-  if package
-    package.update!(state: :pending) # if enum
-    # package.update!(state: "pending") # if string
-    puts "  ✓ Package #{code} updated to 'pending'"
-  else
-    puts "  ⚠️ Package #{code} not found, skipping..."
-  end
-end
-
+    package_codes.each do |code|
+      package = Package.find_by(code: code)
+      if package
+        package.update!(state: :pending) # if enum
+        # package.update!(state: "pending") # if string
+        puts "  ✓ Package #{code} updated to 'pending'"
+      else
+        puts "  ⚠️ Package #{code} not found, skipping..."
+      end
+    end
 
     # === LOCATIONS SETUP ===
     puts "🗺️ Setting up locations with initials..."
@@ -313,8 +309,12 @@ end
     
     puts "  📋 Total categories in system: #{Category.count}"
     
-    # === PRICING SETUP ===
-    puts "💰 Setting up pricing matrix..."
+    # === ENHANCED PRICING SETUP ===
+    puts "💰 Setting up comprehensive pricing matrix for all delivery types..."
+    
+    # Clear existing prices to avoid conflicts
+    Price.delete_all
+    puts "  🗑️ Cleared existing pricing data"
     
     # Helper method for calculating inter-city costs
     def calculate_inter_city_cost(origin, destination)
@@ -327,9 +327,58 @@ end
       route_key = [origin, destination].sort
       major_routes[route_key] || (origin == "Nairobi" || destination == "Nairobi" ? 380 : 370)
     end
+
+    # Package size multipliers
+    def get_package_size_multiplier(size)
+      case size
+      when 'small' then 0.8
+      when 'large' then 1.4
+      else 1.0 # medium
+      end
+    end
+
+    # Calculate delivery type pricing
+    def calculate_delivery_pricing(base_cost, delivery_type, package_size, is_intra_area, is_intra_location)
+      size_multiplier = get_package_size_multiplier(package_size)
+      
+      case delivery_type
+      when 'fragile'
+        fragile_base = base_cost * 1.5 # 50% premium for fragile handling
+        fragile_surcharge = 100 # Fixed surcharge for special handling
+        ((fragile_base + fragile_surcharge) * size_multiplier).round
+      when 'home'
+        home_base = if is_intra_area
+          base_cost * 1.2 # 20% premium for doorstep delivery within area
+        elsif is_intra_location
+          base_cost * 1.1 # 10% premium for doorstep delivery within location
+        else
+          base_cost # Standard inter-location pricing
+        end
+        (home_base * size_multiplier).round
+      when 'office'
+        office_discount = 0.75 # 25% discount for office collection
+        office_base = base_cost * office_discount
+        (office_base * size_multiplier).round
+      when 'collection'
+        collection_base = base_cost * 1.3 # 30% premium for collection service
+        collection_surcharge = 50 # Fixed surcharge for collection logistics
+        ((collection_base + collection_surcharge) * size_multiplier).round
+      when 'agent'
+        # Agent delivery is standardized pricing
+        150
+      else
+        (base_cost * size_multiplier).round
+      end
+    end
     
     # Get all locations for pricing calculations
     all_locations = Location.all.to_a
+    all_delivery_types = ['fragile', 'home', 'office', 'collection', 'agent']
+    all_package_sizes = ['small', 'medium', 'large']
+    
+    puts "  📊 Generating pricing for #{all_locations.count} locations, #{all_delivery_types.count} delivery types, #{all_package_sizes.count} package sizes..."
+    
+    pricing_count = 0
     
     all_locations.each do |origin_location|
       all_locations.each do |destination_location|
@@ -337,13 +386,10 @@ end
         # Calculate base costs based on route type
         if origin_location == destination_location
           # Intra-city pricing
-          base_doorstep_cost = 280
-          base_mixed_cost = 230
+          base_cost = 200
         else
           # Inter-city pricing
           base_cost = calculate_inter_city_cost(origin_location.name, destination_location.name)
-          base_doorstep_cost = base_cost + rand(-15..20)
-          base_mixed_cost = ((base_doorstep_cost + 150) / 2).round
         end
         
         # Get areas for this location pair
@@ -353,34 +399,70 @@ end
         origin_areas.each do |origin_area|
           destination_areas.each do |destination_area|
             
-            # Create doorstep delivery price
-            Price.find_or_create_by!(
-              origin_area: origin_area,
-              destination_area: destination_area,
-              delivery_type: 'doorstep'
-            ) do |p|
-              area_variation = rand(-8..8)
-              p.cost = [[base_doorstep_cost + area_variation, 420].min, 250].max
-            end
+            # Determine relationship
+            is_intra_area = origin_area.id == destination_area.id
+            is_intra_location = origin_area.location_id == destination_area.location_id
             
-            # Create agent pickup price (standardized)
-            Price.find_or_create_by!(
-              origin_area: origin_area,
-              destination_area: destination_area,
-              delivery_type: 'agent'
-            ) { |p| p.cost = 150 }
-            
-            # Create mixed delivery price
-            Price.find_or_create_by!(
-              origin_area: origin_area,
-              destination_area: destination_area,
-              delivery_type: 'mixed'
-            ) do |p|
-              area_variation = rand(-5..5)
-              p.cost = [[base_mixed_cost + area_variation, 300].min, 200].max
+            all_delivery_types.each do |delivery_type|
+              all_package_sizes.each do |package_size|
+                
+                # Calculate cost for this combination
+                calculated_cost = calculate_delivery_pricing(
+                  base_cost, 
+                  delivery_type, 
+                  package_size, 
+                  is_intra_area, 
+                  is_intra_location
+                )
+                
+                # Create price record
+                Price.create!(
+                  origin_area: origin_area,
+                  destination_area: destination_area,
+                  delivery_type: delivery_type,
+                  package_size: package_size,
+                  cost: calculated_cost
+                )
+                
+                pricing_count += 1
+              end
             end
           end
         end
+      end
+    end
+    
+    puts "  ✅ Created #{pricing_count} pricing records"
+    
+    # === SAMPLE PRICING VERIFICATION ===
+    puts "  🔍 Sample pricing verification:"
+    
+    # Sample intra-area pricing
+    cbd_area = Area.find_by(name: "CBD")
+    if cbd_area
+      sample_intra = Price.where(
+        origin_area: cbd_area,
+        destination_area: cbd_area,
+        package_size: 'medium'
+      )
+      
+      sample_intra.each do |price|
+        puts "    CBD → CBD (#{price.delivery_type}, medium): KES #{price.cost}"
+      end
+    end
+    
+    # Sample inter-location pricing
+    nairobi_cbd = Area.find_by(name: "CBD")
+    mombasa_island = Area.find_by(name: "Mombasa Island")
+    if nairobi_cbd && mombasa_island
+      sample_inter = Price.where(
+        origin_area: nairobi_cbd,
+        destination_area: mombasa_island,
+        package_size: 'medium'
+      )
+      
+      sample_inter.each do |price|
+        puts "    Nairobi CBD → Mombasa Island (#{price.delivery_type}, medium): KES #{price.cost}"
       end
     end
     
@@ -395,13 +477,25 @@ end
     puts "  🏷️ Categories: #{Category.count}"
     puts "  💰 Prices: #{Price.count}"
     
-    puts "\n🚀 System ready for package operations!"
+    puts "\n🚀 System ready for enhanced package operations!"
     puts "\n💡 Test credentials:"
     puts "  📧 Admin: admin@example.com / Password123"
     puts "  📧 Client: glenwinterg970@gmail.com / Leviathan@Xcode"
     if Rails.env.development?
       puts "  📧 Test: test@example.com / password123"
     end
+    
+    puts "\n📦 Available delivery types:"
+    puts "  🏠 Home Delivery - Direct to recipient address"
+    puts "  🏢 Office Delivery - Collect from GLT office"
+    puts "  ⚠️  Fragile Delivery - Special handling for delicate items"
+    puts "  📦 Collection Service - We collect from your location"
+    puts "  👤 Agent Delivery - Agent-to-agent transfer"
+    
+    puts "\n📏 Package sizes supported:"
+    puts "  📦 Small - Documents, accessories, small items"
+    puts "  📦 Medium - Books, clothes, electronics"
+    puts "  📦 Large - Bulky items, furniture parts (special handling required)"
     
   rescue StandardError => e
     puts "\n❌ Seeding failed with error: #{e.message}"
