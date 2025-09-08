@@ -1,4 +1,4 @@
-# app/controllers/api/v1/sessions_controller.rb - Fixed version
+# app/controllers/api/v1/sessions_controller.rb - Fixed version (removed confirmation check)
 require 'google-id-token'
 require 'open-uri'
 
@@ -7,36 +7,28 @@ module Api
     class SessionsController < Devise::SessionsController
       respond_to :json
       
-      
       # ===========================================
-      # 🔐 REGULAR LOGIN (Fixed)
+      # 🔐 REGULAR LOGIN (FIXED - No confirmation check)
       # ===========================================
 
       def create
         resource = User.find_for_database_authentication(email: params[:user][:email])
         
         if resource&.valid_password?(params[:user][:password])
-          #if resource.confirmed_at.present?
-            # Sign in the user
-            sign_in(resource)
-            resource.mark_online! if resource.respond_to?(:mark_online!)
-            
-            # Get JWT token from warden (if JWT is enabled)
-            token = request.env['warden-jwt_auth.token']
-            
-            render json: {
-              status: 'success',
-              message: 'Logged in successfully',
-              token: token,
-              user: serialize_user(resource)
-            }, status: :ok
-          else
-            render json: {
-              status: 'error',
-              message: 'Please confirm your email address before signing in',
-              code: 'email_not_confirmed'
-            }, status: :unauthorized
-          end
+          # 🔧 REMOVED: Custom confirmation check since :confirmable isn't enabled
+          # Sign in the user directly
+          sign_in(resource)
+          resource.mark_online! if resource.respond_to?(:mark_online!)
+          
+          # Get JWT token from warden (if JWT is enabled)
+          token = request.env['warden-jwt_auth.token']
+          
+          render json: {
+            status: 'success',
+            message: 'Logged in successfully',
+            token: token,
+            user: serialize_user(resource)
+          }, status: :ok
         else
           render json: {
             status: 'error',
@@ -59,7 +51,7 @@ module Api
       end
 
       # ===========================================
-      # 🔐 GOOGLE LOGIN (From your working controller)
+      # 🔐 GOOGLE LOGIN (Keep existing implementation)
       # ===========================================
 
       def google_login
@@ -89,7 +81,7 @@ module Api
             user.phone_number = nil
             user.password = Devise.friendly_token[0, 20]
             user.skip_confirmation! if user.respond_to?(:skip_confirmation!)
-            user.confirmed_at = Time.current
+            user.confirmed_at = Time.current if user.respond_to?(:confirmed_at=)
             user.provider = 'google_oauth2'
             user.uid = payload['sub'] # Google's user ID
             user.google_image_url = google_avatar_url
@@ -126,14 +118,14 @@ module Api
           }, status: :ok
 
         rescue GoogleIDToken::ValidationError => e
-          Rails.logger.error "❌ Google token invalid: #{e.message}"
+          Rails.logger.error "Google token invalid: #{e.message}"
           render json: { 
             status: 'error',
             message: 'Invalid Google token',
             code: 'invalid_token'
           }, status: :unauthorized
         rescue => e
-          Rails.logger.error "❌ Google login error: #{e.message}"
+          Rails.logger.error "Google login error: #{e.message}"
           render json: {
             status: 'error', 
             message: 'Google authentication failed',
@@ -184,9 +176,9 @@ module Api
             content_type: image_data.content_type || 'image/jpeg'
           )
           
-          Rails.logger.info "✅ Avatar attached for user #{user.email}"
+          Rails.logger.info "Avatar attached for user #{user.email}"
         rescue StandardError => e
-          Rails.logger.error "❌ Failed to attach Google avatar: #{e.message}"
+          Rails.logger.error "Failed to attach Google avatar: #{e.message}"
           # Don't fail the login process if avatar attachment fails
         end
       end
@@ -211,9 +203,9 @@ module Api
         if resource.persisted?
           token = request.env['warden-jwt_auth.token']
           
-          Rails.logger.info "✅ JWT token dispatched: #{token&.slice(0, 30)}..." if token
-          Rails.logger.info "🔍 Request Path: #{request.path}"
-          Rails.logger.info "🧪 User: #{resource.email}"
+          Rails.logger.info "JWT token dispatched: #{token&.slice(0, 30)}..." if token
+          Rails.logger.info "Request Path: #{request.path}"
+          Rails.logger.info "User: #{resource.email}"
 
           render json: {
             status: 'success',
