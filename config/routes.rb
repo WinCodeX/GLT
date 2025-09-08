@@ -1,4 +1,5 @@
-# config/routes.rb
+# config/routes.rb - UPDATED: Enhanced with comprehensive pricing system and new delivery types
+
 Rails.application.routes.draw do
   # ==========================================
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
@@ -31,18 +32,22 @@ Rails.application.routes.draw do
     post 'api/v1/signup', to: 'api/v1/registrations#create'
   end
 
+  # ==========================================
+  # 💳 MPESA PAYMENT INTEGRATION
+  # ==========================================
+  
   resources :mpesa_payments, only: [:index] do
     collection do
       get :transactions
     end
   end
 
-scope :mpesa do
-  post 'stk_push', to: 'mpesa#stk_push'
-  post 'query_status', to: 'mpesa#query_status'
-post '/mpesa/callback', to: 'mpesa#callback'
-post '/mpesa/timeout', to: 'mpesa#timeout'
-end
+  scope :mpesa do
+    post 'stk_push', to: 'mpesa#stk_push'
+    post 'query_status', to: 'mpesa#query_status'
+    post '/mpesa/callback', to: 'mpesa#callback'
+    post '/mpesa/timeout', to: 'mpesa#timeout'
+  end
 
   # ==========================================
   # 🔐 NEW: EXPO-AUTH-SESSION OAUTH ROUTES
@@ -75,6 +80,7 @@ end
       # Legacy Google login route (maintain compatibility) - keep in sessions
       post :google_login, to: 'sessions#google_login'
 
+      # MPESA API endpoints
       scope :mpesa do
         post 'stk_push', to: 'mpesa#stk_push'
         post 'stk_push_bulk', to: 'mpesa#stk_push_bulk'
@@ -137,7 +143,7 @@ end
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
 
-      # 📊 USER SCANNING ANALYTICS & STATS
+      # User scanning analytics & stats
       get 'users/scanning_stats', to: 'users#scanning_stats'
       get 'users/scan_history', to: 'users#scan_history'
       get 'users/performance_metrics', to: 'users#performance_metrics'
@@ -166,10 +172,9 @@ end
       resources :categories, only: [:index, :show]
 
       # ==========================================
-      # 📦 PACKAGE MANAGEMENT & SCANNING SYSTEM
+      # 📋 FORM DATA ENDPOINTS
       # ==========================================
       
-      # 📋 FORM DATA ENDPOINTS
       namespace :form_data do
         get :areas, to: 'form_data#areas'
         get :agents, to: 'form_data#agents'  
@@ -177,9 +182,71 @@ end
         get :package_form_data, to: 'form_data#package_form_data'
         get :package_states, to: 'form_data#package_states'
         get :delivery_types, to: 'form_data#delivery_types'
+        # ADDED: Enhanced form data for new features
+        get :package_sizes, to: 'form_data#package_sizes'
+        get :pricing_options, to: 'form_data#pricing_options'
       end
 
-      # Core Package Resources
+      # ==========================================
+      # 💰 ENHANCED PRICING SYSTEM
+      # ==========================================
+      
+      resources :prices, only: [:index, :create, :show, :update, :destroy] do
+        member do
+          patch :update_cost
+        end
+        collection do
+          get :search
+          post :bulk_create
+          get :matrix
+          get :fragile_surcharge
+          # UPDATED: Enhanced pricing calculation endpoint
+          post :calculate, to: 'prices#calculate'
+          get :calculate, to: 'prices#calculate'
+        end
+      end
+
+      # UPDATED: Comprehensive pricing endpoints for all delivery types
+      namespace :pricing do
+        # Main calculation endpoint
+        post :calculate, to: 'prices#calculate'
+        get :calculate, to: 'prices#calculate'
+        
+        # Delivery type specific pricing
+        get :fragile, to: 'prices#fragile_pricing'
+        get :home, to: 'prices#home_pricing'
+        get :office, to: 'prices#office_pricing'  
+        get :collection, to: 'prices#collection_pricing'
+        get :agent, to: 'prices#agent_pricing'
+        
+        # Package size pricing
+        get :package_sizes, to: 'prices#package_size_pricing'
+        get :size_comparison, to: 'prices#package_size_comparison'
+        
+        # Comprehensive pricing analysis
+        get :matrix, to: 'prices#pricing_matrix'
+        get :compare_all, to: 'prices#compare_all_delivery_types'
+        get :route_analysis, to: 'prices#route_pricing_analysis'
+        
+        # Bulk pricing operations
+        post :bulk_calculate, to: 'prices#bulk_calculate'
+        post :bulk_update, to: 'prices#bulk_update_pricing'
+        
+        # Pricing validation and verification
+        post :validate, to: 'prices#validate_pricing'
+        get :verify_consistency, to: 'prices#verify_pricing_consistency'
+      end
+
+      # Legacy pricing endpoints (maintain backward compatibility)
+      get 'pricing', to: 'packages#calculate_pricing', defaults: { format: :json }
+      post 'pricing/calculate', to: 'prices#calculate'
+      get 'pricing/matrix', to: 'prices#pricing_matrix'
+      get 'pricing/fragile', to: 'prices#fragile_pricing'
+
+      # ==========================================
+      # 📦 ENHANCED PACKAGE MANAGEMENT SYSTEM
+      # ==========================================
+      
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
         member do
           get :validate
@@ -194,6 +261,11 @@ end
           patch :cancel
           get :timeline
           get :print_history
+          # ADDED: Enhanced package management endpoints
+          get :delivery_options
+          get :size_requirements
+          patch :update_delivery_type
+          patch :update_package_size
         end
         
         collection do
@@ -207,6 +279,20 @@ end
           patch :bulk_update
           get :qr_codes_batch
           get :thermal_qr_batch
+          
+          # ADDED: Enhanced package filtering by delivery type and size
+          get :fragile_packages
+          get :home_deliveries
+          get :office_deliveries
+          get :collection_packages
+          get :agent_deliveries
+          get :by_package_size
+          get :small_packages
+          get :medium_packages
+          get :large_packages
+          get :requiring_special_handling
+          get :delivery_type_breakdown
+          get :package_size_analytics
         end
       end
 
@@ -229,7 +315,7 @@ end
       end
 
       # ==========================================
-      # 📱 SCANNING SYSTEM
+      # 📱 ENHANCED SCANNING SYSTEM
       # ==========================================
       
       scope :scanning do
@@ -248,10 +334,15 @@ end
         post :sync_offline_actions, to: 'scanning#sync_offline_actions'
         get :sync_status, to: 'scanning#sync_status'
         delete :clear_offline_data, to: 'scanning#clear_offline_data'
+        
+        # ADDED: Enhanced scanning with delivery type awareness
+        get :fragile_scan_alerts, to: 'scanning#fragile_package_alerts'
+        get :large_package_scan_requirements, to: 'scanning#large_package_requirements'
+        get :special_handling_alerts, to: 'scanning#special_handling_alerts'
       end
 
       # ==========================================
-      # 🖨️ PRINTING SYSTEM
+      # 🖨️ ENHANCED PRINTING SYSTEM
       # ==========================================
       
       scope :printing do
@@ -277,10 +368,16 @@ end
         post :test_thermal_qr, to: 'printing#test_thermal_qr_printing'
         get :thermal_capabilities, to: 'printing#thermal_printer_capabilities'
         post :validate_thermal_printer, to: 'printing#validate_thermal_printer'
+        
+        # ADDED: Enhanced printing with delivery type specific formatting
+        post 'package/:package_code/fragile_label', to: 'printing#print_fragile_label'
+        post 'package/:package_code/collection_label', to: 'printing#print_collection_label'
+        post 'package/:package_code/large_package_label', to: 'printing#print_large_package_label'
+        get :special_handling_templates, to: 'printing#special_handling_label_templates'
       end
 
       # ==========================================
-      # 📍 TRACKING & EVENTS SYSTEM
+      # 📍 ENHANCED TRACKING & EVENTS SYSTEM
       # ==========================================
       
       resources :tracking_events, only: [:index, :show, :create] do
@@ -289,6 +386,10 @@ end
           get :by_package
           get :by_user
           get :timeline
+          # ADDED: Enhanced tracking for delivery types
+          get :fragile_events
+          get :collection_events
+          get :large_package_events
         end
       end
 
@@ -299,10 +400,14 @@ end
         get 'package/:package_code/location', to: 'tracking#current_location'
         
         post :batch_status, to: 'tracking#batch_package_status'
+        
+        # ADDED: Enhanced tracking for special delivery types
+        get 'package/:package_code/special_handling_status', to: 'tracking#special_handling_status'
+        get 'package/:package_code/delivery_requirements', to: 'tracking#delivery_requirements'
       end
 
       # ==========================================
-      # 🏢 LOCATION & AGENT MANAGEMENT
+      # 🏢 ENHANCED LOCATION & AGENT MANAGEMENT
       # ==========================================
       
       resources :areas, only: [:index, :create, :show, :update, :destroy] do
@@ -311,10 +416,15 @@ end
           get :routes
           get :agents
           get :scan_activity
+          # ADDED: Enhanced area analytics
+          get :delivery_type_breakdown
+          get :package_size_distribution
+          get :pricing_analysis
         end
         collection do
           post :bulk_create
           get :with_stats
+          get :pricing_matrix
         end
       end
 
@@ -322,6 +432,9 @@ end
         member do
           get :areas
           get :package_volume
+          # ADDED: Enhanced location analytics
+          get :delivery_performance
+          get :pricing_comparison
         end
       end
 
@@ -331,11 +444,17 @@ end
           get :performance
           get :scan_history
           patch :toggle_active
+          # ADDED: Enhanced agent analytics
+          get :delivery_type_performance
+          get :package_size_handling
+          get :special_handling_stats
         end
         collection do
           get :active
           get :by_area
           get :performance_report
+          get :fragile_handling_agents
+          get :collection_service_agents
         end
       end
 
@@ -346,11 +465,15 @@ end
           get :scan_history
           get :route_activity
           patch :toggle_active
+          # ADDED: Enhanced rider analytics
+          get :delivery_type_stats
+          get :special_handling_performance
         end
         collection do
           get :active
           get :by_area
           get :performance_report
+          get :fragile_delivery_specialists
         end
       end
 
@@ -361,35 +484,17 @@ end
           get :scan_history
           get :processing_queue
           patch :toggle_active
+          # ADDED: Enhanced warehouse analytics
+          get :package_processing_stats
+          get :special_handling_queue
         end
         collection do
           get :active
           get :by_location
           get :performance_report
+          get :special_handling_staff
         end
       end
-
-      # ==========================================
-      # 💰 PRICING SYSTEM
-      # ==========================================
-      
-      resources :prices, only: [:index, :create, :show, :update, :destroy] do
-        member do
-          patch :update_cost
-        end
-        collection do
-          get :calculate
-          get :search
-          post :bulk_create
-          get :matrix
-          get :fragile_surcharge
-        end
-      end
-
-      get 'pricing', to: 'packages#calculate_pricing', defaults: { format: :json }
-      post 'pricing/calculate', to: 'packages#calculate_pricing'
-      get 'pricing/matrix', to: 'prices#pricing_matrix'
-      get 'pricing/fragile', to: 'prices#fragile_pricing'
 
       # ==========================================
       # 💬 CONVERSATIONS AND SUPPORT SYSTEM
@@ -413,6 +518,29 @@ end
       get 'conversations/active_support', to: 'conversations#active_support'
       get 'conversations/package_support', to: 'conversations#package_support'
 
+      # ==========================================
+      # 📊 ENHANCED ANALYTICS AND REPORTING
+      # ==========================================
+      
+      namespace :analytics do
+        get :overview, to: 'analytics#overview'
+        get :packages, to: 'analytics#package_analytics'
+        get :revenue, to: 'analytics#revenue_analytics'
+        get :performance, to: 'analytics#performance_metrics'
+        get :fragile_packages, to: 'analytics#fragile_package_analytics'
+        
+        # ADDED: Enhanced analytics for new delivery types and package sizes
+        get :delivery_type_breakdown, to: 'analytics#delivery_type_breakdown'
+        get :package_size_analytics, to: 'analytics#package_size_analytics'
+        get :pricing_analytics, to: 'analytics#pricing_analytics'
+        get :home_vs_office_comparison, to: 'analytics#home_vs_office_comparison'
+        get :collection_service_metrics, to: 'analytics#collection_service_metrics'
+        get :special_handling_analytics, to: 'analytics#special_handling_analytics'
+        get :cost_efficiency_analysis, to: 'analytics#cost_efficiency_analysis'
+        get :delivery_success_rates, to: 'analytics#delivery_success_rates'
+        get :customer_preference_trends, to: 'analytics#customer_preference_trends'
+      end
+
       namespace :admin do
         resources :conversations, only: [:index, :show] do
           member do
@@ -426,6 +554,40 @@ end
         get 'analytics/packages', to: 'analytics#package_analytics'
         get 'analytics/performance', to: 'analytics#performance_metrics'
         get 'analytics/fragile_packages', to: 'analytics#fragile_package_analytics'
+        
+        # ADDED: Enhanced admin analytics
+        get 'analytics/delivery_types', to: 'analytics#delivery_type_analytics'
+        get 'analytics/pricing_overview', to: 'analytics#pricing_overview'
+        get 'analytics/package_sizes', to: 'analytics#package_size_analytics'
+        get 'analytics/operational_efficiency', to: 'analytics#operational_efficiency'
+        get 'analytics/revenue_optimization', to: 'analytics#revenue_optimization'
+      end
+
+      # ==========================================
+      # 📄 ENHANCED REPORTS AND EXPORTS
+      # ==========================================
+      
+      scope :reports do
+        get 'packages', to: 'reports#packages_report'
+        get 'revenue', to: 'reports#revenue_report'
+        get 'performance', to: 'reports#performance_report'
+        get 'fragile_packages', to: 'reports#fragile_packages_report'
+        
+        # ADDED: Enhanced reporting for new delivery types
+        get 'delivery_types', to: 'reports#delivery_types_report'
+        get 'package_sizes', to: 'reports#package_sizes_report'
+        get 'pricing_analysis', to: 'reports#pricing_analysis_report'
+        get 'home_vs_office', to: 'reports#home_vs_office_report'
+        get 'collection_services', to: 'reports#collection_services_report'
+        get 'special_handling', to: 'reports#special_handling_report'
+        get 'cost_analysis', to: 'reports#cost_analysis_report'
+        get 'operational_metrics', to: 'reports#operational_metrics_report'
+        
+        post 'export/packages', to: 'reports#export_packages'
+        post 'export/revenue', to: 'reports#export_revenue'
+        post 'export/analytics', to: 'reports#export_analytics'
+        post 'export/delivery_types', to: 'reports#export_delivery_types'
+        post 'export/pricing_analysis', to: 'reports#export_pricing_analysis'
       end
 
       # ==========================================
@@ -434,11 +596,13 @@ end
       
       get 'status', to: 'status#ping'
       get 'health', to: 'status#ping'
+      get 'health/pricing', to: 'health#pricing_system_health'
+      get 'health/delivery_types', to: 'health#delivery_types_health'
     end
   end
 
   # ==========================================
-  # 🌐 PUBLIC ENDPOINTS
+  # 🌐 ENHANCED PUBLIC ENDPOINTS
   # ==========================================
   
   scope :public do
@@ -448,12 +612,21 @@ end
     get 'track/:code/qr', to: 'public/tracking#qr_code'
     get 'track/:code/qr/organic', to: 'public/tracking#organic_qr_code'
     get 'track/:code/qr/thermal', to: 'public/tracking#thermal_qr_code'
+    
+    # ADDED: Public delivery type information
+    get 'track/:code/delivery_info', to: 'public/tracking#delivery_information'
+    get 'track/:code/special_handling', to: 'public/tracking#special_handling_info'
+    
+    # Public pricing estimates
+    get 'pricing/estimate', to: 'public/pricing#estimate'
+    get 'pricing/delivery_types', to: 'public/pricing#delivery_types_info'
+    get 'pricing/package_sizes', to: 'public/pricing#package_sizes_info'
   end
 
   get 'api/v1/track/:code', to: 'api/v1/packages#public_tracking', as: :package_tracking
 
   # ==========================================
-  # 🔗 WEBHOOK ENDPOINTS
+  # 🔗 ENHANCED WEBHOOK ENDPOINTS
   # ==========================================
   
   scope :webhooks do
@@ -471,10 +644,16 @@ end
     post 'thermal_qr/generated', to: 'webhooks#thermal_qr_generated'
     post 'auth/google/success', to: 'webhooks#google_auth_success'
     post 'auth/google/failure', to: 'webhooks#google_auth_failure'
+    
+    # ADDED: Enhanced webhooks for delivery types
+    post 'fragile/special_handling_alert', to: 'webhooks#fragile_handling_alert'
+    post 'collection/pickup_scheduled', to: 'webhooks#collection_pickup_scheduled'
+    post 'large_package/handling_alert', to: 'webhooks#large_package_handling_alert'
+    post 'pricing/update_notification', to: 'webhooks#pricing_update_notification'
   end
 
   # ==========================================
-  # 🏥 HEALTH CHECK & STATUS
+  # 🏥 ENHANCED HEALTH CHECK & STATUS
   # ==========================================
   
   get "up" => "rails/health#show", as: :rails_health_check
@@ -486,6 +665,8 @@ end
   get "health/qr_generation" => "health#qr_generation_system", as: :qr_generation_health_check
   get "health/thermal_printing" => "health#thermal_printing_system", as: :thermal_printing_health_check
   get "health/google_oauth" => "health#google_oauth_system", as: :google_oauth_health_check
+  get "health/pricing_system" => "health#pricing_system", as: :pricing_system_health_check
+  get "health/delivery_types" => "health#delivery_types_system", as: :delivery_types_health_check
   
   # ==========================================
   # 📱 PROGRESSIVE WEB APP SUPPORT
@@ -496,17 +677,24 @@ end
   get '/offline', to: 'pwa#offline'
 
   # ==========================================
+  # 📚 ENHANCED DOCUMENTATION
+  # ==========================================
+  
+  get '/docs', to: 'documentation#index'
+  get '/api/docs', to: 'documentation#api_docs'
+  get '/docs/qr_codes', to: 'documentation#qr_code_docs'
+  get '/docs/google_auth', to: 'documentation#google_auth_docs'
+  get '/docs/pricing', to: 'documentation#pricing_docs'
+  get '/docs/delivery_types', to: 'documentation#delivery_types_docs'
+  get '/docs/package_sizes', to: 'documentation#package_sizes_docs'
+
+  # ==========================================
   # 🔀 CATCH-ALL AND REDIRECTS
   # ==========================================
   
   # FIXED: Use a conditional root that redirects unauthenticated users to sign in
   # but allows API access to work normally
   root to: 'sessions#redirect_root'
-  
-  get '/docs', to: 'documentation#index'
-  get '/api/docs', to: 'documentation#api_docs'
-  get '/docs/qr_codes', to: 'documentation#qr_code_docs'
-  get '/docs/google_auth', to: 'documentation#google_auth_docs'
   
   # More specific catch-all that doesn't interfere with Active Storage
   constraints(->(request) { 
