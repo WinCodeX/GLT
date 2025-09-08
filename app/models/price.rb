@@ -16,6 +16,8 @@ class Price < ApplicationRecord
   mixed: 'mixed'
 }
 
+enum package_size: { small: 'small', medium: 'medium', large: 'large' }
+
   validates :cost, presence: true, numericality: { greater_than: 0 }
   validates :delivery_type, presence: true
   
