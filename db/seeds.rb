@@ -80,6 +80,24 @@ ActiveRecord::Base.transaction do
       phone_number: "+254712293377",  # Fixed: using phone_number
       role: :admin
     )
+
+create_user_safely(
+      email: "glen@glt.co.ke",
+      password: "Leviathan@Xcode",
+      first_name: "Glen",
+      last_name: "",
+      phone_number: "+254712293377",  # Fixed: using phone_number
+      role: :admin
+    )
+
+    create_user_safely(
+      email: "lisa@glt.co.ke",
+      password: "Tumaforlife96",
+      first_name: "Wambui",
+      last_name: "Nganga",
+      phone_number: "+254729688583",  # Fixed: using phone_number
+      role: :admin
+    )
     
     # Development-only test user
     if Rails.env.development?
