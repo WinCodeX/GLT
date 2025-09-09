@@ -30,7 +30,7 @@ Rails.application.routes.draw do
 
   # Admin dashboard root
   get '/admin', to: 'admin/updates#index'
-end
+
 
   # Simple web-based sign in/out
   get '/sign_in', to: 'sessions#new', as: :sign_in
