@@ -162,6 +162,9 @@ Rails.application.routes.draw do
 
       # Businesses - UPDATED with full CRUD and categories support
       resources :businesses do
+# Business logo routes - nested under businesses
+  resource :logo, controller: 'business_logos', only: [:create, :show, :destroy]
+  
         member do
           post :add_categories
           delete :remove_category
