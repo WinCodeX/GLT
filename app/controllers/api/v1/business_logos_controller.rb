@@ -130,8 +130,8 @@ module Api
       end
 
       def valid_image_type?(content_type)
-        %w[image/jpeg image/png image/gif image/webp].include?(content_type)
-      end
+  %w[image/jpeg image/jpg image/png image/gif image/webp].include?(content_type)
+end
 
       def save_business_logo(uploaded_file)
         if Rails.env.production?
