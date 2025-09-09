@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_09_135229) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_09_210238) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -52,6 +52,26 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_09_135229) do
     t.boolean "active"
     t.index ["area_id"], name: "index_agents_on_area_id"
     t.index ["user_id"], name: "index_agents_on_user_id"
+  end
+
+  create_table "app_updates", force: :cascade do |t|
+    t.string "version", null: false
+    t.string "update_id", null: false
+    t.string "runtime_version", default: "1.0.0"
+    t.string "bundle_url"
+    t.string "bundle_key"
+    t.text "changelog", default: [], array: true
+    t.boolean "published", default: false
+    t.boolean "force_update", default: false
+    t.datetime "published_at"
+    t.json "assets", default: []
+    t.text "description"
+    t.integer "download_count", default: 0
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["published", "created_at"], name: "index_app_updates_on_published_and_created_at"
+    t.index ["update_id"], name: "index_app_updates_on_update_id", unique: true
+    t.index ["version"], name: "index_app_updates_on_version"
   end
 
   create_table "areas", force: :cascade do |t|
