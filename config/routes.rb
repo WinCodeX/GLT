@@ -71,6 +71,20 @@ Rails.application.routes.draw do
   
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
+
+resources :updates, only: [:create, :index] do
+        member do
+          patch :publish
+        end
+        collection do
+          get :manifest
+          get :info
+          get :check
+          post :upload_bundle
+        end
+      end
+
+
       # Google OAuth endpoints - FIXED to point to correct controller
       get 'auth/google_oauth2/init', to: 'omniauth_callbacks#init'
       get 'auth/google_oauth2/callback', to: 'omniauth_callbacks#google_oauth2'
