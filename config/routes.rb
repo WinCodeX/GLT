@@ -5,6 +5,33 @@ Rails.application.routes.draw do
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
   # ==========================================
   
+
+ #Admin namespace for updates management
+  namespace :admin do
+    resources :updates do
+      member do
+        patch :publish
+        patch :unpublish
+      end
+      collection do
+        post :upload_bundle_only
+        get :stats
+      end
+    end
+  end
+
+
+  # Web-based admin authentication routes (if using Devise)
+  devise_scope :user do
+    get '/admin/sign_in', to: 'devise/sessions#new'
+    post '/admin/sign_in', to: 'devise/sessions#create'
+    delete '/admin/sign_out', to: 'devise/sessions#destroy'
+  end
+
+  # Admin dashboard root
+  get '/admin', to: 'admin/updates#index'
+end
+
   # Simple web-based sign in/out
   get '/sign_in', to: 'sessions#new', as: :sign_in
   post '/sign_in', to: 'sessions#create'
