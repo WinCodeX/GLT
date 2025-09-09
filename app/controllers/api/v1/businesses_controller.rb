@@ -238,6 +238,7 @@ module Api
           id: business.id,
           name: business.name,
           phone_number: business.phone_number,
+          logo_url: business.logo_url,
           categories: business.categories.active.map do |category|
             {
               id: category.id,
