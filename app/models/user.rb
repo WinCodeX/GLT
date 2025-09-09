@@ -1,4 +1,4 @@
-# app/models/user.rb - Complete Fixed Version
+# app/models/user.rb - Fixed Version
 class User < ApplicationRecord
   # ===========================================
   # 🔐 DEVISE CONFIGURATION
@@ -18,10 +18,11 @@ class User < ApplicationRecord
   # ActiveStorage for avatar
   has_one_attached :avatar
 
-  # Business relationships
-  has_many :owned_businesses, class_name: "Business", foreign_key: "owner_id"
-  has_many :user_businesses
+  # Business relationships - FIXED: Added proper associations
+  has_many :owned_businesses, class_name: "Business", foreign_key: "owner_id", dependent: :destroy
+  has_many :user_businesses, dependent: :destroy
   has_many :businesses, through: :user_businesses
+  has_many :business_invites, foreign_key: "inviter_id", dependent: :destroy
 
   # Package delivery system relationships
   has_many :packages, dependent: :destroy
@@ -40,21 +41,29 @@ class User < ApplicationRecord
   rolify
 
   # ===========================================
-  # 🔍 VALIDATIONS
+  # 🔍 VALIDATIONS - FIXED
   # ===========================================
   
-  validates :email, presence: true, uniqueness: true
+  validates :email, presence: true, uniqueness: { case_sensitive: false }
   validates :first_name, presence: true, length: { minimum: 2, maximum: 100 }
-  validates :phone_number, format: { with: /\A\+?[0-9\s\-\(\)]+\z/, message: "Invalid phone format" }, allow_blank: true
+  validates :last_name, length: { maximum: 100 }, allow_blank: true
+  validates :phone_number, format: { 
+    with: /\A\+?[0-9\s\-\(\)]+\z/, 
+    message: "Invalid phone format" 
+  }, allow_blank: true
   validates :provider, inclusion: { in: [nil, 'google_oauth2'] }
   validates :uid, uniqueness: { scope: :provider }, allow_nil: true
 
+  # Custom validation for phone number format after normalization
+  validate :valid_normalized_phone_number
+
   # ===========================================
-  # 🔄 CALLBACKS
+  # 🔄 CALLBACKS - FIXED
   # ===========================================
   
   after_create :assign_default_role
   before_validation :normalize_phone
+  before_validation :normalize_email
 
   # ===========================================
   # 🔍 SCOPES
@@ -84,13 +93,15 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 🔐 GOOGLE OAUTH METHODS
+  # 🔐 GOOGLE OAUTH METHODS - FIXED
   # ===========================================
 
   def self.from_omniauth(auth)
     Rails.logger.info "Google OAuth callback received for email: #{auth.info.email}"
     
-    user = find_by(email: auth.info.email)
+    # Normalize email for consistent lookup
+    normalized_email = auth.info.email.to_s.downcase.strip
+    user = find_by(email: normalized_email)
     
     if user
       user.update_google_oauth_info(auth)
@@ -101,13 +112,17 @@ class User < ApplicationRecord
     end
     
     user
+  rescue => e
+    Rails.logger.error "Error processing Google OAuth for #{auth.info.email}: #{e.message}"
+    nil
   end
 
   def self.create_from_google_oauth(auth)
     password = Devise.friendly_token[0, 20]
+    normalized_email = auth.info.email.to_s.downcase.strip
     
     user = create!(
-      email: auth.info.email,
+      email: normalized_email,
       password: password,
       password_confirmation: password,
       first_name: auth.info.first_name || auth.info.name&.split&.first || 'Google',
@@ -120,19 +135,34 @@ class User < ApplicationRecord
     
     user.attach_google_avatar(auth.info.image) if auth.info.image.present?
     user
+  rescue => e
+    Rails.logger.error "Error creating user from Google OAuth: #{e.message}"
+    raise e
   end
 
   def update_google_oauth_info(auth)
-    update!(
+    update_attrs = {
       provider: auth.provider,
       uid: auth.uid,
       google_image_url: auth.info.image,
-      first_name: first_name.present? ? first_name : (auth.info.first_name || auth.info.name&.split&.first),
-      last_name: last_name.present? ? last_name : (auth.info.last_name || auth.info.name&.split&.last),
       confirmed_at: confirmed_at || Time.current
-    )
+    }
+    
+    # Only update names if they're currently blank
+    if first_name.blank?
+      update_attrs[:first_name] = auth.info.first_name || auth.info.name&.split&.first || first_name
+    end
+    
+    if last_name.blank?
+      update_attrs[:last_name] = auth.info.last_name || auth.info.name&.split&.last || last_name
+    end
+    
+    update!(update_attrs)
     
     attach_google_avatar(auth.info.image) if auth.info.image.present? && !avatar.attached?
+  rescue => e
+    Rails.logger.error "Error updating Google OAuth info for user #{id}: #{e.message}"
+    false
   end
 
   def google_user?
@@ -150,6 +180,7 @@ class User < ApplicationRecord
 
   def set_password(password, password_confirmation)
     return false unless needs_password?
+    return false if password.blank?
     
     self.password = password
     self.password_confirmation = password_confirmation
@@ -158,6 +189,7 @@ class User < ApplicationRecord
 
   def attach_google_avatar(image_url)
     return unless image_url.present?
+    return if avatar.attached? # Don't overwrite existing avatar
     
     begin
       require 'open-uri'
@@ -178,16 +210,16 @@ class User < ApplicationRecord
   # ===========================================
 
   def mark_online!
-    # Use update_columns to bypass validations during login
-    update_columns(online: true, last_seen_at: Time.current)
+    # Use update instead of update_columns to ensure validations pass
+    update(online: true, last_seen_at: Time.current)
   rescue => e
     Rails.logger.error "Failed to mark user #{id} online: #{e.message}"
     false
   end
 
   def mark_offline!
-    # Use update_columns to bypass validations during logout  
-    update_columns(online: false, last_seen_at: Time.current)
+    # Use update instead of update_columns to ensure validations pass
+    update(online: false, last_seen_at: Time.current)
   rescue => e
     Rails.logger.error "Failed to mark user #{id} offline: #{e.message}"
     false
@@ -197,16 +229,23 @@ class User < ApplicationRecord
     if first_name.present? || last_name.present?
       "#{first_name} #{last_name}".strip
     else
-      email.split('@').first
+      email.split('@').first.humanize
     end
   end
 
   def display_name
-    full_name.present? ? full_name : email.split('@').first
+    name = full_name
+    return name if name.present? && name != email.split('@').first.humanize
+    email.split('@').first.humanize
   end
 
   def initials
-    full_name.split.map(&:first).join.upcase
+    names = [first_name, last_name].compact.reject(&:blank?)
+    if names.any?
+      names.map { |name| name.first.upcase }.join
+    else
+      email.first(2).upcase
+    end
   end
 
   def active?
@@ -272,79 +311,102 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 📦 PACKAGE ACCESS METHODS - FIXED
+  # 🏢 BUSINESS METHODS - FIXED
+  # ===========================================
+
+  def can_create_business?
+    true # All users can create businesses
+  end
+
+  def can_manage_business?(business)
+    return false unless business
+    business.owner_id == id || admin?
+  end
+
+  def can_join_business?(business)
+    return false unless business
+    return false if business.owner_id == id # Can't join own business
+    !businesses.include?(business) # Can't join if already a member
+  end
+
+  def business_role_for(business)
+    return 'owner' if business.owner_id == id
+    
+    user_business = user_businesses.find_by(business: business)
+    user_business&.role || 'none'
+  end
+
+  def owns_business?(business)
+    business.owner_id == id
+  end
+
+  def member_of_business?(business)
+    businesses.include?(business)
+  end
+
+  # ===========================================
+  # 📦 PACKAGE ACCESS METHODS - ENHANCED
   # ===========================================
 
   def accessible_packages
     case primary_role
     when 'client'
-      # Clients can only see their own packages
       packages
     when 'agent'
-      # Agents can see packages in their areas
       if respond_to?(:accessible_areas) && accessible_areas.any?
         area_ids = accessible_areas.pluck(:id)
         Package.where(origin_area_id: area_ids)
                .or(Package.where(destination_area_id: area_ids))
       else
-        # Fallback: if no area restrictions, agents can see all packages
         Package.all
       end
     when 'rider'
-      # Riders can see packages in their delivery areas
       if respond_to?(:accessible_areas) && accessible_areas.any?
         area_ids = accessible_areas.pluck(:id)
         Package.where(origin_area_id: area_ids)
                .or(Package.where(destination_area_id: area_ids))
       else
-        # Fallback: if no area restrictions, riders can see all packages
         Package.all
       end
-    when 'warehouse'
-      # Warehouse staff can see all packages
-      Package.all
-    when 'admin'
-      # Admins can see all packages
-      Package.all
-    when 'support'
-      # Support can see all packages for customer service
+    when 'warehouse', 'admin', 'support'
       Package.all
     else
-      # Default: clients can only see their own packages
       packages
+    end
+  rescue => e
+    Rails.logger.error "Error getting accessible packages for user #{id}: #{e.message}"
+    case primary_role
+    when 'client'
+      packages
+    else
+      Package.none
     end
   end
 
   def accessible_areas
     case primary_role
     when 'agent'
-      if respond_to?(:agents) && agents.any?
-        Area.where(id: agents.pluck(:area_id))
+      if agents.any?
+        Area.where(id: agents.pluck(:area_id).compact)
       else
-        # If no specific agent records, return all areas (fallback)
         Area.all
       end
     when 'rider'
-      if respond_to?(:riders) && riders.any?
-        Area.where(id: riders.pluck(:area_id))
+      if riders.any?
+        Area.where(id: riders.pluck(:area_id).compact)
       else
-        # If no specific rider records, return all areas (fallback)
         Area.all
       end
     when 'warehouse'
-      # Warehouse staff can access all areas in their locations
-      if respond_to?(:warehouse_staff) && warehouse_staff.any?
-        location_ids = warehouse_staff.pluck(:location_id)
+      if warehouse_staff.any?
+        location_ids = warehouse_staff.pluck(:location_id).compact
         Area.where(location_id: location_ids)
       else
-        # If no specific warehouse records, return all areas (fallback)
         Area.all
       end
     when 'admin'
-      # Admins can access all areas
       Area.all
     else
-      # Clients and others have no specific area access
       Area.none
     end
   rescue => e
@@ -355,15 +417,14 @@ class User < ApplicationRecord
   def accessible_locations
     case primary_role
     when 'warehouse'
-      if respond_to?(:warehouse_staff) && warehouse_staff.any?
-        Location.where(id: warehouse_staff.pluck(:location_id))
+      if warehouse_staff.any?
+        Location.where(id: warehouse_staff.pluck(:location_id).compact)
       else
         Location.all
       end
     when 'admin'
       Location.all
     else
-      # For agents and riders, get locations through their areas
       accessible_areas.includes(:location).map(&:location).uniq.compact
     end
   rescue => e
@@ -388,6 +449,8 @@ class User < ApplicationRecord
   end
 
   def can_access_package?(package)
+    return false unless package
+    
     case primary_role
     when 'client'
       package.user_id == id
@@ -403,13 +466,13 @@ class User < ApplicationRecord
   end
 
   def operates_in_area?(area_id)
-    return true if admin? # Admins can operate anywhere
-    return false unless area_id # No area specified
+    return true if admin?
+    return false unless area_id
     
     accessible_areas.exists?(id: area_id)
   rescue => e
     Rails.logger.error "Error checking area operation for user #{id}: #{e.message}"
-    admin? # Fail open for admins, closed for others
+    admin?
   end
 
   def has_warehouse_access?
@@ -417,7 +480,7 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 📊 PACKAGE STATISTICS
+  # 📊 PACKAGE STATISTICS - ENHANCED
   # ===========================================
 
   def pending_packages_count
@@ -465,7 +528,7 @@ class User < ApplicationRecord
     
     case primary_role
     when 'client'
-      actions = ['create_package', 'view_own_packages', 'track_packages']
+      actions = ['create_package', 'view_own_packages', 'track_packages', 'create_business', 'manage_own_businesses']
     when 'agent'
       actions = ['view_packages', 'print_labels', 'collect_packages']
     when 'rider'
@@ -473,7 +536,7 @@ class User < ApplicationRecord
     when 'warehouse'
       actions = ['view_all_packages', 'process_packages', 'print_labels', 'manage_inventory']
     when 'admin'
-      actions = ['view_all_packages', 'manage_packages', 'manage_users', 'manage_system']
+      actions = ['view_all_packages', 'manage_packages', 'manage_users', 'manage_system', 'manage_all_businesses']
     when 'support'
       actions = ['view_all_packages', 'manage_conversations', 'assist_customers']
     end
@@ -481,7 +544,6 @@ class User < ApplicationRecord
     actions
   end
 
-  # Stats methods for dashboard
   def daily_scanning_stats
     return {} unless staff?
     
@@ -492,7 +554,7 @@ class User < ApplicationRecord
     }
   rescue => e
     Rails.logger.error "Error getting daily scanning stats: #{e.message}"
-    {}
+    { scans_today: 0, packages_processed: 0 }
   end
 
   def weekly_scanning_stats
@@ -505,7 +567,7 @@ class User < ApplicationRecord
     }
   rescue => e
     Rails.logger.error "Error getting weekly scanning stats: #{e.message}"
-    {}
+    { scans_this_week: 0, packages_processed: 0 }
   end
 
   def monthly_scanning_stats
@@ -518,7 +580,7 @@ class User < ApplicationRecord
     }
   rescue => e
     Rails.logger.error "Error getting monthly scanning stats: #{e.message}"
-    {}
+    { scans_this_month: 0, packages_processed: 0 }
   end
 
   # ===========================================
@@ -538,7 +600,9 @@ class User < ApplicationRecord
       'initials' => initials,
       'roles' => roles.pluck(:name),
       'google_user' => google_user?,
-      'needs_password' => needs_password?
+      'needs_password' => needs_password?,
+      'owned_businesses_count' => owned_businesses.count,
+      'joined_businesses_count' => businesses.count
     )
     
     result
@@ -547,18 +611,46 @@ class User < ApplicationRecord
   private
 
   def assign_default_role
-    add_role(:client) if roles.blank?
+    begin
+      add_role(:client) if roles.blank?
+    rescue => e
+      Rails.logger.error "Failed to assign default role to user #{id}: #{e.message}"
+      # Don't fail user creation if role assignment fails
+    end
   end
 
   def normalize_phone
     return unless phone_number.present?
     
-    self.phone_number = phone_number.gsub(/[^\d\+]/, '')
+    # Remove all non-digit characters except +
+    cleaned = phone_number.gsub(/[^\d\+]/, '')
     
-    if phone_number.match(/^[07]/) && phone_number.length == 10
-      self.phone_number = "+254#{phone_number[1..-1]}"
-    elsif phone_number.match(/^[7]/) && phone_number.length == 9
-      self.phone_number = "+254#{phone_number}"
+    # Handle Kenyan phone numbers
+    if cleaned.match(/^0[17]\d{8}$/) # 0712345678
+      self.phone_number = "+254#{cleaned[1..-1]}"
+    elsif cleaned.match(/^[17]\d{8}$/) # 712345678
+      self.phone_number = "+254#{cleaned}"
+    elsif cleaned.match(/^254[17]\d{8}$/) # 254712345678
+      self.phone_number = "+#{cleaned}"
+    elsif cleaned.match(/^\+254[17]\d{8}$/) # +254712345678
+      self.phone_number = cleaned
+    else
+      # Keep original if it doesn't match expected patterns
+      self.phone_number = cleaned.presence || phone_number
+    end
+  end
+
+  def normalize_email
+    return unless email.present?
+    self.email = email.downcase.strip
+  end
+
+  def valid_normalized_phone_number
+    return if phone_number.blank?
+    
+    # After normalization, ensure it matches the expected format
+    unless phone_number.match(/^\+254[17]\d{8}$/)
+      errors.add(:phone_number, "must be a valid Kenyan phone number (e.g., +254712345678)")
     end
   end
 end
