@@ -1,0 +1,717 @@
+<!-- app/views/admin/updates/index.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Updates Management - Admin Portal</title>
+    <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .header-actions {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-header {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-header:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border-left: 4px solid #8B5CF6;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .content-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .content-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(139, 92, 246, 0.3);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .updates-table {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table thead {
+            background: #f8fafc;
+        }
+
+        .table th {
+            padding: 15px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .table td {
+            padding: 15px 20px;
+            border-top: 1px solid #f3f4f6;
+            color: #374151;
+        }
+
+        .table tbody tr:hover {
+            background: #f9fafb;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        .status-published {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status-draft {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .version-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .version-number {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .version-id {
+            font-size: 0.8rem;
+            color: #6b7280;
+            font-family: 'Courier New', monospace;
+        }
+
+        .changelog-preview {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6b7280;
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: #374151;
+        }
+
+        .empty-state p {
+            margin-bottom: 30px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #8B5CF6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .search-filter {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .search-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #8B5CF6;
+        }
+
+        .filter-select {
+            padding: 10px 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            background: white;
+            font-size: 14px;
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.success {
+            background: #10b981;
+        }
+
+        .toast.error {
+            background: #ef4444;
+        }
+
+        .force-update-indicator {
+            display: inline-block;
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 8px;
+        }
+
+        @media (max-width: 768px) {
+            .header-actions {
+                position: static;
+                justify-content: center;
+                margin-top: 15px;
+            }
+            
+            .content-header {
+                flex-direction: column;
+                align-items: stretch;
+                text-align: center;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+            
+            .table-responsive {
+                overflow-x: auto;
+            }
+            
+            .search-filter {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 App Updates Management</h1>
+            <p>Manage over-the-air app updates and deployments</p>
+            <div class="header-actions">
+                <a href="/admin" class="btn-header">🏠 Admin Home</a>
+                <a href="/logout" class="btn-header">👋 Sign Out</a>
+            </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number"><%= @stats[:total] %></div>
+                <div class="stat-label">Total Updates</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number"><%= @stats[:published] %></div>
+                <div class="stat-label">Published</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number"><%= @stats[:draft] %></div>
+                <div class="stat-label">Drafts</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number"><%= @stats[:total_downloads] %></div>
+                <div class="stat-label">Total Downloads</div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="content-header">
+                <h2 class="content-title">App Updates</h2>
+                <a href="<%= new_admin_update_path %>" class="btn">
+                    ➕ Create New Update
+                </a>
+            </div>
+
+            <!-- Search and Filter -->
+            <div class="search-filter">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search updates by version, description...">
+                <select id="statusFilter" class="filter-select">
+                    <option value="">All Statuses</option>
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                </select>
+                <select id="sortBy" class="filter-select">
+                    <option value="created_at">Sort by Date</option>
+                    <option value="version">Sort by Version</option>
+                    <option value="download_count">Sort by Downloads</option>
+                </select>
+            </div>
+
+            <% if @updates.any? %>
+                <div class="updates-table">
+                    <div class="table-responsive">
+                        <table class="table" id="updatesTable">
+                            <thead>
+                                <tr>
+                                    <th>Version</th>
+                                    <th>Status</th>
+                                    <th>Description</th>
+                                    <th>Downloads</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <% @updates.each do |update| %>
+                                    <tr>
+                                        <td>
+                                            <div class="version-info">
+                                                <span class="version-number">
+                                                    v<%= update.version %>
+                                                    <% if update.force_update %>
+                                                        <span class="force-update-indicator">Force</span>
+                                                    <% end %>
+                                                </span>
+                                                <span class="version-id"><%= update.update_id[0..8] %>...</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="status-badge <%= update.published? ? 'status-published' : 'status-draft' %>">
+                                                <%= update.published? ? 'Published' : 'Draft' %>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="changelog-preview" title="<%= update.description %>">
+                                                <%= update.description.present? ? update.description : 'No description' %>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <strong><%= update.download_count %></strong>
+                                        </td>
+                                        <td>
+                                            <%= update.created_at.strftime("%b %d, %Y") %><br>
+                                            <small style="color: #6b7280;"><%= time_ago_in_words(update.created_at) %> ago</small>
+                                        </td>
+                                        <td>
+                                            <div class="actions">
+                                                <a href="<%= admin_update_path(update) %>" class="btn btn-small btn-secondary">
+                                                    👁️ View
+                                                </a>
+                                                <% unless update.published? %>
+                                                    <a href="<%= edit_admin_update_path(update) %>" class="btn btn-small btn-secondary">
+                                                        ✏️ Edit
+                                                    </a>
+                                                    <% if update.bundle_url.present? %>
+                                                        <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
+                                                            🚀 Publish
+                                                        </button>
+                                                    <% end %>
+                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.version %>')" class="btn btn-small btn-danger">
+                                                        🗑️ Delete
+                                                    </button>
+                                                <% else %>
+                                                    <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
+                                                        📤 Unpublish
+                                                    </button>
+                                                <% end %>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <% end %>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            <% else %>
+                <div class="empty-state">
+                    <div class="empty-state-icon">📱</div>
+                    <h3>No Updates Found</h3>
+                    <p>Get started by creating your first app update</p>
+                    <a href="<%= new_admin_update_path %>" class="btn">
+                        ➕ Create Your First Update
+                    </a>
+                </div>
+            <% end %>
+        </div>
+    </div>
+
+    <!-- Toast Messages -->
+    <% if flash[:success] %>
+        <div class="toast success show" id="toast">
+            <%= flash[:success] %>
+        </div>
+    <% elsif flash[:error] %>
+        <div class="toast error show" id="toast">
+            <%= flash[:error] %>
+        </div>
+    <% end %>
+
+    <script>
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+        class UpdatesManager {
+            constructor() {
+                this.initializeToast();
+                this.initializeSearch();
+            }
+
+            initializeToast() {
+                const toast = document.getElementById('toast');
+                if (toast) {
+                    setTimeout(() => {
+                        toast.classList.remove('show');
+                        setTimeout(() => toast.remove(), 300);
+                    }, 4000);
+                }
+            }
+
+            initializeSearch() {
+                const searchInput = document.getElementById('searchInput');
+                const statusFilter = document.getElementById('statusFilter');
+                const sortBy = document.getElementById('sortBy');
+
+                [searchInput, statusFilter, sortBy].forEach(element => {
+                    if (element) {
+                        element.addEventListener('change', () => this.filterTable());
+                        if (element === searchInput) {
+                            element.addEventListener('keyup', () => this.filterTable());
+                        }
+                    }
+                });
+            }
+
+            filterTable() {
+                const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+                const statusFilter = document.getElementById('statusFilter').value;
+                const table = document.getElementById('updatesTable');
+                const rows = table.querySelectorAll('tbody tr');
+
+                rows.forEach(row => {
+                    const version = row.cells[0].textContent.toLowerCase();
+                    const status = row.cells[1].textContent.toLowerCase().includes('published') ? 'published' : 'draft';
+                    const description = row.cells[2].textContent.toLowerCase();
+
+                    const matchesSearch = !searchTerm || 
+                        version.includes(searchTerm) || 
+                        description.includes(searchTerm);
+
+                    const matchesStatus = !statusFilter || status === statusFilter;
+
+                    row.style.display = matchesSearch && matchesStatus ? '' : 'none';
+                });
+            }
+
+            async makeRequest(url, method = 'POST', data = {}) {
+                try {
+                    const response = await fetch(url, {
+                        method,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': csrfToken
+                        },
+                        credentials: 'same-origin',
+                        body: method !== 'GET' ? JSON.stringify(data) : undefined
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    return response;
+                } catch (error) {
+                    console.error('Request failed:', error);
+                    throw error;
+                }
+            }
+
+            showToast(message, type = 'success') {
+                // Remove existing toast
+                const existingToast = document.querySelector('.toast');
+                if (existingToast) {
+                    existingToast.remove();
+                }
+
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+
+                setTimeout(() => toast.classList.add('show'), 100);
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 300);
+                }, 4000);
+            }
+
+            async publishUpdate(updateId) {
+                if (!confirm('Are you sure you want to publish this update? Users will receive it immediately.')) {
+                    return;
+                }
+
+                try {
+                    const response = await this.makeRequest(`/admin/updates/${updateId}/publish`, 'PATCH');
+                    
+                    if (response.ok) {
+                        this.showToast('Update published successfully!', 'success');
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        throw new Error('Failed to publish update');
+                    }
+                } catch (error) {
+                    this.showToast('Failed to publish update', 'error');
+                    console.error('Publish error:', error);
+                }
+            }
+
+            async unpublishUpdate(updateId) {
+                if (!confirm('Are you sure you want to unpublish this update?')) {
+                    return;
+                }
+
+                try {
+                    const response = await this.makeRequest(`/admin/updates/${updateId}/unpublish`, 'PATCH');
+                    
+                    if (response.ok) {
+                        this.showToast('Update unpublished successfully!', 'success');
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        throw new Error('Failed to unpublish update');
+                    }
+                } catch (error) {
+                    this.showToast('Failed to unpublish update', 'error');
+                    console.error('Unpublish error:', error);
+                }
+            }
+
+            async deleteUpdate(updateId, version) {
+                if (!confirm(`Are you sure you want to delete ${version}? This action cannot be undone.`)) {
+                    return;
+                }
+
+                try {
+                    const response = await this.makeRequest(`/admin/updates/${updateId}`, 'DELETE');
+                    
+                    if (response.ok) {
+                        this.showToast('Update deleted successfully!', 'success');
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        throw new Error('Failed to delete update');
+                    }
+                } catch (error) {
+                    this.showToast('Failed to delete update', 'error');
+                    console.error('Delete error:', error);
+                }
+            }
+        }
+
+        // Initialize the manager
+        let updatesManager;
+        document.addEventListener('DOMContentLoaded', () => {
+            updatesManager = new UpdatesManager();
+        });
+
+        // Global functions for button onclick handlers
+        function publishUpdate(updateId) {
+            updatesManager.publishUpdate(updateId);
+        }
+
+        function unpublishUpdate(updateId) {
+            updatesManager.unpublishUpdate(updateId);
+        }
+
+        function deleteUpdate(updateId, version) {
+            updatesManager.deleteUpdate(updateId, version);
+        }
+    </script>
+</body>
+</html>
