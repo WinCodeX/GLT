@@ -110,7 +110,7 @@
 
         .content-header {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
             margin-bottom: 30px;
             flex-wrap: wrap;
@@ -270,21 +270,6 @@
             margin-bottom: 30px;
         }
 
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #8B5CF6;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
         .search-filter {
             background: #f8fafc;
             padding: 20px;
@@ -397,19 +382,19 @@
         <!-- Statistics -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-number"><%= @stats[:total] %></div>
+                <div class="stat-number"><%= @stats&.dig(:total) || 0 %></div>
                 <div class="stat-label">Total Updates</div>
             </div>
             <div class="stat-card">
-                <div class="stat-number"><%= @stats[:published] %></div>
+                <div class="stat-number"><%= @stats&.dig(:published) || 0 %></div>
                 <div class="stat-label">Published</div>
             </div>
             <div class="stat-card">
-                <div class="stat-number"><%= @stats[:draft] %></div>
+                <div class="stat-number"><%= @stats&.dig(:draft) || 0 %></div>
                 <div class="stat-label">Drafts</div>
             </div>
             <div class="stat-card">
-                <div class="stat-number"><%= @stats[:total_downloads] %></div>
+                <div class="stat-number"><%= @stats&.dig(:total_downloads) || 0 %></div>
                 <div class="stat-label">Total Downloads</div>
             </div>
         </div>
@@ -422,22 +407,24 @@
                 </a>
             </div>
 
-            <!-- Search and Filter -->
-            <div class="search-filter">
-                <input type="text" id="searchInput" class="search-input" placeholder="Search updates by version, description...">
-                <select id="statusFilter" class="filter-select">
-                    <option value="">All Statuses</option>
-                    <option value="published">Published</option>
-                    <option value="draft">Draft</option>
-                </select>
-                <select id="sortBy" class="filter-select">
-                    <option value="created_at">Sort by Date</option>
-                    <option value="version">Sort by Version</option>
-                    <option value="download_count">Sort by Downloads</option>
-                </select>
-            </div>
+            <!-- Search and Filter (only show if we have updates) -->
+            <% if @updates&.any? %>
+                <div class="search-filter">
+                    <input type="text" id="searchInput" class="search-input" placeholder="Search updates by version, description...">
+                    <select id="statusFilter" class="filter-select">
+                        <option value="">All Statuses</option>
+                        <option value="published">Published</option>
+                        <option value="draft">Draft</option>
+                    </select>
+                    <select id="sortBy" class="filter-select">
+                        <option value="created_at">Sort by Date</option>
+                        <option value="version">Sort by Version</option>
+                        <option value="download_count">Sort by Downloads</option>
+                    </select>
+                </div>
+            <% end %>
 
-            <% if @updates.any? %>
+            <% if @updates&.any? %>
                 <div class="updates-table">
                     <div class="table-responsive">
                         <table class="table" id="updatesTable">
@@ -457,46 +444,54 @@
                                         <td>
                                             <div class="version-info">
                                                 <span class="version-number">
-                                                    v<%= update.version %>
-                                                    <% if update.force_update %>
+                                                    v<%= update.try(:version) || 'Unknown' %>
+                                                    <% if update.try(:force_update) %>
                                                         <span class="force-update-indicator">Force</span>
                                                     <% end %>
                                                 </span>
-                                                <span class="version-id"><%= update.update_id[0..8] %>...</span>
+                                                <span class="version-id">
+                                                    <%= update.try(:update_id)&.first(9) || 'N/A' %>...
+                                                </span>
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="status-badge <%= update.published? ? 'status-published' : 'status-draft' %>">
-                                                <%= update.published? ? 'Published' : 'Draft' %>
+                                            <span class="status-badge <%= update.try(:published?) ? 'status-published' : 'status-draft' %>">
+                                                <%= update.try(:published?) ? 'Published' : 'Draft' %>
                                             </span>
                                         </td>
                                         <td>
-                                            <div class="changelog-preview" title="<%= update.description %>">
-                                                <%= update.description.present? ? update.description : 'No description' %>
+                                            <div class="changelog-preview" title="<%= update.try(:description) %>">
+                                                <%= update.try(:description).present? ? update.description : 'No description' %>
                                             </div>
                                         </td>
                                         <td>
-                                            <strong><%= update.download_count %></strong>
+                                            <strong><%= update.try(:download_count) || 0 %></strong>
                                         </td>
                                         <td>
-                                            <%= update.created_at.strftime("%b %d, %Y") %><br>
-                                            <small style="color: #6b7280;"><%= time_ago_in_words(update.created_at) %> ago</small>
+                                            <% if update.try(:created_at) %>
+                                                <%= update.created_at.strftime("%b %d, %Y") %><br>
+                                                <small style="color: #6b7280;">
+                                                    <%= time_ago_in_words(update.created_at) %> ago
+                                                </small>
+                                            <% else %>
+                                                <span style="color: #6b7280;">Unknown</span>
+                                            <% end %>
                                         </td>
                                         <td>
                                             <div class="actions">
                                                 <a href="<%= admin_update_path(update) %>" class="btn btn-small btn-secondary">
                                                     👁️ View
                                                 </a>
-                                                <% unless update.published? %>
+                                                <% unless update.try(:published?) %>
                                                     <a href="<%= edit_admin_update_path(update) %>" class="btn btn-small btn-secondary">
                                                         ✏️ Edit
                                                     </a>
-                                                    <% if update.bundle_url.present? %>
+                                                    <% if update.try(:bundle_url).present? %>
                                                         <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
                                                             🚀 Publish
                                                         </button>
                                                     <% end %>
-                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.version %>')" class="btn btn-small btn-danger">
+                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.try(:version) || 'Unknown' %>')" class="btn btn-small btn-danger">
                                                         🗑️ Delete
                                                     </button>
                                                 <% else %>
@@ -537,7 +532,7 @@
     <% end %>
 
     <script>
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
         class UpdatesManager {
             constructor() {
@@ -571,27 +566,36 @@
             }
 
             filterTable() {
-                const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-                const statusFilter = document.getElementById('statusFilter').value;
+                const searchInput = document.getElementById('searchInput');
+                const statusFilter = document.getElementById('statusFilter');
                 const table = document.getElementById('updatesTable');
+                
+                if (!searchInput || !statusFilter || !table) return;
+
+                const searchTerm = searchInput.value.toLowerCase();
+                const statusValue = statusFilter.value;
                 const rows = table.querySelectorAll('tbody tr');
 
                 rows.forEach(row => {
-                    const version = row.cells[0].textContent.toLowerCase();
-                    const status = row.cells[1].textContent.toLowerCase().includes('published') ? 'published' : 'draft';
-                    const description = row.cells[2].textContent.toLowerCase();
+                    const version = row.cells[0]?.textContent?.toLowerCase() || '';
+                    const status = row.cells[1]?.textContent?.toLowerCase().includes('published') ? 'published' : 'draft';
+                    const description = row.cells[2]?.textContent?.toLowerCase() || '';
 
                     const matchesSearch = !searchTerm || 
                         version.includes(searchTerm) || 
                         description.includes(searchTerm);
 
-                    const matchesStatus = !statusFilter || status === statusFilter;
+                    const matchesStatus = !statusValue || status === statusValue;
 
                     row.style.display = matchesSearch && matchesStatus ? '' : 'none';
                 });
             }
 
             async makeRequest(url, method = 'POST', data = {}) {
+                if (!csrfToken) {
+                    throw new Error('CSRF token not found');
+                }
+
                 try {
                     const response = await fetch(url, {
                         method,
@@ -694,23 +698,33 @@
             }
         }
 
-        // Initialize the manager
+        // Initialize the manager only if DOM is loaded
         let updatesManager;
-        document.addEventListener('DOMContentLoaded', () => {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                updatesManager = new UpdatesManager();
+            });
+        } else {
             updatesManager = new UpdatesManager();
-        });
+        }
 
         // Global functions for button onclick handlers
         function publishUpdate(updateId) {
-            updatesManager.publishUpdate(updateId);
+            if (updatesManager) {
+                updatesManager.publishUpdate(updateId);
+            }
         }
 
         function unpublishUpdate(updateId) {
-            updatesManager.unpublishUpdate(updateId);
+            if (updatesManager) {
+                updatesManager.unpublishUpdate(updateId);
+            }
         }
 
         function deleteUpdate(updateId, version) {
-            updatesManager.deleteUpdate(updateId, version);
+            if (updatesManager) {
+                updatesManager.deleteUpdate(updateId, version);
+            }
         }
     </script>
 </body>
