@@ -1,18 +1,13 @@
 # app/controllers/admin/updates_controller.rb
-class Admin::UpdatesController < WebApplicationController
-  # Skip CSRF for admin routes to prevent 500 errors
-skip_before_action :verify_authenticity_token
-
-before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :unpublish]
-  before_action :ensure_admin_user!
-  
+class Admin::UpdatesController < AdminController
+  before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :unpublish]
   
   # GET /admin/updates
   def index
-  render plain: "Admin controller reached! User: #{current_user&.email}, Admin: #{current_user&.admin?}"
-rescue => e
-  render plain: "Error: #{e.message}\nBacktrace: #{e.backtrace.first(3).join('\n')}"
-end
+    render plain: "Admin controller reached! User: #{current_user&.email}, Admin: #{current_user&.admin?}"
+  rescue => e
+    render plain: "Error: #{e.message}\nBacktrace: #{e.backtrace.first(3).join('\n')}"
+  end
 
   # GET /admin/updates/1
   def show
@@ -155,13 +150,6 @@ end
       :version, :runtime_version, :description, :force_update, :published,
       changelog: []
     )
-  end
-
-  def ensure_admin_user!
-    unless current_user&.admin?
-      flash[:error] = 'Access denied. Admin privileges required.'
-      redirect_to sign_in_path
-    end
   end
 
   def upload_bundle(file)
