@@ -24,9 +24,9 @@ Rails.application.routes.draw do
  
 
   # Admin dashboard root
-  get '/admin', to: 'admin/updates#index'
+  get '/admin', to: 'admin/updates#index', as: :admin
 
-
+get '/dashboard', to: 'sessions#dashboard', as: :dashboard
   # Simple web-based sign in/out
   get '/sign_in', to: 'sessions#new', as: :sign_in
   post '/sign_in', to: 'sessions#create'
