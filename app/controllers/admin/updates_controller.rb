@@ -5,16 +5,25 @@ class Admin::UpdatesController < AdminController
   # GET /admin/updates
 def index
   begin
-    # Keep it simple - no fancy scopes
-    @updates = AppUpdate.order(created_at: :desc).limit(50) || []
-    
-    # Simple stats with fallbacks
+    # Initialize with safe defaults
+    @updates = []
     @stats = {
-      total: AppUpdate.count || 0,
-      published: AppUpdate.where(published: true).count || 0,
-      draft: AppUpdate.where(published: false).count || 0,
-      total_downloads: 0  # Hardcode for now
+      total: 0,
+      published: 0,
+      draft: 0,
+      total_downloads: 0
     }
+    
+    # Only query if table exists and is accessible
+    if AppUpdate.table_exists?
+      @updates = AppUpdate.order(created_at: :desc).limit(50).to_a
+      @stats = {
+        total: AppUpdate.count,
+        published: AppUpdate.where(published: true).count,
+        draft: AppUpdate.where(published: false).count,
+        total_downloads: AppUpdate.sum(:download_count) || 0
+      }
+    end
     
     respond_to do |format|
       format.html # renders app/views/admin/updates/index.html.erb  
@@ -24,12 +33,12 @@ def index
   rescue => e
     Rails.logger.error "Admin index error: #{e.message}"
     
-    # Fallback to empty data
+    # Always provide safe fallbacks
     @updates = []
     @stats = { total: 0, published: 0, draft: 0, total_downloads: 0 }
     
     respond_to do |format|
-      format.html { render plain: "Admin panel temporarily unavailable. Error: #{e.message}" }
+      format.html # Still try to render the view with empty data
       format.json { render json: { error: e.message }, status: 500 }
     end
   end
