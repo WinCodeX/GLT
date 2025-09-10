@@ -223,7 +223,7 @@
             line-height: 1.6;
         }
 
-        .bundle-section {
+        .apk-section {
             background: white;
             border-radius: 15px;
             padding: 30px;
@@ -231,7 +231,7 @@
             margin-bottom: 30px;
         }
 
-        .bundle-info {
+        .apk-info {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -239,11 +239,11 @@
             gap: 20px;
         }
 
-        .bundle-details {
+        .apk-details {
             flex: 1;
         }
 
-        .bundle-actions {
+        .apk-actions {
             display: flex;
             gap: 10px;
         }
@@ -369,13 +369,13 @@
             font-size: 0.9rem;
         }
 
-        .no-bundle {
+        .no-apk {
             text-align: center;
             padding: 40px;
             color: #6b7280;
         }
 
-        .no-bundle-icon {
+        .no-apk-icon {
             font-size: 3rem;
             margin-bottom: 15px;
             opacity: 0.5;
@@ -412,7 +412,7 @@
                 grid-template-columns: 1fr;
             }
             
-            .bundle-info {
+            .apk-info {
                 flex-direction: column;
                 text-align: center;
             }
@@ -476,7 +476,7 @@
                         <a href="<%= edit_admin_update_path(@update) %>" class="btn-header">
                             ✏️ Edit
                         </a>
-                        <% if @update.bundle_url.present? %>
+                        <% if @update.apk_url.present? %>
                             <button onclick="publishUpdate()" class="btn-header primary">
                                 🚀 Publish
                             </button>
@@ -571,51 +571,59 @@
                 </div>
             <% end %>
 
-            <!-- Bundle Information -->
-            <div class="bundle-section">
-                <h3>📦 Bundle Information</h3>
+            <!-- APK Information -->
+            <div class="apk-section">
+                <h3>📦 APK Information</h3>
                 
-                <% if @update.bundle_url.present? %>
-                    <div class="bundle-info">
-                        <div class="bundle-details">
+                <% if @update.apk_url.present? %>
+                    <div class="apk-info">
+                        <div class="apk-details">
                             <div class="info-item" style="margin-bottom: 10px;">
-                                <span class="info-label">Bundle URL</span>
+                                <span class="info-label">APK URL</span>
                                 <span class="info-value" style="font-family: 'Courier New', monospace; font-size: 0.8rem; word-break: break-all;">
-                                    <%= @update.bundle_url %>
+                                    <%= @update.apk_url %>
                                 </span>
                             </div>
-                            <% if @update.bundle_key.present? %>
+                            <% if @update.apk_key.present? %>
                                 <div class="info-item" style="margin-bottom: 10px;">
-                                    <span class="info-label">Bundle Key</span>
+                                    <span class="info-label">APK Key</span>
                                     <span class="info-value" style="font-family: 'Courier New', monospace; font-size: 0.8rem;">
-                                        <%= @update.bundle_key %>
+                                        <%= @update.apk_key %>
                                     </span>
                                 </div>
                             <% end %>
-                            <% if @update.respond_to?(:bundle_size) && @update.bundle_size.present? %>
-                                <div class="info-item">
-                                    <span class="info-label">Bundle Size</span>
+                            <% if @update.apk_filename.present? %>
+                                <div class="info-item" style="margin-bottom: 10px;">
+                                    <span class="info-label">Filename</span>
                                     <span class="info-value">
-                                        <%= number_to_human_size(@update.bundle_size) %>
+                                        <%= @update.apk_filename %>
+                                    </span>
+                                </div>
+                            <% end %>
+                            <% if @update.apk_size.present? %>
+                                <div class="info-item">
+                                    <span class="info-label">APK Size</span>
+                                    <span class="info-value">
+                                        <%= number_to_human_size(@update.apk_size) %>
                                     </span>
                                 </div>
                             <% end %>
                         </div>
                         
-                        <div class="bundle-actions">
-                            <a href="<%= @update.bundle_url %>" target="_blank" class="btn btn-secondary">
-                                💾 Download Bundle
+                        <div class="apk-actions">
+                            <a href="<%= @update.apk_url %>" target="_blank" class="btn btn-secondary">
+                                💾 Download APK
                             </a>
                         </div>
                     </div>
                 <% else %>
-                    <div class="no-bundle">
-                        <div class="no-bundle-icon">📁</div>
-                        <p><strong>No bundle uploaded</strong></p>
-                        <p>A bundle file is required before this update can be published.</p>
+                    <div class="no-apk">
+                        <div class="no-apk-icon">📁</div>
+                        <p><strong>No APK uploaded</strong></p>
+                        <p>An APK file is required before this update can be published.</p>
                         <% unless @update.published? %>
                             <a href="<%= edit_admin_update_path(@update) %>" class="btn btn-primary" style="margin-top: 15px;">
-                                📤 Upload Bundle
+                                📤 Upload APK
                             </a>
                         <% end %>
                     </div>
@@ -640,10 +648,10 @@
                             <span class="metadata-value"><%= @update.published_at.iso8601 %></span>
                         </div>
                     <% end %>
-                    <% if @update.bundle_key.present? %>
+                    <% if @update.apk_key.present? %>
                         <div class="metadata-item">
-                            <span class="metadata-label">Bundle Key</span>
-                            <span class="metadata-value"><%= @update.bundle_key %></span>
+                            <span class="metadata-label">APK Key</span>
+                            <span class="metadata-value"><%= @update.apk_key %></span>
                         </div>
                     <% end %>
                 </div>
