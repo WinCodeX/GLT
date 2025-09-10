@@ -129,11 +129,24 @@ class Api::V1::UpdatesController < ApplicationController
     # Handle APK file upload if present
     if params[:apk].present?
       begin
+        Rails.logger.info "Starting APK upload: #{params[:apk].original_filename} (#{params[:apk].size} bytes)"
+        
         apk_result = upload_apk_file(params[:apk], @update.version)
         @update.apk_url = apk_result[:apk_url]
         @update.apk_key = apk_result[:apk_key]
         @update.apk_size = apk_result[:size]
-      rescue => e
+        
+        Rails.logger.info "APK upload completed successfully"
+        
+      rescue Aws::S3::Errors::ServiceError => e
+        Rails.logger.error "R2 upload error: #{e.message}"
+        render json: { 
+          error: "Cloud storage upload failed", 
+          details: e.message,
+          error_code: e.code
+        }, status: 500
+        return
+      rescue StandardError => e
         Rails.logger.error "APK upload failed: #{e.message}"
         render json: { 
           error: "APK upload failed", 
@@ -288,31 +301,39 @@ class Api::V1::UpdatesController < ApplicationController
     bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
     object_key = "AppUpdate/#{version}/#{key}.apk"
     
-    obj = client.put_object(
-      bucket: bucket_name,
-      key: object_key,
-      body: file.read,
-      content_type: 'application/vnd.android.package-archive',
-      metadata: {
-        'version' => version,
-        'upload_key' => key,
-        'original_filename' => file.original_filename
-      }
-    )
+    # Use streaming upload instead of loading entire file into memory
+    File.open(file.tempfile.path, 'rb') do |file_stream|
+      client.put_object(
+        bucket: bucket_name,
+        key: object_key,
+        body: file_stream,
+        content_type: 'application/vnd.android.package-archive',
+        content_length: file.size,
+        metadata: {
+          'version' => version,
+          'upload_key' => key,
+          'original_filename' => file.original_filename
+        }
+      )
+    end
     
     public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
     "#{public_base}/#{object_key}"
   end
 
   def upload_apk_to_local(file, key, version)
-    # Development/local storage
+    # Development/local storage - use streaming to avoid memory issues
     filename = "#{key}.apk"
     upload_path = Rails.root.join('public', 'uploads', 'apks', version)
     FileUtils.mkdir_p(upload_path)
     
     file_path = upload_path.join(filename)
-    File.open(file_path, 'wb') do |f|
-      f.write(file.read)
+    
+    # Stream file copy instead of loading into memory
+    File.open(file_path, 'wb') do |output_file|
+      File.open(file.tempfile.path, 'rb') do |input_file|
+        IO.copy_stream(input_file, output_file)
+      end
     end
     
     "#{request.base_url}/uploads/apks/#{version}/#{filename}"
