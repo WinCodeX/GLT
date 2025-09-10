@@ -4,34 +4,49 @@ class Admin::UpdatesController < AdminController
   
   # GET /admin/updates
 def index
-  @updates = AppUpdate.order(created_at: :desc).limit(50)
-  @stats = {
-    total: AppUpdate.count,
-    published: AppUpdate.where(published: true).count,
-    draft: AppUpdate.where(published: false).count,
-    total_downloads: AppUpdate.sum(:download_count)
-  }
+  Rails.logger.info "=== Admin Updates Index Started ==="
   
-  # Render the view or return JSON if requested
-  respond_to do |format|
-    format.html # renders app/views/admin/updates/index.html.erb
-    format.json { render json: { updates: @updates, stats: @stats } }
+  begin
+    # Use safe queries with explicit error handling
+    @updates = AppUpdate.latest_first.limit(50)
+    Rails.logger.info "Loaded #{@updates.count} updates"
+    
+    # Safe stats calculation
+    total_count = AppUpdate.count
+    published_count = AppUpdate.where(published: true).count
+    total_downloads = AppUpdate.sum(:download_count) || 0
+    
+    @stats = {
+      total: total_count,
+      published: published_count,
+      draft: total_count - published_count,
+      total_downloads: total_downloads
+    }
+    
+    Rails.logger.info "Stats: #{@stats}"
+    
+    respond_to do |format|
+      format.html # renders app/views/admin/updates/index.html.erb
+      format.json { render json: { updates: @updates, stats: @stats } }
+    end
+    
+  rescue => e
+    Rails.logger.error "=== Admin Index Error ==="
+    Rails.logger.error "Error: #{e.class}: #{e.message}"
+    Rails.logger.error "Backtrace: #{e.backtrace.first(5).join("\n")}"
+    
+    # Provide safe fallbacks
+    @updates = []
+    @stats = { total: 0, published: 0, draft: 0, total_downloads: 0 }
+    
+    respond_to do |format|
+      format.html do
+        flash.now[:error] = "Error loading updates: #{e.message}"
+        render :index
+      end
+      format.json { render json: { error: e.message }, status: 500 }
+    end
   end
-rescue => e
-  Rails.logger.error "Admin updates index error: #{e.message}"
-  Rails.logger.error e.backtrace.join("\n")
-  
-  # Handle the error gracefully
-  @updates = []
-  @stats = {
-    total: 0,
-    published: 0,
-    draft: 0,
-    total_downloads: 0
-  }
-  
-  flash.now[:error] = "Error loading updates: #{e.message}"
-  render :index
 end
 
   # GET /admin/updates/1
