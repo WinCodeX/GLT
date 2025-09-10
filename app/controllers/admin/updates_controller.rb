@@ -68,19 +68,19 @@ class Admin::UpdatesController < AdminController
 
   # POST /admin/updates
   def create
-    @update = AppUpdate.new(update_params)
+    @update = AppUpdate.new(update_params.except(:apk))
     @update.user = current_user if @update.respond_to?(:user=)
 
     if params[:app_update][:apk].present?
       begin
-        apk_result = upload_apk(params[:app_update][:apk])
+        apk_result = upload_apk(params[:app_update][:apk], @update.version)
         @update.apk_url = apk_result[:url]
         @update.apk_key = apk_result[:key]
         @update.apk_size = apk_result[:size]
         @update.apk_filename = apk_result[:filename]
       rescue => e
         Rails.logger.error "APK upload failed: #{e.message}"
-        flash[:error] = "APK upload failed: #{e.message}"
+        @update.errors.add(:apk, "Upload failed: #{e.message}")
         render :new and return
       end
     end
@@ -89,35 +89,37 @@ class Admin::UpdatesController < AdminController
       flash[:success] = 'Update created successfully.'
       redirect_to admin_update_path(@update)
     else
-      flash[:error] = 'Failed to create update.'
+      flash.now[:error] = 'Failed to create update. Please check the form for errors.'
       render :new
     end
   end
 
   # PATCH/PUT /admin/updates/1
   def update
+    update_attributes = update_params.except(:apk)
+    
     if params[:app_update][:apk].present?
       begin
         # Clean up old APK if replacing
         cleanup_apk(@update.apk_key, @update.version) if @update.apk_key.present?
         
-        apk_result = upload_apk(params[:app_update][:apk])
-        @update.apk_url = apk_result[:url]
-        @update.apk_key = apk_result[:key]
-        @update.apk_size = apk_result[:size]
-        @update.apk_filename = apk_result[:filename]
+        apk_result = upload_apk(params[:app_update][:apk], update_attributes[:version] || @update.version)
+        update_attributes[:apk_url] = apk_result[:url]
+        update_attributes[:apk_key] = apk_result[:key]
+        update_attributes[:apk_size] = apk_result[:size]
+        update_attributes[:apk_filename] = apk_result[:filename]
       rescue => e
         Rails.logger.error "APK upload failed: #{e.message}"
-        flash[:error] = "APK upload failed: #{e.message}"
+        @update.errors.add(:apk, "Upload failed: #{e.message}")
         render :edit and return
       end
     end
 
-    if @update.update(update_params)
+    if @update.update(update_attributes)
       flash[:success] = 'Update was successfully updated.'
       redirect_to admin_update_path(@update)
     else
-      flash[:error] = 'Failed to update.'
+      flash.now[:error] = 'Failed to update. Please check the form for errors.'
       render :edit
     end
   end
@@ -165,7 +167,8 @@ class Admin::UpdatesController < AdminController
   def upload_apk_only
     if params[:apk].present?
       begin
-        result = upload_apk(params[:apk])
+        version = params[:version] || '1.0.0'
+        result = upload_apk(params[:apk], version)
         render json: {
           status: 'success',
           message: 'APK uploaded successfully',
@@ -209,12 +212,12 @@ class Admin::UpdatesController < AdminController
 
   def update_params
     params.require(:app_update).permit(
-      :version, :runtime_version, :description, :force_update, :published,
+      :version, :runtime_version, :description, :force_update, :published, :apk,
       changelog: []
     )
   end
 
-  def upload_apk(file)
+  def upload_apk(file, version = nil)
     # Validate APK file type
     unless file.content_type == 'application/vnd.android.package-archive' || 
            file.original_filename.end_with?('.apk')
@@ -228,7 +231,7 @@ class Admin::UpdatesController < AdminController
     end
 
     key = SecureRandom.uuid
-    version = params.dig(:app_update, :version) || '1.0.0'
+    version = version || '1.0.0'
     
     if Rails.env.production?
       upload_apk_to_r2(file, key, version)
