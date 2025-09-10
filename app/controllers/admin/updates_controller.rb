@@ -71,9 +71,9 @@ class Admin::UpdatesController < AdminController
     @update = AppUpdate.new(update_params)
     @update.user = current_user if @update.respond_to?(:user=)
 
-    if params[:apk].present?
+    if params[:app_update][:apk].present?
       begin
-        apk_result = upload_apk(params[:apk])
+        apk_result = upload_apk(params[:app_update][:apk])
         @update.apk_url = apk_result[:url]
         @update.apk_key = apk_result[:key]
         @update.apk_size = apk_result[:size]
@@ -96,12 +96,12 @@ class Admin::UpdatesController < AdminController
 
   # PATCH/PUT /admin/updates/1
   def update
-    if params[:apk].present?
+    if params[:app_update][:apk].present?
       begin
         # Clean up old APK if replacing
         cleanup_apk(@update.apk_key, @update.version) if @update.apk_key.present?
         
-        apk_result = upload_apk(params[:apk])
+        apk_result = upload_apk(params[:app_update][:apk])
         @update.apk_url = apk_result[:url]
         @update.apk_key = apk_result[:key]
         @update.apk_size = apk_result[:size]
@@ -163,10 +163,26 @@ class Admin::UpdatesController < AdminController
 
   # POST /admin/updates/upload_apk_only
   def upload_apk_only
-    render json: {
-      status: 'success',
-      message: 'APK uploaded successfully'
-    }
+    if params[:apk].present?
+      begin
+        result = upload_apk(params[:apk])
+        render json: {
+          status: 'success',
+          message: 'APK uploaded successfully',
+          data: result
+        }
+      rescue => e
+        render json: {
+          status: 'error',
+          message: e.message
+        }, status: :unprocessable_entity
+      end
+    else
+      render json: {
+        status: 'error',
+        message: 'No APK file provided'
+      }, status: :bad_request
+    end
   end
 
   # GET /admin/updates/stats
