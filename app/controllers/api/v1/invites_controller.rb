@@ -4,7 +4,7 @@ module Api
       before_action :authenticate_user!
 
       def create
-        business = current_user.businesses.find_by(id: params[:business_id])
+        business = Business.where(owner: current_user).find_by(id: params[:business_id])
 
         unless business
           return render json: { error: 'Business not found or unauthorized' }, status: :not_found
