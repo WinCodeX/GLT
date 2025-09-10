@@ -6,25 +6,20 @@ Rails.application.routes.draw do
   # ==========================================
   
 
- #Admin namespace for updates management
-  namespace :admin do
-    resources :updates do
-      member do
-        patch :publish
-        patch :unpublish
-      end
-      collection do
-        post :upload_bundle_only
-        get :stats
-      end
+ # Remove the conflicting single route and use proper namespace routing
+namespace :admin do
+  root 'updates#index'  # This makes /admin route to admin/updates#index
+  resources :updates do
+    member do
+      patch :publish
+      patch :unpublish
+    end
+    collection do
+      post :upload_bundle_only
+      get :stats
     end
   end
-
-
- 
-
-  # Admin dashboard root
-  get '/admin', to: 'admin/updates#index', as: :admin
+end
 
 get '/dashboard', to: 'sessions#dashboard', as: :dashboard
   # Simple web-based sign in/out
