@@ -19,8 +19,19 @@ def index
   end
 rescue => e
   Rails.logger.error "Admin updates index error: #{e.message}"
-  flash[:error] = "Error loading updates: #{e.message}"
-  redirect_to sign_in_path
+  Rails.logger.error e.backtrace.join("\n")
+  
+  # Handle the error gracefully
+  @updates = []
+  @stats = {
+    total: 0,
+    published: 0,
+    draft: 0,
+    total_downloads: 0
+  }
+  
+  flash.now[:error] = "Error loading updates: #{e.message}"
+  render :index
 end
 
   # GET /admin/updates/1
