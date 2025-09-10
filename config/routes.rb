@@ -21,12 +21,7 @@ Rails.application.routes.draw do
   end
 
 
-  # Web-based admin authentication routes (if using Devise)
-  devise_scope :user do
-    get '/admin/sign_in', to: 'devise/sessions#new'
-    post '/admin/sign_in', to: 'devise/sessions#create'
-    delete '/admin/sign_out', to: 'devise/sessions#destroy'
-  end
+ 
 
   # Admin dashboard root
   get '/admin', to: 'admin/updates#index'
