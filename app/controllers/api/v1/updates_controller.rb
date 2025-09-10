@@ -1,10 +1,10 @@
 # app/controllers/api/v1/updates_controller.rb
 
 class Api::V1::UpdatesController < ApplicationController
-  before_action :authenticate_user!, except: [:manifest, :info]
+  before_action :authenticate_user!, except: [:manifest, :info, :download]
 
   def manifest
-    # Expo Updates manifest endpoint
+    # Legacy endpoint - now returns APK update info instead of Expo manifest
     latest_update = AppUpdate.published.latest
     
     if latest_update
@@ -12,15 +12,16 @@ class Api::V1::UpdatesController < ApplicationController
         id: latest_update.update_id,
         createdAt: latest_update.created_at.iso8601,
         runtimeVersion: latest_update.runtime_version,
-        launchAsset: {
-          key: latest_update.bundle_key,
-          contentType: 'application/javascript',
-          url: latest_update.bundle_url
+        apkAsset: {
+          key: latest_update.apk_key,
+          contentType: 'application/vnd.android.package-archive',
+          url: latest_update.apk_url,
+          size: latest_update.apk_size
         },
-        assets: latest_update.assets || [],
         metadata: {
           version: latest_update.version,
-          changelog: latest_update.changelog
+          changelog: latest_update.changelog,
+          force_update: latest_update.force_update
         }
       }
     else
@@ -29,7 +30,7 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def info
-    # Get latest update information
+    # Get latest APK update information
     latest_update = AppUpdate.published.latest
     current_version = params[:current_version] || '1.0.0'
     
@@ -40,7 +41,8 @@ class Api::V1::UpdatesController < ApplicationController
         changelog: latest_update.changelog,
         release_date: latest_update.created_at.iso8601,
         force_update: latest_update.force_update,
-        download_url: latest_update.bundle_url
+        download_url: latest_update.apk_url,
+        file_size: latest_update.apk_size
       }
     else
       render json: {
@@ -51,7 +53,7 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def check
-    # Check if updates are available for specific version
+    # Check if APK updates are available for specific version
     current_version = params[:version] || '1.0.0'
     latest_update = AppUpdate.published.latest
     
@@ -61,12 +63,38 @@ class Api::V1::UpdatesController < ApplicationController
       has_update: has_update,
       latest_version: latest_update&.version,
       current_version: current_version,
-      force_update: has_update ? latest_update.force_update : false
+      force_update: has_update ? latest_update.force_update : false,
+      file_size: has_update ? latest_update.apk_size : nil
     }
   end
 
+  def download
+    # Direct APK download endpoint with download tracking
+    update = if params[:version]
+      AppUpdate.published.find_by(version: params[:version])
+    else
+      AppUpdate.published.latest
+    end
+    
+    unless update
+      render json: { error: 'Update not found' }, status: 404
+      return
+    end
+    
+    unless update.apk_url.present?
+      render json: { error: 'APK file not available' }, status: 404
+      return
+    end
+    
+    # Increment download count
+    update.increment_download_count!
+    
+    # Redirect to actual APK download URL
+    redirect_to update.apk_url, allow_other_host: true
+  end
+
   def create
-    # Admin endpoint to create new update
+    # Admin endpoint to create new APK update
     return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
     
     @update = AppUpdate.new(update_params)
@@ -80,7 +108,7 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def publish
-    # Admin endpoint to publish an update
+    # Admin endpoint to publish an APK update
     return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
     
     @update = AppUpdate.find(params[:id])
@@ -89,28 +117,33 @@ class Api::V1::UpdatesController < ApplicationController
     render json: @update
   end
 
-  def upload_bundle
-    # Admin endpoint to upload update bundle
+  def upload_apk
+    # Admin endpoint to upload APK file
     return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
     
-    bundle_file = params[:bundle]
-    return render json: { error: 'No bundle file provided' }, status: 400 unless bundle_file
+    apk_file = params[:apk]
+    return render json: { error: 'No APK file provided' }, status: 400 unless apk_file
     
-    # Store the bundle file (implement your storage logic)
-    bundle_key = SecureRandom.uuid
-    bundle_url = upload_to_storage(bundle_file, bundle_key)
-    
-    render json: {
-      bundle_key: bundle_key,
-      bundle_url: bundle_url,
-      size: bundle_file.size
-    }
+    begin
+      # Store the APK file
+      apk_key = SecureRandom.uuid
+      apk_url = upload_apk_to_storage(apk_file, apk_key, params[:version] || '1.0.0')
+      
+      render json: {
+        apk_key: apk_key,
+        apk_url: apk_url,
+        size: apk_file.size
+      }
+    rescue => e
+      Rails.logger.error "APK upload failed: #{e.message}"
+      render json: { error: "APK upload failed: #{e.message}" }, status: 500
+    end
   end
 
   private
 
   def update_params
-    params.require(:update).permit(:version, :runtime_version, :bundle_url, :bundle_key, :force_update, changelog: [])
+    params.require(:update).permit(:version, :runtime_version, :apk_url, :apk_key, :force_update, changelog: [])
   end
 
   def version_greater_than?(version1, version2)
@@ -119,10 +152,55 @@ class Api::V1::UpdatesController < ApplicationController
     false
   end
 
-  def upload_to_storage(file, key)
-    # Implement your file storage logic here
-    # This could be AWS S3, Google Cloud Storage, or local storage
-    # For now, returning a placeholder URL
-    "#{request.base_url}/uploads/bundles/#{key}.js"
+  def upload_apk_to_storage(file, key, version)
+    if Rails.env.production?
+      upload_apk_to_r2(file, key, version)
+    else
+      upload_apk_to_local(file, key, version)
+    end
+  end
+
+  def upload_apk_to_r2(file, key, version)
+    require 'aws-sdk-s3'
+    
+    client = Aws::S3::Client.new(
+      access_key_id: ENV['CLOUDFLARE_R2_ACCESS_KEY_ID'],
+      secret_access_key: ENV['CLOUDFLARE_R2_SECRET_ACCESS_KEY'],
+      region: 'auto',
+      endpoint: ENV['CLOUDFLARE_R2_ENDPOINT'] || 'https://92fd9199e9a7d60761d017e2a687e647.r2.cloudflarestorage.com',
+      force_path_style: true
+    )
+
+    bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
+    object_key = "AppUpdate/#{version}/#{file.original_filename}"
+    
+    client.put_object(
+      bucket: bucket_name,
+      key: object_key,
+      body: file.read,
+      content_type: 'application/vnd.android.package-archive',
+      metadata: {
+        'version' => version,
+        'upload_key' => key,
+        'original_filename' => file.original_filename
+      }
+    )
+    
+    public_base = ENV['CLOUDFLARE_R2_PUBLIC_URL'] || 'https://pub-63612670c2d64075820ce8724feff8ea.r2.dev'
+    "#{public_base}/#{object_key}"
+  end
+
+  def upload_apk_to_local(file, key, version)
+    # Development/local storage
+    filename = "#{key}.apk"
+    upload_path = Rails.root.join('public', 'uploads', 'apks', version)
+    FileUtils.mkdir_p(upload_path)
+    
+    file_path = upload_path.join(filename)
+    File.open(file_path, 'wb') do |f|
+      f.write(file.read)
+    end
+    
+    "#{request.base_url}/uploads/apks/#{version}/#{filename}"
   end
 end
