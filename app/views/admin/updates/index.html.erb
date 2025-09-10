@@ -439,68 +439,99 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <% @updates.each do |update| %>
-                                    <% next if update.nil? %>
-                                    <tr>
-                                        <td>
-                                            <div class="version-info">
-                                                <span class="version-number">
-                                                    v<%= update&.version || 'Unknown' %>
-                                                    <% if update&.force_update %>
-                                                        <span class="force-update-indicator">Force</span>
-                                                    <% end %>
+                                <% if @updates.present? %>
+                                    <% @updates.each do |update| %>
+                                        <% next if update.nil? %>
+                                        <% 
+                                          # Safely get update_id with fallback
+                                          update_id_display = begin
+                                            if update.respond_to?(:update_id) && update.update_id.present?
+                                              update.update_id.to_s.first(9) + '...'
+                                            else
+                                              'N/A'
+                                            end
+                                          rescue
+                                            'N/A'
+                                          end
+                                          
+                                          # Safely check for APK URL with fallbacks
+                                          has_apk = begin
+                                            (update.respond_to?(:apk_url) && update.apk_url.present?) ||
+                                            (update.respond_to?(:bundle_url) && update.bundle_url.present?)
+                                          rescue
+                                            false
+                                          end
+                                        %>
+                                        <tr>
+                                            <td>
+                                                <div class="version-info">
+                                                    <span class="version-number">
+                                                        v<%= update.try(:version) || 'Unknown' %>
+                                                        <% if update.try(:force_update) %>
+                                                            <span class="force-update-indicator">Force</span>
+                                                        <% end %>
+                                                    </span>
+                                                    <span class="version-id">
+                                                        <%= update_id_display %>
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <% is_published = update.try(:published?) || update.try(:published) %>
+                                                <span class="status-badge <%= is_published ? 'status-published' : 'status-draft' %>">
+                                                    <%= is_published ? 'Published' : 'Draft' %>
                                                 </span>
-                                                <span class="version-id">
-                                                    <%= update&.update_id&.first(9) || 'N/A' %>...
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge <%= update&.published? ? 'status-published' : 'status-draft' %>">
-                                                <%= update&.published? ? 'Published' : 'Draft' %>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div class="changelog-preview" title="<%= update&.description %>">
-                                                <%= update&.description.present? ? update.description : 'No description' %>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <strong><%= update&.download_count || 0 %></strong>
-                                        </td>
-                                        <td>
-                                            <% if update&.created_at %>
-                                                <%= update.created_at.strftime("%b %d, %Y") %><br>
-                                                <small style="color: #6b7280;">
-                                                    <%= time_ago_in_words(update.created_at) %> ago
-                                                </small>
-                                            <% else %>
-                                                <span style="color: #6b7280;">Unknown</span>
-                                            <% end %>
-                                        </td>
-                                        <td>
-                                            <div class="actions">
-                                                <a href="/admin/updates/<%= update.id %>" class="btn btn-small btn-secondary">
-                                                    View
-                                                </a>
-                                                <% unless update&.published? %>
-                                                    <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
-                                                        Edit
+                                            </td>
+                                            <td>
+                                                <% description = update.try(:description) %>
+                                                <div class="changelog-preview" title="<%= description %>">
+                                                    <%= description.present? ? description : 'No description' %>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <strong><%= update.try(:download_count) || 0 %></strong>
+                                            </td>
+                                            <td>
+                                                <% created_at = update.try(:created_at) %>
+                                                <% if created_at.present? %>
+                                                    <%= created_at.strftime("%b %d, %Y") rescue 'Unknown' %><br>
+                                                    <small style="color: #6b7280;">
+                                                        <%= time_ago_in_words(created_at) rescue 'Unknown' %> ago
+                                                    </small>
+                                                <% else %>
+                                                    <span style="color: #6b7280;">Unknown</span>
+                                                <% end %>
+                                            </td>
+                                            <td>
+                                                <div class="actions">
+                                                    <a href="/admin/updates/<%= update.id %>" class="btn btn-small btn-secondary">
+                                                        View
                                                     </a>
-                                                    <% if update&.apk_url.present? %>
-                                                        <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
-                                                            Publish
+                                                    <% unless is_published %>
+                                                        <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
+                                                            Edit
+                                                        </a>
+                                                        <% if has_apk %>
+                                                            <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
+                                                                Publish
+                                                            </button>
+                                                        <% end %>
+                                                        <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.try(:version) || 'Unknown' %>')" class="btn btn-small btn-danger">
+                                                            Delete
+                                                        </button>
+                                                    <% else %>
+                                                        <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
+                                                            Unpublish
                                                         </button>
                                                     <% end %>
-                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update&.version || 'Unknown' %>')" class="btn btn-small btn-danger">
-                                                        Delete
-                                                    </button>
-                                                <% else %>
-                                                    <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
-                                                        Unpublish
-                                                    </button>
-                                                <% end %>
-                                            </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <% end %>
+                                <% else %>
+                                    <tr>
+                                        <td colspan="6" style="text-align: center; padding: 40px; color: #6b7280;">
+                                            No updates available
                                         </td>
                                     </tr>
                                 <% end %>
