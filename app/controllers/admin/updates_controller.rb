@@ -4,46 +4,32 @@ class Admin::UpdatesController < AdminController
   
   # GET /admin/updates
 def index
-  Rails.logger.info "=== Admin Updates Index Started ==="
-  
   begin
-    # Use safe queries with explicit error handling
-    @updates = AppUpdate.latest_first.limit(50)
-    Rails.logger.info "Loaded #{@updates.count} updates"
+    # Keep it simple - no fancy scopes
+    @updates = AppUpdate.order(created_at: :desc).limit(50) || []
     
-    # Safe stats calculation
-    total_count = AppUpdate.count
-    published_count = AppUpdate.where(published: true).count
-    total_downloads = AppUpdate.sum(:download_count) || 0
-    
+    # Simple stats with fallbacks
     @stats = {
-      total: total_count,
-      published: published_count,
-      draft: total_count - published_count,
-      total_downloads: total_downloads
+      total: AppUpdate.count || 0,
+      published: AppUpdate.where(published: true).count || 0,
+      draft: AppUpdate.where(published: false).count || 0,
+      total_downloads: 0  # Hardcode for now
     }
     
-    Rails.logger.info "Stats: #{@stats}"
-    
     respond_to do |format|
-      format.html # renders app/views/admin/updates/index.html.erb
+      format.html # renders app/views/admin/updates/index.html.erb  
       format.json { render json: { updates: @updates, stats: @stats } }
     end
     
   rescue => e
-    Rails.logger.error "=== Admin Index Error ==="
-    Rails.logger.error "Error: #{e.class}: #{e.message}"
-    Rails.logger.error "Backtrace: #{e.backtrace.first(5).join("\n")}"
+    Rails.logger.error "Admin index error: #{e.message}"
     
-    # Provide safe fallbacks
+    # Fallback to empty data
     @updates = []
     @stats = { total: 0, published: 0, draft: 0, total_downloads: 0 }
     
     respond_to do |format|
-      format.html do
-        flash.now[:error] = "Error loading updates: #{e.message}"
-        render :index
-      end
+      format.html { render plain: "Admin panel temporarily unavailable. Error: #{e.message}" }
       format.json { render json: { error: e.message }, status: 500 }
     end
   end
