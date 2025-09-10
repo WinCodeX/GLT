@@ -3,13 +3,37 @@ require "active_support/core_ext/integer/time"
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
+  # ===========================================
+  # 🌐 HOST AUTHORIZATION - ALLOW RENDER URL
+  # ===========================================
+  
+  # Allow Render.com deployment URL
+  config.hosts << "glt-53x8.onrender.com"
+  
+  # Allow local development hosts
+  config.hosts << "localhost"
+  config.hosts << "127.0.0.1"
+  config.hosts << "192.168.100.73"
+  config.hosts << "10.41.201.106" 
+  config.hosts << "10.35.210.106"
+  
+  # Allow any Render.com subdomain for flexibility
+  config.hosts << /.*\.onrender\.com/
 
+  # ===========================================
+  # 🖼️ AVATAR HOSTS CONFIGURATION
+  # ===========================================
+  
   config.x.avatar_hosts = [
     "http://192.168.100.73:3000",
     "http://10.41.201.106:3000",
-    "http://10.35.210.106:3000"
+    "http://10.35.210.106:3000",
+    "https://glt-53x8.onrender.com"  # Added Render URL for avatars
   ]
 
+  # ===========================================
+  # 🔄 DEVELOPMENT SETTINGS
+  # ===========================================
 
   # In the development environment your application's code is reloaded any time
   # it changes. This slows down response time but is perfect for development
@@ -34,20 +58,34 @@ Rails.application.configure do
     }
   else
     config.action_controller.perform_caching = false
-
     config.cache_store = :null_store
   end
 
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-Rails.application.routes.default_url_options[:host] = 'http://192.168.100.73:3000'
+  # ===========================================
+  # 🌐 URL CONFIGURATION
+  # ===========================================
+  
+  # Default URL options - use environment variable or fallback to local
+  if ENV['RENDER_EXTERNAL_URL'].present?
+    Rails.application.routes.default_url_options[:host] = ENV['RENDER_EXTERNAL_URL']
+  else
+    Rails.application.routes.default_url_options[:host] = 'http://192.168.100.73:3000'
+  end
 
+  # ===========================================
+  # 📧 MAILER CONFIGURATION
+  # ===========================================
 
   # Don't care if the mailer can't send.
   config.action_mailer.raise_delivery_errors = false
-
   config.action_mailer.perform_caching = false
+
+  # ===========================================
+  # 🐛 DEBUGGING & LOGGING
+  # ===========================================
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -67,6 +105,9 @@ Rails.application.routes.default_url_options[:host] = 'http://192.168.100.73:300
   # Highlight code that enqueued background job in logs.
   config.active_job.verbose_enqueue_logs = true
 
+  # ===========================================
+  # 🔧 ADDITIONAL SETTINGS
+  # ===========================================
 
   # Raises error for missing translations.
   # config.i18n.raise_on_missing_translations = true
