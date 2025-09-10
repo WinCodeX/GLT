@@ -6,8 +6,7 @@ bundle install
 
 # ./bin/rails assets:precompile
 # ./bin/rails assets:clean
-bundle exec rails assets:precompile
-bundle exec rails assets:clean
+
 
 # echo "=== Dropping and Creating Database ==="
 # bundle exec rails db:drop #DISABLE_DATABASE_ENVIRONMENT_CHECK=1 || true
