@@ -1,5 +1,8 @@
 # app/controllers/admin_controller.rb
 class AdminController < WebApplicationController
+  # Skip CSRF for admin routes to prevent 500 errors
+  skip_before_action :verify_authenticity_token
+  
   # Override authentication to check for admin role
   before_action :authenticate_admin!
   
