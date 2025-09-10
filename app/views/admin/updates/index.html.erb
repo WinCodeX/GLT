@@ -371,11 +371,11 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📱 App Updates Management</h1>
+            <h1>App Updates Management</h1>
             <p>Manage over-the-air app updates and deployments</p>
             <div class="header-actions">
-                <a href="<%= admin_root_path %>" class="btn-header">🏠 Admin Home</a>
-                <a href="/logout" class="btn-header">👋 Sign Out</a>
+                <a href="/admin" class="btn-header">Admin Home</a>
+                <a href="/logout" class="btn-header">Sign Out</a>
             </div>
         </div>
 
@@ -402,8 +402,8 @@
         <div class="content">
             <div class="content-header">
                 <h2 class="content-title">App Updates</h2>
-                <a href="<%= new_admin_update_path %>" class="btn">
-                    ➕ Create New Update
+                <a href="/admin/updates/new" class="btn">
+                    Create New Update
                 </a>
             </div>
 
@@ -440,35 +440,36 @@
                             </thead>
                             <tbody>
                                 <% @updates.each do |update| %>
+                                    <% next if update.nil? %>
                                     <tr>
                                         <td>
                                             <div class="version-info">
                                                 <span class="version-number">
-                                                    v<%= update.try(:version) || 'Unknown' %>
-                                                    <% if update.try(:force_update) %>
+                                                    v<%= update&.version || 'Unknown' %>
+                                                    <% if update&.force_update %>
                                                         <span class="force-update-indicator">Force</span>
                                                     <% end %>
                                                 </span>
                                                 <span class="version-id">
-                                                    <%= update.try(:update_id)&.first(9) || 'N/A' %>...
+                                                    <%= update&.update_id&.first(9) || 'N/A' %>...
                                                 </span>
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="status-badge <%= update.try(:published?) ? 'status-published' : 'status-draft' %>">
-                                                <%= update.try(:published?) ? 'Published' : 'Draft' %>
+                                            <span class="status-badge <%= update&.published? ? 'status-published' : 'status-draft' %>">
+                                                <%= update&.published? ? 'Published' : 'Draft' %>
                                             </span>
                                         </td>
                                         <td>
-                                            <div class="changelog-preview" title="<%= update.try(:description) %>">
-                                                <%= update.try(:description).present? ? update.description : 'No description' %>
+                                            <div class="changelog-preview" title="<%= update&.description %>">
+                                                <%= update&.description.present? ? update.description : 'No description' %>
                                             </div>
                                         </td>
                                         <td>
-                                            <strong><%= update.try(:download_count) || 0 %></strong>
+                                            <strong><%= update&.download_count || 0 %></strong>
                                         </td>
                                         <td>
-                                            <% if update.try(:created_at) %>
+                                            <% if update&.created_at %>
                                                 <%= update.created_at.strftime("%b %d, %Y") %><br>
                                                 <small style="color: #6b7280;">
                                                     <%= time_ago_in_words(update.created_at) %> ago
@@ -479,24 +480,24 @@
                                         </td>
                                         <td>
                                             <div class="actions">
-                                                <a href="<%= admin_update_path(update) %>" class="btn btn-small btn-secondary">
-                                                    👁️ View
+                                                <a href="/admin/updates/<%= update.id %>" class="btn btn-small btn-secondary">
+                                                    View
                                                 </a>
-                                                <% unless update.try(:published?) %>
-                                                    <a href="<%= edit_admin_update_path(update) %>" class="btn btn-small btn-secondary">
-                                                        ✏️ Edit
+                                                <% unless update&.published? %>
+                                                    <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
+                                                        Edit
                                                     </a>
-                                                    <% if update.try(:bundle_url).present? %>
+                                                    <% if update&.bundle_url.present? %>
                                                         <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
-                                                            🚀 Publish
+                                                            Publish
                                                         </button>
                                                     <% end %>
-                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.try(:version) || 'Unknown' %>')" class="btn btn-small btn-danger">
-                                                        🗑️ Delete
+                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update&.version || 'Unknown' %>')" class="btn btn-small btn-danger">
+                                                        Delete
                                                     </button>
                                                 <% else %>
                                                     <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
-                                                        📤 Unpublish
+                                                        Unpublish
                                                     </button>
                                                 <% end %>
                                             </div>
@@ -512,8 +513,8 @@
                     <div class="empty-state-icon">📱</div>
                     <h3>No Updates Found</h3>
                     <p>Get started by creating your first app update</p>
-                    <a href="<%= new_admin_update_path %>" class="btn">
-                        ➕ Create Your First Update
+                    <a href="/admin/updates/new" class="btn">
+                        Create Your First Update
                     </a>
                 </div>
             <% end %>
@@ -619,7 +620,6 @@
             }
 
             showToast(message, type = 'success') {
-                // Remove existing toast
                 const existingToast = document.querySelector('.toast');
                 if (existingToast) {
                     existingToast.remove();
@@ -698,7 +698,7 @@
             }
         }
 
-        // Initialize the manager only if DOM is loaded
+        // Initialize the manager
         let updatesManager;
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
