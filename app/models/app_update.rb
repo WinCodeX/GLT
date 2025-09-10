@@ -34,7 +34,17 @@ class AppUpdate < ApplicationRecord
   end
 
   def published?
-    published
+    published == true
+  end
+
+  # Handle potential nil description
+  def description
+    read_attribute(:description) || ""
+  end
+
+  # Handle potential nil download_count
+  def download_count
+    read_attribute(:download_count) || 0
   end
 
   private
