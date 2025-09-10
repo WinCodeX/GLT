@@ -32,6 +32,13 @@ module GltApi
     config.api_only = true
     
     # ===========================================
+    # 📁 LARGE FILE UPLOAD CONFIGURATION (FIXED)
+    # ===========================================
+    
+    # Fix for 119MB APK uploads - increase request size limit
+    config.action_dispatch.max_request_size = 250.megabytes
+    
+    # ===========================================
     # 🍪 SESSION CONFIGURATION (FIXED)
     # ===========================================
     
