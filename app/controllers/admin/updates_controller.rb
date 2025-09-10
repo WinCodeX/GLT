@@ -1,9 +1,12 @@
 # app/controllers/admin/updates_controller.rb
 class Admin::UpdatesController < WebApplicationController
-  before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :unpublish]
-  before_action :ensure_admin_user!
   # Skip CSRF for admin routes to prevent 500 errors
-  skip_before_action :verify_authenticity_token
+skip_before_action :verify_authenticity_token
+
+before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :unpublish]
+  before_action :ensure_admin_user!
+  
+  
   # GET /admin/updates
   def index
     @updates = AppUpdate.order(created_at: :desc).limit(50)
