@@ -4,9 +4,13 @@ class AppUpdate < ApplicationRecord
   validates :bundle_url, presence: true, if: :published?
 
   scope :published, -> { where(published: true) }
-  scope :latest, -> { order(created_at: :desc).first }
+  scope :latest_first, -> { order(created_at: :desc) }
 
   before_validation :generate_update_id, on: :create
+
+  def self.latest
+    latest_first.first
+  end
 
   def version_number
     Gem::Version.new(version)
@@ -34,17 +38,7 @@ class AppUpdate < ApplicationRecord
   end
 
   def published?
-    published == true
-  end
-
-  # Handle potential nil description
-  def description
-    read_attribute(:description) || ""
-  end
-
-  # Handle potential nil download_count
-  def download_count
-    read_attribute(:download_count) || 0
+    read_attribute(:published) == true
   end
 
   private
