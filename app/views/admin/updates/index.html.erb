@@ -372,7 +372,7 @@
     <div class="container">
         <div class="header">
             <h1>App Updates Management</h1>
-            <p>Manage over-the-air app updates and deployments</p>
+            <p>Manage APK app updates and deployments</p>
             <div class="header-actions">
                 <a href="/admin" class="btn-header">Admin Home</a>
                 <a href="/logout" class="btn-header">Sign Out</a>
@@ -487,7 +487,7 @@
                                                     <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
                                                         Edit
                                                     </a>
-                                                    <% if update&.bundle_url.present? %>
+                                                    <% if update&.apk_url.present? %>
                                                         <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
                                                             Publish
                                                         </button>
