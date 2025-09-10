@@ -71,7 +71,7 @@ class SessionsController < WebApplicationController
     if current_user.admin?
       # Check if they're trying to access admin specifically
       if request.path.start_with?('/admin')
-        redirect_to admin_path
+        redirect_to admin_updates_path
       else
         redirect_to dashboard_path
       end
