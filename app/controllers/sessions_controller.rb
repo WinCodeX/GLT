@@ -1,5 +1,7 @@
 # app/controllers/sessions_controller.rb
 class SessionsController < WebApplicationController
+skip_before_action :verify_authenticity_token  # Skip for all actions temporarily
+  # ... rest of your controller
   skip_before_action :authenticate_user!, only: [:new, :create, :redirect_root, :dashboard]
   
   # GET / (root path handler)
