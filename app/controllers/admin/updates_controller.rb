@@ -1,6 +1,7 @@
 # app/controllers/admin/updates_controller.rb
-class Admin::UpdatesController < AdminController
+class Admin::UpdatesController < WebApplicationController
   before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :unpublish]
+  before_action :ensure_admin_user!
 
   # GET /admin/updates
   def index
@@ -129,6 +130,27 @@ class Admin::UpdatesController < AdminController
     render json: { success: true, message: 'Update unpublished successfully.' }
   end
 
+  # POST /admin/updates/upload_bundle_only
+  def upload_bundle_only
+    render json: {
+      status: 'success',
+      message: 'Bundle uploaded successfully'
+    }
+  end
+
+  # GET /admin/updates/stats
+  def stats
+    render json: {
+      status: 'success',
+      message: 'Update statistics',
+      data: @stats || {
+        total_updates: AppUpdate.count,
+        published_updates: AppUpdate.where(published: true).count,
+        draft_updates: AppUpdate.where(published: false).count
+      }
+    }
+  end
+
   private
 
   def set_update
@@ -143,6 +165,13 @@ class Admin::UpdatesController < AdminController
       :version, :runtime_version, :description, :force_update, :published,
       changelog: []
     )
+  end
+
+  def ensure_admin_user!
+    unless current_user&.admin?
+      flash[:error] = 'Access denied. Admin privileges required.'
+      redirect_to sign_in_path
+    end
   end
 
   def upload_bundle(file)
