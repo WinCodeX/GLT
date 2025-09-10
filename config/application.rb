@@ -36,7 +36,7 @@ module GltApi
     # ===========================================
     
     # Fix for 119MB APK uploads - increase request size limit
-    config.action_dispatch.max_request_size = 250.megabytes
+    config.action_dispatch.max_request_size = 250 * 1024 * 1024 # 250MB in bytes
     
     # ===========================================
     # 🍪 SESSION CONFIGURATION (FIXED)
