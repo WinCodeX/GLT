@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_09_210238) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_10_124742) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -58,8 +58,6 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_09_210238) do
     t.string "version", null: false
     t.string "update_id", null: false
     t.string "runtime_version", default: "1.0.0"
-    t.string "bundle_url"
-    t.string "bundle_key"
     t.text "changelog", default: [], array: true
     t.boolean "published", default: false
     t.boolean "force_update", default: false
@@ -69,6 +67,11 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_09_210238) do
     t.integer "download_count", default: 0
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "apk_url"
+    t.string "apk_key"
+    t.bigint "apk_size"
+    t.string "apk_filename"
+    t.index ["apk_key"], name: "index_app_updates_on_apk_key"
     t.index ["published", "created_at"], name: "index_app_updates_on_published_and_created_at"
     t.index ["update_id"], name: "index_app_updates_on_update_id", unique: true
     t.index ["version"], name: "index_app_updates_on_version"
