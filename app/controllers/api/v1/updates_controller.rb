@@ -1,7 +1,36 @@
-# app/controllers/api/v1/updates_controller.rb
+# app/controllers/api/v1/updates_controller.rb - Fixed to always return JSON
 
 class Api::V1::UpdatesController < ApplicationController
-  before_action :authenticate_user!, except: [:manifest, :info, :download]
+  # Ensure we always respond with JSON
+  before_action :set_json_format
+  before_action :authenticate_user_json!, except: [:manifest, :info, :check, :download]
+  before_action :ensure_admin!, only: [:create, :publish, :upload_apk]
+
+  def index
+    # Return list of updates (admin only or published for regular users)
+    if current_user&.admin?
+      @updates = AppUpdate.all.order(created_at: :desc)
+    else
+      @updates = AppUpdate.published.order(created_at: :desc)
+    end
+
+    render json: @updates.map { |update|
+      {
+        id: update.id,
+        version: update.version,
+        runtime_version: update.runtime_version,
+        description: update.description,
+        changelog: update.changelog,
+        force_update: update.force_update,
+        published: update.published,
+        apk_url: update.apk_url,
+        apk_size: update.apk_size,
+        download_count: update.download_count,
+        created_at: update.created_at,
+        published_at: update.published_at
+      }
+    }
+  end
 
   def manifest
     # Legacy endpoint - now returns APK update info instead of Expo manifest
@@ -94,56 +123,121 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def create
-    # Admin endpoint to create new APK update
-    return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
-    
     @update = AppUpdate.new(update_params)
     @update.update_id = SecureRandom.uuid
     
+    # Handle APK file upload if present
+    if params[:apk].present?
+      begin
+        apk_result = upload_apk_file(params[:apk], @update.version)
+        @update.apk_url = apk_result[:apk_url]
+        @update.apk_key = apk_result[:apk_key]
+        @update.apk_size = apk_result[:size]
+      rescue => e
+        Rails.logger.error "APK upload failed: #{e.message}"
+        render json: { 
+          error: "APK upload failed", 
+          details: e.message 
+        }, status: 500
+        return
+      end
+    end
+    
     if @update.save
-      render json: @update, status: :created
+      render json: {
+        id: @update.id,
+        version: @update.version,
+        runtime_version: @update.runtime_version,
+        description: @update.description,
+        changelog: @update.changelog,
+        force_update: @update.force_update,
+        published: @update.published,
+        apk_url: @update.apk_url,
+        apk_size: @update.apk_size,
+        created_at: @update.created_at
+      }, status: :created
     else
-      render json: { errors: @update.errors }, status: :unprocessable_entity
+      render json: { 
+        error: 'Validation failed',
+        errors: @update.errors.full_messages 
+      }, status: :unprocessable_entity
     end
   end
 
   def publish
-    # Admin endpoint to publish an APK update
-    return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
-    
     @update = AppUpdate.find(params[:id])
-    @update.update(published: true, published_at: Time.current)
     
-    render json: @update
+    if @update.update(published: true, published_at: Time.current)
+      render json: {
+        id: @update.id,
+        version: @update.version,
+        published: @update.published,
+        published_at: @update.published_at,
+        message: 'Update published successfully'
+      }
+    else
+      render json: { 
+        error: 'Failed to publish update',
+        errors: @update.errors.full_messages 
+      }, status: :unprocessable_entity
+    end
   end
 
-  def upload_apk
-    # Admin endpoint to upload APK file
-    return render json: { error: 'Unauthorized' }, status: 401 unless current_user.admin?
-    
-    apk_file = params[:apk]
-    return render json: { error: 'No APK file provided' }, status: 400 unless apk_file
+  def upload_bundle
+    # Legacy endpoint for bundle uploads (now handles APK uploads)
+    unless params[:apk].present?
+      render json: { error: 'No APK file provided' }, status: 400
+      return
+    end
     
     begin
-      # Store the APK file
-      apk_key = SecureRandom.uuid
-      apk_url = upload_apk_to_storage(apk_file, apk_key, params[:version] || '1.0.0')
+      version = params[:version] || '1.0.0'
+      result = upload_apk_file(params[:apk], version)
       
       render json: {
-        apk_key: apk_key,
-        apk_url: apk_url,
-        size: apk_file.size
+        success: true,
+        apk_key: result[:apk_key],
+        apk_url: result[:apk_url],
+        size: result[:size],
+        version: version
       }
     rescue => e
       Rails.logger.error "APK upload failed: #{e.message}"
-      render json: { error: "APK upload failed: #{e.message}" }, status: 500
+      render json: { 
+        error: "APK upload failed", 
+        details: e.message 
+      }, status: 500
     end
   end
 
   private
 
+  def set_json_format
+    request.format = :json
+  end
+
+  def authenticate_user_json!
+    unless user_signed_in?
+      render json: { 
+        error: 'Authentication required',
+        message: 'Please sign in to access this resource'
+      }, status: 401
+      return
+    end
+  end
+
+  def ensure_admin!
+    unless current_user&.admin?
+      render json: { 
+        error: 'Unauthorized',
+        message: 'Admin access required'
+      }, status: 403
+      return
+    end
+  end
+
   def update_params
-    params.require(:update).permit(:version, :runtime_version, :apk_url, :apk_key, :force_update, changelog: [])
+    params.permit(:version, :runtime_version, :description, :force_update, :published, changelog: [])
   end
 
   def version_greater_than?(version1, version2)
@@ -152,12 +246,32 @@ class Api::V1::UpdatesController < ApplicationController
     false
   end
 
-  def upload_apk_to_storage(file, key, version)
-    if Rails.env.production?
-      upload_apk_to_r2(file, key, version)
-    else
-      upload_apk_to_local(file, key, version)
+  def upload_apk_file(file, version)
+    # Validate file type
+    unless file.content_type == 'application/vnd.android.package-archive' || 
+           file.original_filename&.end_with?('.apk')
+      raise 'Invalid file type. Please upload an APK file.'
     end
+
+    # Validate file size (200MB limit)
+    max_size = 200.megabytes
+    if file.size > max_size
+      raise "File too large. Maximum size is #{max_size / 1.megabyte}MB."
+    end
+
+    apk_key = SecureRandom.uuid
+    
+    if Rails.env.production?
+      apk_url = upload_apk_to_r2(file, apk_key, version)
+    else
+      apk_url = upload_apk_to_local(file, apk_key, version)
+    end
+    
+    {
+      apk_key: apk_key,
+      apk_url: apk_url,
+      size: file.size
+    }
   end
 
   def upload_apk_to_r2(file, key, version)
@@ -172,9 +286,9 @@ class Api::V1::UpdatesController < ApplicationController
     )
 
     bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
-    object_key = "AppUpdate/#{version}/#{file.original_filename}"
+    object_key = "AppUpdate/#{version}/#{key}.apk"
     
-    client.put_object(
+    obj = client.put_object(
       bucket: bucket_name,
       key: object_key,
       body: file.read,
