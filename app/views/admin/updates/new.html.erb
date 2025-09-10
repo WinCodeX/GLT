@@ -429,7 +429,7 @@
     <div class="container">
         <div class="header">
             <h1>Create New Update</h1>
-            <p>Deploy new features and fixes to your app users</p>
+            <p>Deploy new APK features and fixes to your app users</p>
             <div class="header-actions">
                 <a href="<%= admin_updates_path %>" class="btn-header">← Back to Updates</a>
                 <a href="/admin" class="btn-header">Admin Home</a>
@@ -501,22 +501,22 @@
                         <div class="help-text">Add bullet points for what's new, fixed, or improved</div>
                     </div>
 
-                    <!-- Bundle Upload -->
+                    <!-- APK Upload -->
                     <div class="form-section">
                         <h3>
                             <span class="section-icon">📦</span>
-                            Bundle File
+                            APK File
                         </h3>
                         
                         <div class="file-upload-area" id="fileUploadArea">
                             <div class="file-upload-icon">📁</div>
                             <div class="file-upload-text">
-                                <strong>Choose a bundle file</strong> or drag and drop here
+                                <strong>Choose an APK file</strong> or drag and drop here
                             </div>
                             <div class="file-upload-subtext">
-                                JavaScript bundle files (.js) only. Max size: 50MB
+                                Android APK files (.apk) only. Max size: 200MB
                             </div>
-                            <%= form.file_field :bundle, style: 'display: none;', id: 'bundleFile', accept: '.js,.bundle' %>
+                            <%= form.file_field :apk, style: 'display: none;', id: 'apkFile', accept: '.apk' %>
                         </div>
                         
                         <div class="upload-progress" id="uploadProgress">
@@ -526,8 +526,8 @@
                             <div class="progress-text" id="progressText">Uploading...</div>
                         </div>
 
-                        <div class="help-text">Upload the compiled JavaScript bundle from your Expo build</div>
-                        <div class="error-message" id="bundle-error"></div>
+                        <div class="help-text">Upload the compiled Android APK file from your build process</div>
+                        <div class="error-message" id="apk-error"></div>
                     </div>
 
                     <!-- Options -->
@@ -580,7 +580,7 @@
 
             initializeFileUpload() {
                 const uploadArea = document.getElementById('fileUploadArea');
-                const fileInput = document.getElementById('bundleFile');
+                const fileInput = document.getElementById('apkFile');
 
                 // Click to select file
                 uploadArea.addEventListener('click', () => {
@@ -616,7 +616,7 @@
 
             handleFileSelect(file) {
                 const uploadArea = document.getElementById('fileUploadArea');
-                const errorDiv = document.getElementById('bundle-error');
+                const errorDiv = document.getElementById('apk-error');
                 
                 // Clear previous errors
                 errorDiv.textContent = '';
@@ -625,18 +625,15 @@
                 if (!file) return;
 
                 // Validate file type
-                const validTypes = ['.js', '.bundle'];
-                const isValidType = validTypes.some(type => file.name.toLowerCase().endsWith(type));
-                
-                if (!isValidType) {
-                    errorDiv.textContent = 'Invalid file type. Only JavaScript files (.js) are allowed.';
+                if (!file.name.toLowerCase().endsWith('.apk')) {
+                    errorDiv.textContent = 'Invalid file type. Only APK files (.apk) are allowed.';
                     return;
                 }
 
-                // Validate file size (50MB max)
-                const maxSize = 50 * 1024 * 1024; // 50MB in bytes
+                // Validate file size (200MB max)
+                const maxSize = 200 * 1024 * 1024; // 200MB in bytes
                 if (file.size > maxSize) {
-                    errorDiv.textContent = 'File too large. Maximum size is 50MB.';
+                    errorDiv.textContent = 'File too large. Maximum size is 200MB.';
                     return;
                 }
 
