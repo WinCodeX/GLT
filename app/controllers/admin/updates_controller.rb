@@ -9,24 +9,10 @@ before_action :set_update, only: [:show, :edit, :update, :destroy, :publish, :un
   
   # GET /admin/updates
   def index
-    @updates = AppUpdate.order(created_at: :desc).limit(50)
-    @stats = {
-      total: AppUpdate.count,
-      published: AppUpdate.where(published: true).count,
-      draft: AppUpdate.where(published: false).count,
-      total_downloads: AppUpdate.sum(:download_count)
-    }
-    
-    # Render the view or return JSON if requested
-    respond_to do |format|
-      format.html # renders app/views/admin/updates/index.html.erb
-      format.json { render json: { updates: @updates, stats: @stats } }
-    end
-  rescue => e
-    Rails.logger.error "Admin updates index error: #{e.message}"
-    flash[:error] = "Error loading updates: #{e.message}"
-    redirect_to sign_in_path
-  end
+  render plain: "Admin controller reached! User: #{current_user&.email}, Admin: #{current_user&.admin?}"
+rescue => e
+  render plain: "Error: #{e.message}\nBacktrace: #{e.backtrace.first(3).join('\n')}"
+end
 
   # GET /admin/updates/1
   def show
