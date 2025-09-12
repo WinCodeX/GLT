@@ -1,10 +1,10 @@
-# app/controllers/api/v1/packages_controller.rb - FIXED: Made agent/area IDs optional for fragile and collection types
+# app/controllers/api/v1/packages_controller.rb - Enhanced with notification system and resubmission logic
 module Api
   module V1
     class PackagesController < ApplicationController
       before_action :authenticate_user!
-      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit]
-      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code]
+      before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit, :resubmit, :reject, :resubmission_info]
+      before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code, :resubmit]
       before_action :force_json_format
 
       def index
@@ -82,6 +82,8 @@ module Api
             user_permissions: {
               can_edit: can_edit_package?(@package),
               can_delete: can_delete_package?(@package),
+              can_resubmit: (@package.user == current_user && @package.can_be_resubmitted?),
+              can_reject: can_reject_package?(@package),
               available_scanning_actions: get_available_scanning_actions(@package)
             }
           }
@@ -246,6 +248,240 @@ module Api
           }, status: :internal_server_error
         end
       end
+
+      # ===========================================
+      # NEW: RESUBMISSION AND REJECTION ENDPOINTS
+      # ===========================================
+
+      # POST /api/v1/packages/:id/resubmit
+      def resubmit
+        begin
+          unless @package.user == current_user
+            return render json: {
+              success: false,
+              message: 'You can only resubmit your own packages'
+            }, status: :forbidden
+          end
+
+          unless @package.can_be_resubmitted?
+            return render json: {
+              success: false,
+              message: 'Package cannot be resubmitted',
+              error: 'resubmission_not_allowed',
+              details: {
+                resubmission_count: @package.resubmission_count,
+                max_resubmissions: 2,
+                is_rejected: @package.rejected?,
+                final_deadline_passed: @package.final_deadline_passed?
+              }
+            }, status: :unprocessable_entity
+          end
+
+          reason = params[:reason] || "User requested resubmission"
+          
+          if @package.resubmit!(reason: reason)
+            serialized_data = PackageSerializer.new(@package, {
+              params: { url_helper: self }
+            }).serializable_hash
+
+            render json: {
+              success: true,
+              message: 'Package resubmitted successfully',
+              data: serialized_data[:data][:attributes].merge({
+                resubmission_info: {
+                  count: @package.resubmission_count,
+                  remaining: 2 - @package.resubmission_count,
+                  new_deadline: @package.expiry_deadline&.iso8601,
+                  hours_until_expiry: @package.hours_until_expiry
+                }
+              })
+            }
+          else
+            render json: {
+              success: false,
+              message: 'Failed to resubmit package',
+              error: 'resubmission_failed'
+            }, status: :unprocessable_entity
+          end
+
+        rescue => e
+          Rails.logger.error "PackagesController#resubmit error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Resubmission failed',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # POST /api/v1/packages/:id/reject
+      def reject
+        begin
+          unless can_reject_package?(@package)
+            return render json: {
+              success: false,
+              message: 'You do not have permission to reject this package'
+            }, status: :forbidden
+          end
+
+          reason = params[:reason] || "Package rejected by administrator"
+          auto_rejected = params[:auto_rejected] || false
+
+          if @package.reject_package!(reason: reason, auto_rejected: auto_rejected)
+            serialized_data = PackageSerializer.new(@package, {
+              params: { url_helper: self }
+            }).serializable_hash
+
+            render json: {
+              success: true,
+              message: 'Package rejected successfully',
+              data: serialized_data[:data][:attributes].merge({
+                rejection_info: {
+                  reason: @package.rejection_reason,
+                  rejected_at: @package.rejected_at&.iso8601,
+                  auto_rejected: @package.auto_rejected?,
+                  can_resubmit: @package.can_be_resubmitted?,
+                  resubmission_count: @package.resubmission_count,
+                  final_deadline: @package.final_deadline&.iso8601
+                }
+              })
+            }
+          else
+            render json: {
+              success: false,
+              message: 'Failed to reject package',
+              error: 'rejection_failed'
+            }, status: :unprocessable_entity
+          end
+
+        rescue => e
+          Rails.logger.error "PackagesController#reject error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Package rejection failed',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # GET /api/v1/packages/:id/resubmission_info
+      def resubmission_info
+        begin
+          render json: {
+            success: true,
+            data: {
+              package_code: @package.code,
+              state: @package.state,
+              can_resubmit: @package.can_be_resubmitted?,
+              resubmission_count: @package.resubmission_count,
+              max_resubmissions: 2,
+              remaining_resubmissions: [0, 2 - @package.resubmission_count].max,
+              rejection_info: {
+                rejected_at: @package.rejected_at&.iso8601,
+                rejection_reason: @package.rejection_reason,
+                auto_rejected: @package.auto_rejected?
+              },
+              deadlines: {
+                expiry_deadline: @package.expiry_deadline&.iso8601,
+                final_deadline: @package.final_deadline&.iso8601,
+                hours_until_expiry: @package.hours_until_expiry,
+                final_deadline_passed: @package.final_deadline_passed?
+              },
+              resubmission_timeline: {
+                original: "7 days",
+                first_resubmission: "3.5 days (7 days ÷ 2)",
+                second_resubmission: "1 day",
+                current_limit: @package.resubmission_deadline_text
+              }
+            }
+          }
+        rescue => e
+          Rails.logger.error "PackagesController#resubmission_info error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Failed to get resubmission info',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # GET /api/v1/packages/expired_summary
+      def expired_summary
+        begin
+          # Get counts of expired packages by type
+          pending_unpaid_expired = Package.pending_unpaid_expired.count
+          pending_expired = Package.pending_expired.count
+          approaching_deadline = Package.approaching_deadline.count
+          rejected_for_deletion = Package.rejected_for_deletion.count
+
+          render json: {
+            success: true,
+            data: {
+              expired_counts: {
+                pending_unpaid_expired: pending_unpaid_expired,
+                pending_expired: pending_expired,
+                total_expired: pending_unpaid_expired + pending_expired
+              },
+              warning_counts: {
+                approaching_deadline: approaching_deadline
+              },
+              cleanup_counts: {
+                rejected_for_deletion: rejected_for_deletion
+              },
+              next_cleanup_job: {
+                scheduled: "Every hour",
+                description: "Automatic package expiry management runs hourly"
+              }
+            }
+          }
+        rescue => e
+          Rails.logger.error "PackagesController#expired_summary error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Failed to get expired summary',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # POST /api/v1/packages/force_expiry_check
+      def force_expiry_check
+        begin
+          # Only allow admins to force expiry checks
+          unless current_user.has_role?(:admin) || current_user.has_role?(:super_admin)
+            return render json: {
+              success: false,
+              message: 'Insufficient permissions'
+            }, status: :forbidden
+          end
+
+          # Run expiry management immediately
+          warning_count = Package.send_expiry_warnings!
+          rejection_count = Package.auto_reject_expired_packages!
+          deletion_count = Package.delete_expired_rejected_packages!
+
+          render json: {
+            success: true,
+            message: 'Expiry check completed',
+            data: {
+              warnings_sent: warning_count,
+              packages_rejected: rejection_count,
+              packages_deleted: deletion_count
+            }
+          }
+        rescue => e
+          Rails.logger.error "PackagesController#force_expiry_check error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Failed to run expiry check',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
+      end
+
+      # ===========================================
+      # EXISTING ENDPOINTS (UNCHANGED)
+      # ===========================================
 
       def search
         query = params[:query]&.strip
@@ -519,6 +755,17 @@ module Api
         when 'client'
           package.user == current_user
         when 'admin'
+          true
+        else
+          false
+        end
+      end
+
+      def can_reject_package?(package)
+        case current_user.primary_role
+        when 'admin', 'super_admin'
+          true
+        when 'agent', 'warehouse'
           true
         else
           false
