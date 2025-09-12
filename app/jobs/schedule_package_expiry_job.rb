@@ -1,4 +1,3 @@
-
 # app/jobs/schedule_package_expiry_job.rb
 class SchedulePackageExpiryJob < ApplicationJob
   queue_as :default
