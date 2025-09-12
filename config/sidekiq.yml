@@ -1,0 +1,21 @@
+# config/sidekiq.yml
+:verbose: false
+:pidfile: ./tmp/pids/sidekiq.pid
+:logfile: ./log/sidekiq.log
+:concurrency: 5
+
+:queues:
+  - critical
+  - high  
+  - default
+  - low
+  - notifications
+  - maintenance
+
+# Development specific settings
+development:
+  :concurrency: 2
+
+# Production specific settings  
+production:
+  :concurrency: 10
