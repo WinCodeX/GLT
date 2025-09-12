@@ -2,6 +2,21 @@
 require 'sidekiq/web'
 
 Rails.application.routes.draw do
+
+# Mount Sidekiq web interface (protect in production)
+  if Rails.env.development?
+    mount Sidekiq::Web => '/sidekiq'
+  else
+    # In production, protect with authentication
+    Sidekiq::Web.use Rack::Auth::Basic do |username, password|
+      username == ENV['SIDEKIQ_USERNAME'] && password == ENV['SIDEKIQ_PASSWORD']
+    end
+    mount Sidekiq::Web => '/admin/sidekiq'
+  end
+
+
+
+
   # ==========================================
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
   # ==========================================
