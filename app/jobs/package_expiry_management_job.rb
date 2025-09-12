@@ -18,7 +18,7 @@ class PackageExpiryManagementJob < ApplicationJob
       Rails.logger.info "Package expiry management completed: #{warning_count} warnings, #{rejection_count} rejections, #{deletion_count} deletions"
       
       # Schedule next run (every hour)
-      PackageExpiryManagementJob.perform_in(1.hour)
+      PackageExpiryManagementJob.set(wait: 30.minutes).perform_later
       
     rescue => e
       Rails.logger.error "Package expiry management job failed: #{e.message}"
