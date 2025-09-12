@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_12_084234) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_12_170000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -212,6 +212,34 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_12_084234) do
     t.index ["user_id"], name: "index_mpesa_transactions_on_user_id"
   end
 
+  create_table "notifications", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "package_id"
+    t.string "title", null: false
+    t.text "message", null: false
+    t.string "notification_type", null: false
+    t.json "metadata", default: {}
+    t.boolean "read", default: false
+    t.boolean "delivered", default: false
+    t.datetime "read_at"
+    t.datetime "delivered_at"
+    t.string "channel", default: "in_app"
+    t.integer "priority", default: 0
+    t.datetime "expires_at"
+    t.string "action_url"
+    t.string "icon"
+    t.string "status", default: "pending"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_at"], name: "index_notifications_on_created_at"
+    t.index ["delivered", "status"], name: "index_notifications_on_delivered_and_status"
+    t.index ["expires_at", "status"], name: "index_notifications_on_expires_at_and_status"
+    t.index ["package_id"], name: "index_notifications_on_package_id"
+    t.index ["user_id", "notification_type"], name: "index_notifications_on_user_id_and_notification_type"
+    t.index ["user_id", "read"], name: "index_notifications_on_user_id_and_read"
+    t.index ["user_id"], name: "index_notifications_on_user_id"
+  end
+
   create_table "package_print_logs", force: :cascade do |t|
     t.bigint "package_id", null: false
     t.bigint "user_id", null: false
@@ -289,18 +317,33 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_12_084234) do
     t.text "pickup_location"
     t.text "package_description"
     t.string "package_size"
+    t.integer "resubmission_count", default: 0
+    t.string "original_state"
+    t.text "rejection_reason"
+    t.datetime "rejected_at"
+    t.boolean "auto_rejected", default: false
+    t.datetime "resubmitted_at"
+    t.datetime "expiry_deadline"
+    t.datetime "final_deadline"
+    t.index ["auto_rejected"], name: "index_packages_on_auto_rejected"
     t.index ["code"], name: "idx_packages_code", unique: true
     t.index ["collection_scheduled_at"], name: "index_packages_on_collection_scheduled_at"
     t.index ["collection_type"], name: "index_packages_on_collection_type"
     t.index ["delivery_type", "state"], name: "index_packages_on_delivery_type_and_state"
     t.index ["destination_agent_id"], name: "index_packages_on_destination_agent_id"
     t.index ["destination_area_id"], name: "index_packages_on_destination_area_id"
+    t.index ["expiry_deadline"], name: "index_packages_on_expiry_deadline"
+    t.index ["final_deadline"], name: "index_packages_on_final_deadline"
     t.index ["origin_agent_id"], name: "index_packages_on_origin_agent_id"
     t.index ["origin_area_id", "destination_area_id", "route_sequence"], name: "idx_packages_route_seq"
     t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
     t.index ["payment_status", "state"], name: "index_packages_on_payment_status_and_state"
     t.index ["payment_status"], name: "index_packages_on_payment_status"
     t.index ["priority_level"], name: "index_packages_on_priority_level"
+    t.index ["rejected_at"], name: "index_packages_on_rejected_at"
+    t.index ["resubmission_count"], name: "index_packages_on_resubmission_count"
+    t.index ["state", "expiry_deadline"], name: "index_packages_on_state_and_expiry_deadline"
+    t.index ["state", "final_deadline"], name: "index_packages_on_state_and_final_deadline"
     t.index ["user_id"], name: "index_packages_on_user_id"
   end
 
@@ -405,6 +448,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_12_084234) do
   add_foreign_key "messages", "users"
   add_foreign_key "mpesa_transactions", "packages"
   add_foreign_key "mpesa_transactions", "users"
+  add_foreign_key "notifications", "packages"
+  add_foreign_key "notifications", "users"
   add_foreign_key "package_print_logs", "packages"
   add_foreign_key "package_print_logs", "users"
   add_foreign_key "package_tracking_events", "packages"

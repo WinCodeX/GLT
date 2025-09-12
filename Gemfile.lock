@@ -344,6 +344,12 @@ GEM
       ffi (~> 1.12)
       logger
     securerandom (0.4.1)
+    sidekiq (8.0.7)
+      connection_pool (>= 2.5.0)
+      json (>= 2.9.0)
+      logger (>= 1.6.2)
+      rack (>= 3.1.0)
+      redis-client (>= 0.23.2)
     snaky_hash (2.0.3)
       hashie (>= 0.1.0, < 6)
       version_gem (>= 1.1.8, < 3)
@@ -409,6 +415,7 @@ DEPENDENCIES
   render_build_setup (~> 0.0.1)
   rolify
   rqrcode
+  sidekiq (~> 8.0)
   tzinfo-data
 
 RUBY VERSION

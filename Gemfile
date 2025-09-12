@@ -92,3 +92,4 @@ gem 'jwt', '~> 2.7'
 gem 'httparty', '~> 0.21'  #
 # For better JSON handling (if not already present)
 gem 'json', '~> 2.6'
+gem "sidekiq", "~> 8.0"
