@@ -1,4 +1,4 @@
-# app/models/package.rb - UPDATED: Enhanced support for all delivery types including home, office, fragile, and collection
+# app/models/package.rb - Enhanced with notification system and automatic rejection logic
 
 class Package < ApplicationRecord
   belongs_to :user
@@ -7,9 +7,10 @@ class Package < ApplicationRecord
   belongs_to :origin_agent, class_name: 'Agent', optional: true
   belongs_to :destination_agent, class_name: 'Agent', optional: true
 
-  # Enhanced tracking associations (add these if you create the tracking models)
+  # Enhanced tracking associations
   has_many :tracking_events, class_name: 'PackageTrackingEvent', dependent: :destroy
   has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
+  has_many :notifications, dependent: :destroy
 
   # UPDATED: Enhanced delivery types to include home and office variants
   enum delivery_type: { 
@@ -40,6 +41,7 @@ class Package < ApplicationRecord
 
   validates :delivery_type, :state, :cost, presence: true
   validates :code, presence: true, uniqueness: true
+  validates :resubmission_count, presence: true, inclusion: { in: 0..2 }
   
   # FIXED: Conditional validation - only for agent-based deliveries
   validates :route_sequence, presence: true, uniqueness: { 
@@ -51,20 +53,42 @@ class Package < ApplicationRecord
   validates :origin_area_id, :destination_area_id, presence: true, unless: :location_based_delivery?
 
   # UPDATED: Package size validation for home/office deliveries
-  #validates :package_size, presence: true, if: :requires_package_size?
   validates :special_instructions, presence: true, if: :requires_special_instructions?
 
   # Additional validation for fragile packages
   validate :fragile_package_requirements, if: :fragile?
   validate :large_package_requirements, if: :large_package?
 
-  # Callbacks
-  before_create :generate_package_code_and_sequence
-  after_create :generate_qr_code_files
-  before_save :update_delivery_metadata
-  before_save :calculate_cost_if_needed
+  # Scopes for automatic processing
+  scope :pending_unpaid_expired, -> { 
+    where(state: 'pending_unpaid')
+    .where('created_at <= ?', 1.week.ago)
+    .where(auto_rejected: false)
+  }
 
-  # Scopes
+  scope :pending_expired, -> { 
+    where(state: 'pending')
+    .where('created_at <= ?', 1.week.ago)
+    .where(auto_rejected: false)
+  }
+
+  scope :rejected_for_deletion, -> { 
+    where(state: 'rejected', auto_rejected: true)
+    .where('rejected_at <= ?', 1.week.ago)
+  }
+
+  scope :approaching_deadline, -> {
+    where.not(expiry_deadline: nil)
+    .where(expiry_deadline: 2.hours.from_now..6.hours.from_now)
+    .where.not(state: ['rejected', 'delivered', 'collected'])
+  }
+
+  scope :overdue, -> {
+    where('expiry_deadline <= ?', Time.current)
+    .where.not(state: ['rejected', 'delivered', 'collected'])
+  }
+
+  # Enhanced scopes
   scope :by_route, ->(origin_id, destination_id) { 
     where(origin_area_id: origin_id, destination_area_id: destination_id) 
   }
@@ -77,6 +101,207 @@ class Package < ApplicationRecord
   scope :standard_packages, -> { where(delivery_type: ['doorstep', 'home', 'office', 'agent']) }
   scope :location_based_packages, -> { where(delivery_type: ['fragile', 'collection']) }
   scope :requiring_special_handling, -> { where(delivery_type: ['fragile', 'collection']).or(where(package_size: 'large')) }
+
+  # Callbacks
+  before_create :generate_package_code_and_sequence, :set_initial_deadlines
+  after_create :generate_qr_code_files
+  before_save :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
+
+  # ===========================================
+  # RESUBMISSION LOGIC
+  # ===========================================
+
+  def can_be_resubmitted?
+    rejected? && resubmission_count < 2 && !final_deadline_passed?
+  end
+
+  def resubmit!(reason: nil)
+    return false unless can_be_resubmitted?
+
+    transaction do
+      # Store previous state if not already stored
+      self.original_state ||= 'pending' if state == 'rejected'
+      
+      # Increment resubmission count
+      self.resubmission_count += 1
+      self.resubmitted_at = Time.current
+      
+      # Calculate new deadline based on resubmission count
+      new_expiry_time = calculate_resubmission_deadline
+      self.expiry_deadline = new_expiry_time
+      
+      # Restore to original state
+      target_state = original_state || 'pending'
+      self.state = target_state
+      
+      # Clear rejection data but keep history
+      self.rejected_at = nil
+      self.auto_rejected = false
+      
+      # Update metadata
+      update_resubmission_metadata(reason)
+      
+      save!
+      
+      # Create success notification
+      Notification.create_resubmission_success(
+        package: self,
+        new_deadline: new_expiry_time
+      )
+      
+      # Schedule new expiry check
+      SchedulePackageExpiryJob.perform_at(new_expiry_time - 2.hours, self.id)
+      
+      Rails.logger.info "Package #{code} resubmitted (#{resubmission_count}/2) - New deadline: #{new_expiry_time}"
+      
+      true
+    end
+  rescue => e
+    Rails.logger.error "Failed to resubmit package #{code}: #{e.message}"
+    false
+  end
+
+  def reject_package!(reason:, auto_rejected: false)
+    return false if rejected?
+
+    transaction do
+      # Store original state for potential resubmission
+      self.original_state = state unless rejected?
+      
+      # Update rejection fields
+      self.state = 'rejected'
+      self.rejection_reason = reason
+      self.rejected_at = Time.current
+      self.auto_rejected = auto_rejected
+      
+      # Set final deadline for automatic deletion (1 week for manual review)
+      self.final_deadline = 1.week.from_now
+      
+      save!
+      
+      # Create rejection notification
+      Notification.create_package_rejection(
+        package: self,
+        reason: reason,
+        auto_rejected: auto_rejected
+      )
+      
+      # Schedule automatic deletion if auto-rejected
+      if auto_rejected
+        DeleteRejectedPackageJob.perform_at(final_deadline, self.id)
+      end
+      
+      Rails.logger.info "Package #{code} rejected: #{reason} (auto: #{auto_rejected})"
+      
+      true
+    end
+  rescue => e
+    Rails.logger.error "Failed to reject package #{code}: #{e.message}"
+    false
+  end
+
+  def time_until_expiry
+    return nil unless expiry_deadline
+    return 0 if expiry_deadline <= Time.current
+    
+    expiry_deadline - Time.current
+  end
+
+  def hours_until_expiry
+    return nil unless time_until_expiry
+    (time_until_expiry / 1.hour).round(1)
+  end
+
+  def final_deadline_passed?
+    final_deadline.present? && final_deadline <= Time.current
+  end
+
+  def resubmission_deadline_text
+    case resubmission_count
+    when 0
+      "7 days"
+    when 1
+      "3.5 days"
+    when 2
+      "1 day"
+    else
+      "No resubmissions remaining"
+    end
+  end
+
+  # ===========================================
+  # CLASS METHODS FOR BATCH PROCESSING
+  # ===========================================
+
+  def self.auto_reject_expired_packages!
+    rejected_count = 0
+    
+    # Process pending_unpaid packages
+    pending_unpaid_expired.find_each do |package|
+      if package.reject_package!(
+        reason: "Payment not received within 7 days",
+        auto_rejected: true
+      )
+        rejected_count += 1
+      end
+    end
+    
+    # Process pending packages
+    pending_expired.find_each do |package|
+      if package.reject_package!(
+        reason: "Package not submitted for delivery within 7 days",
+        auto_rejected: true
+      )
+        rejected_count += 1
+      end
+    end
+    
+    Rails.logger.info "Auto-rejected #{rejected_count} expired packages"
+    rejected_count
+  end
+
+  def self.delete_expired_rejected_packages!
+    deleted_count = 0
+    
+    rejected_for_deletion.find_each do |package|
+      begin
+        Rails.logger.info "Deleting permanently rejected package: #{package.code}"
+        package.destroy!
+        deleted_count += 1
+      rescue => e
+        Rails.logger.error "Failed to delete package #{package.code}: #{e.message}"
+      end
+    end
+    
+    Rails.logger.info "Deleted #{deleted_count} permanently rejected packages"
+    deleted_count
+  end
+
+  def self.send_expiry_warnings!
+    warned_count = 0
+    
+    approaching_deadline.find_each do |package|
+      hours_remaining = package.hours_until_expiry
+      next unless hours_remaining && hours_remaining > 0
+      
+      # Only send warning once when between 2-6 hours remain
+      last_warning = package.notifications
+        .where(notification_type: 'final_warning')
+        .where('created_at >= ?', 8.hours.ago)
+        .exists?
+      
+      unless last_warning
+        Notification.create_expiry_warning(
+          package: package,
+          hours_remaining: hours_remaining.round(1)
+        )
+        warned_count += 1
+      end
+    end
+    
+    Rails.logger.info "Sent expiry warnings for #{warned_count} packages"
+    warned_count
+  end
 
   # Class methods
   def self.find_by_code_or_id(identifier)
@@ -250,7 +475,7 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Enhanced JSON serialization with new delivery types
+  # UPDATED: Enhanced JSON serialization with new delivery types and resubmission info
   def as_json(options = {})
     result = super(options).except('route_sequence') # Hide internal sequence from API
     
@@ -268,7 +493,15 @@ class Package < ApplicationRecord
       'requires_special_handling' => requires_special_handling?,
       'priority_level' => priority_level,
       'delivery_type_display' => delivery_type_display,
-      'package_size_display' => package_size_display
+      'package_size_display' => package_size_display,
+      
+      # Resubmission and expiry information
+      'can_be_resubmitted' => can_be_resubmitted?,
+      'resubmission_count' => resubmission_count,
+      'remaining_resubmissions' => [0, 2 - resubmission_count].max,
+      'hours_until_expiry' => hours_until_expiry,
+      'resubmission_limit_text' => resubmission_deadline_text,
+      'final_deadline_passed' => final_deadline_passed?
     )
     
     # Include delivery-specific information
@@ -290,6 +523,26 @@ class Package < ApplicationRecord
       result.merge!(
         'size_warning' => 'Large package - special handling required',
         'special_instructions' => special_instructions
+      )
+    end
+
+    # Include rejection information if rejected
+    if rejected?
+      result.merge!(
+        'rejection_info' => {
+          'reason' => rejection_reason,
+          'rejected_at' => rejected_at&.iso8601,
+          'auto_rejected' => auto_rejected?,
+          'original_state' => original_state
+        }
+      )
+    end
+
+    # Include expiry information if applicable
+    if expiry_deadline.present?
+      result.merge!(
+        'expiry_deadline' => expiry_deadline.iso8601,
+        'time_until_expiry_hours' => hours_until_expiry
       )
     end
     
@@ -397,6 +650,48 @@ class Package < ApplicationRecord
   end
 
   private
+
+  def set_initial_deadlines
+    # Set initial expiry deadline based on state
+    case state
+    when 'pending_unpaid', 'pending'
+      self.expiry_deadline ||= 7.days.from_now
+    end
+  end
+
+  def update_deadlines_on_state_change
+    if state_changed? && !rejected?
+      # Clear expiry deadline for final states
+      if state.in?(['delivered', 'collected'])
+        self.expiry_deadline = nil
+        self.final_deadline = nil
+      end
+    end
+  end
+
+  def calculate_resubmission_deadline
+    case resubmission_count
+    when 1
+      3.5.days.from_now  # 7 days / 2
+    when 2
+      1.day.from_now     # Final attempt
+    else
+      7.days.from_now    # Should not happen, but fallback
+    end
+  end
+
+  def update_resubmission_metadata(reason)
+    # Add to metadata for tracking
+    self.metadata ||= {}
+    self.metadata['resubmission_history'] ||= []
+    self.metadata['resubmission_history'] << {
+      attempt: resubmission_count,
+      resubmitted_at: Time.current.iso8601,
+      reason: reason,
+      previous_deadline: expiry_deadline&.iso8601,
+      new_deadline: calculate_resubmission_deadline.iso8601
+    }
+  end
 
   # UPDATED: Enhanced code and sequence generation
   def generate_package_code_and_sequence
