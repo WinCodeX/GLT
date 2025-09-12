@@ -43,7 +43,7 @@ class SchedulePackageExpiryJob < ApplicationJob
       end
       
       # Schedule final expiry check
-      SchedulePackageExpiryJob.perform_at(package.expiry_deadline, package.id)
+      SchedulePackageExpiryJob.set(wait_until: package.expiry_deadline).perform_later(package.id)
     end
   end
 end
