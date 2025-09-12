@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_10_124742) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_12_084234) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -328,6 +328,21 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_10_124742) do
     t.datetime "updated_at", null: false
     t.index ["name", "resource_type", "resource_id"], name: "index_roles_on_name_and_resource_type_and_resource_id"
     t.index ["resource_type", "resource_id"], name: "index_roles_on_resource"
+  end
+
+  create_table "terms", force: :cascade do |t|
+    t.string "title", null: false
+    t.text "content", null: false
+    t.string "version", null: false
+    t.integer "term_type", default: 0, null: false
+    t.boolean "active", default: false, null: false
+    t.text "summary"
+    t.datetime "effective_date"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["term_type", "active"], name: "index_terms_on_term_type_and_active"
+    t.index ["term_type", "version"], name: "index_terms_on_term_type_and_version"
+    t.index ["version"], name: "index_terms_on_version", unique: true
   end
 
   create_table "user_businesses", force: :cascade do |t|
