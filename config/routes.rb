@@ -287,6 +287,10 @@ resources :updates, only: [:create, :index] do
           get :size_requirements
           patch :update_delivery_type
           patch :update_package_size
+         # NEW: Resubmission and rejection routes
+          post :resubmit
+          post :reject
+          get :resubmission_info
         end
         
         collection do
@@ -314,6 +318,9 @@ resources :updates, only: [:create, :index] do
           get :requiring_special_handling
           get :delivery_type_breakdown
           get :package_size_analytics
+          # NEW: Expiry management routes
+        get :expired_summary
+        post :force_expiry_check
         end
       end
 
