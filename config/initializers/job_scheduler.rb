@@ -1,32 +1,27 @@
-# config/initializers/job_scheduler.rb
+
+# config/initializers/job_scheduler.rb (Updated for Sidekiq)
 Rails.application.configure do
-  # Configure Active Job queue adapter
-  if Rails.env.production?
-    # Use a proper queue adapter in production (uncomment one based on your setup)
-    # config.active_job.queue_adapter = :sidekiq
-    # config.active_job.queue_adapter = :delayed_job
-    # config.active_job.queue_adapter = :resque
-    config.active_job.queue_adapter = :async # Temporary for production
-  else
-    # Use async adapter for development/test
-    config.active_job.queue_adapter = :async
-  end
+  # Configure Active Job to use Sidekiq
+  config.active_job.queue_adapter = :sidekiq
+  
+  # Configure queue mapping
+  config.active_job.queue_name_prefix = Rails.env
+  config.active_job.default_queue_name = :default
 
   # Package expiry management scheduler
   config.after_initialize do
     # Only run scheduler in production or when explicitly enabled
     if Rails.env.production? || ENV['ENABLE_PACKAGE_SCHEDULER'] == 'true'
-      Rails.logger.info "🚀 Starting Package Management Job Scheduler..."
+      Rails.logger.info "Starting Package Management Job Scheduler with Sidekiq..."
       
       # Start the main expiry management job
       PackageExpiryManagementJob.perform_later
       
-      Rails.logger.info "✅ Package Management Job Scheduler started successfully"
+      Rails.logger.info "Package Management Job Scheduler started successfully"
     else
-      Rails.logger.info "⏸️ Package Management Job Scheduler disabled (set ENABLE_PACKAGE_SCHEDULER=true to enable in development)"
+      Rails.logger.info "Package Management Job Scheduler disabled (set ENABLE_PACKAGE_SCHEDULER=true to enable in development)"
     end
     
-    # Always log active job configuration
-    Rails.logger.info "🔧 Active Job Queue Adapter: #{Rails.application.config.active_job.queue_adapter}"
+    Rails.logger.info "Active Job Queue Adapter: Sidekiq"
   end
 end
