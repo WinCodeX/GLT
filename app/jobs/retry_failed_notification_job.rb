@@ -8,7 +8,6 @@ class RetryFailedNotificationJob < ApplicationJob
 
     Rails.logger.info "Retrying failed notification #{notification_id}"
     
-    # Reset status to pending and retry delivery
     notification.update!(status: 'pending')
     DeliverNotificationJob.perform_later(notification)
   end
