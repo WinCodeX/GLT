@@ -324,6 +324,20 @@ resources :updates, only: [:create, :index] do
         end
       end
 
+
+# NEW: Notifications routes
+    resources :notifications, only: [:index, :show, :destroy] do
+      member do
+        patch :mark_as_read
+      end
+      
+      collection do
+        patch :mark_all_as_read
+        get :unread_count
+        get :summary
+      end
+    end
+
       # ==========================================
       # 🎨 DEDICATED QR CODE ENDPOINTS
       # ==========================================
