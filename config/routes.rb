@@ -118,6 +118,16 @@ resources :updates, only: [:create, :index] do
       end
 
 
+      # Contacts routes
+      resources :contacts, only: [] do
+        collection do
+          post :check_registered    # POST /api/v1/contacts/check_registered
+          get :my_contacts         # GET /api/v1/contacts/my_contacts (optional)
+          post :sync               # POST /api/v1/contacts/sync (optional)
+        end
+      end
+
+
       # Google OAuth endpoints - FIXED to point to correct controller
       get 'auth/google_oauth2/init', to: 'omniauth_callbacks#init'
       get 'auth/google_oauth2/callback', to: 'omniauth_callbacks#google_oauth2'
