@@ -32,6 +32,8 @@ class User < ApplicationRecord
   has_many :package_tracking_events, dependent: :destroy
   has_many :package_print_logs, dependent: :destroy
 
+has_many :notifications, dependent: :destroy
+
   # Messaging system relationships
   has_many :conversation_participants, dependent: :destroy
   has_many :conversations, through: :conversation_participants
