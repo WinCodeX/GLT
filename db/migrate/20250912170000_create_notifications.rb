@@ -24,7 +24,6 @@ class CreateNotifications < ActiveRecord::Migration[7.1]
 
     add_index :notifications, [:user_id, :read]
     add_index :notifications, [:user_id, :notification_type]
-    add_index :notifications, [:package_id]
     add_index :notifications, :created_at
     add_index :notifications, [:expires_at, :status]
     add_index :notifications, [:delivered, :status]
