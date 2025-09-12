@@ -124,6 +124,21 @@ resources :updates, only: [:create, :index] do
     end
   end
 
+
+
+
+
+# Terms and Conditions
+resources :terms do
+  collection do
+    get :current
+  end
+end
+
+# Alternative route for easy access to current terms
+get 'current_terms/:type', to: 'terms#current', defaults: { type: 'terms_of_service' }
+get 'current_terms', to: 'terms#current', defaults: { type: 'terms_of_service' }
+
   # ==========================================
   # 🔗 STANDARD OMNIAUTH CALLBACK ROUTES
   # ==========================================
