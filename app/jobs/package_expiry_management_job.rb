@@ -1,6 +1,6 @@
 # app/jobs/package_expiry_management_job.rb
 class PackageExpiryManagementJob < ApplicationJob
-  queue_as :default
+  queue_as :high
 
   def perform
     Rails.logger.info "Starting package expiry management job..."
