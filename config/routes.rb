@@ -1,4 +1,5 @@
-# config/routes.rb - FIXED: Moved terms routes to API namespace
+# config/routes.rb (Add Sidekiq Web UI)
+require 'sidekiq/web'
 
 Rails.application.routes.draw do
   # ==========================================
