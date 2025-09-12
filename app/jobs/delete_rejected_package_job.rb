@@ -34,7 +34,7 @@ class DeleteRejectedPackageJob < ApplicationJob
         Rails.logger.error "Failed to delete rejected package #{package.code}: #{e.message}"
         
         # Retry in 1 hour if deletion fails
-        DeleteRejectedPackageJob.perform_in(1.hour, package_id)
+        DeleteRejectedPackageJob.set(wait: 1.hour).perform_later(package_id)
       end
     else
       Rails.logger.info "Package #{package&.code || package_id} not eligible for deletion - skipping"
