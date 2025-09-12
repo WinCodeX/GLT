@@ -1,7 +1,6 @@
-
 # app/jobs/delete_rejected_package_job.rb
 class DeleteRejectedPackageJob < ApplicationJob
-  queue_as :default
+  queue_as :low
 
   def perform(package_id)
     package = Package.find_by(id: package_id)
@@ -15,7 +14,7 @@ class DeleteRejectedPackageJob < ApplicationJob
         # Create final notification before deletion
         Notification.create!(
           user: package.user,
-          package_id: package.id, # Store ID since package will be deleted
+          package_id: package.id,
           title: "Package #{package.code} Permanently Deleted",
           message: "Your rejected package #{package.code} has been permanently deleted from our system as it was not resubmitted within the allowed timeframe.",
           notification_type: 'general',
