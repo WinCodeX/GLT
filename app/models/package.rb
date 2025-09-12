@@ -149,8 +149,8 @@ class Package < ApplicationRecord
         new_deadline: new_expiry_time
       )
       
-      # Schedule new expiry check
-      SchedulePackageExpiryJob.perform_at(new_expiry_time - 2.hours, self.id)
+      # FIXED: Schedule new expiry check
+      SchedulePackageExpiryJob.set(wait_until: new_expiry_time - 2.hours).perform_later(self.id)
       
       Rails.logger.info "Package #{code} resubmitted (#{resubmission_count}/2) - New deadline: #{new_expiry_time}"
       
@@ -186,9 +186,9 @@ class Package < ApplicationRecord
         auto_rejected: auto_rejected
       )
       
-      # Schedule automatic deletion if auto-rejected
+      # FIXED: Schedule automatic deletion if auto-rejected
       if auto_rejected
-        DeleteRejectedPackageJob.perform_at(final_deadline, self.id)
+        DeleteRejectedPackageJob.set(wait_until: final_deadline).perform_later(self.id)
       end
       
       Rails.logger.info "Package #{code} rejected: #{reason} (auto: #{auto_rejected})"
