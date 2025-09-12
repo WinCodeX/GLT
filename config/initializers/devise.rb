@@ -5,7 +5,7 @@ Devise.setup do |config|
   # 🔧 BASIC DEVISE CONFIGURATION
   # ===========================================
   
-  config.mailer_sender = 'noreply@packagedelivery.com'
+  config.mailer_sender = 'noreply@gltlogistics.co.ke'
   
   # ==> ORM configuration
   require 'devise/orm/active_record'
@@ -86,8 +86,8 @@ Devise.setup do |config|
       ['POST', %r{^/api/v1/logout$}]
     ]
     
-    # JWT token configuration
-    jwt.expiration_time = 24.hours.to_i
+    # JWT token configuration - NEVER EXPIRES
+    jwt.expiration_time = nil  # No expiration
     jwt.algorithm = 'HS256'
   end
 
