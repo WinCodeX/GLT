@@ -1,4 +1,4 @@
-# config/routes.rb - UPDATED: Enhanced with comprehensive pricing system and new delivery types
+# config/routes.rb - FIXED: Moved terms routes to API namespace
 
 Rails.application.routes.draw do
   # ==========================================
@@ -121,50 +121,22 @@ resources :updates, only: [:create, :index] do
         post 'callback', to: 'mpesa#callback'
         post 'timeout', to: 'mpesa#timeout'
       end
-    end
-  end
 
+      # ==========================================
+      # FIXED: TERMS AND CONDITIONS - MOVED TO API NAMESPACE
+      # ==========================================
+      
+      # Terms and Conditions
+      resources :terms do
+        collection do
+          get :current
+        end
+      end
 
+      # Alternative route for easy access to current terms
+      get 'current_terms/:type', to: 'terms#current', defaults: { type: 'terms_of_service' }
+      get 'current_terms', to: 'terms#current', defaults: { type: 'terms_of_service' }
 
-
-
-# Terms and Conditions
-resources :terms do
-  collection do
-    get :current
-  end
-end
-
-# Alternative route for easy access to current terms
-get 'current_terms/:type', to: 'terms#current', defaults: { type: 'terms_of_service' }
-get 'current_terms', to: 'terms#current', defaults: { type: 'terms_of_service' }
-
-  # ==========================================
-  # 🔗 STANDARD OMNIAUTH CALLBACK ROUTES
-  # ==========================================
-  
-  # Standard omniauth routes (Rails will redirect here from Google)
-  get '/users/auth/:provider/callback', to: 'api/v1/omniauth_callbacks#google_oauth2'
-  
-  # Mobile OAuth success page (static)
-  get '/oauth/mobile/success', to: proc { |env| 
-    [200, { 'Content-Type' => 'text/html' }, [
-      '<html><body><h1>Authentication Successful</h1><p>You can close this window.</p></body></html>'
-    ]]
-  }
-
-  # ==========================================
-  # 🗂️ ACTIVE STORAGE ROUTES (Critical - must be early!)
-  # ==========================================
-  direct :rails_blob_redirect do |blob, options|
-    route_for(:rails_service_blob, blob.signed_id, blob.filename, options)
-  end
-
-  # ==========================================
-  # 📱 API v1 - Main Application Routes
-  # ==========================================
-  namespace :api, defaults: { format: :json } do
-    namespace :v1 do
       # ==========================================
       # 🔐 USER MANAGEMENT & AUTHENTICATION
       # ==========================================
