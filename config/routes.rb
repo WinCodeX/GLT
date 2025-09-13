@@ -1,4 +1,4 @@
-# config/routes.rb (Updated with Admin Notifications)
+# config/routes.rb (Fixed - Added missing 'end' for admin namespace)
 require 'sidekiq/web'
 
 Rails.application.routes.draw do
@@ -647,6 +647,7 @@ resources :updates, only: [:create, :index] do
             patch 'status', to: 'conversations#update_status'
           end
         end
+      end
 
 
 
