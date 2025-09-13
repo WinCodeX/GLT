@@ -12,8 +12,11 @@ module Api
         begin
           phone_numbers = params[:phone_numbers]
           
+          Rails.logger.info "ContactsController#check_registered called with params: #{params.inspect}"
+          
           # Validate input
           unless phone_numbers.is_a?(Array) && phone_numbers.present?
+            Rails.logger.warn "Invalid phone_numbers parameter: #{phone_numbers.inspect}"
             render json: {
               success: false,
               message: 'Phone numbers array is required'
@@ -23,6 +26,7 @@ module Api
 
           # Limit the number of phone numbers to prevent abuse
           if phone_numbers.length > 1000
+            Rails.logger.warn "Too many phone numbers: #{phone_numbers.length}"
             render json: {
               success: false,
               message: 'Maximum 1000 phone numbers allowed per request'
@@ -32,36 +36,29 @@ module Api
 
           Rails.logger.info "Checking #{phone_numbers.length} phone numbers for registration status"
 
-          # Clean and normalize phone numbers
+          # Clean and normalize phone numbers using Ruby (database-agnostic)
           normalized_numbers = phone_numbers.map do |number|
             normalize_phone_number(number.to_s)
           end.compact.uniq
 
-          Rails.logger.info "Normalized to #{normalized_numbers.length} unique phone numbers"
+          Rails.logger.info "Normalized to #{normalized_numbers.length} unique phone numbers: #{normalized_numbers.inspect}"
 
-          # Find registered users by phone numbers
-          # Check both normalized and original formats to handle different phone number formats
-          registered_users = User.where(
-            "REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g') IN (?) OR phone_number IN (?)",
-            normalized_numbers,
-            phone_numbers
-          ).pluck(:phone_number)
+          # Find registered users using database-agnostic approach
+          registered_numbers = find_registered_numbers(normalized_numbers, phone_numbers)
 
-          # Normalize the found phone numbers for consistent comparison
-          registered_normalized = registered_users.map { |phone| normalize_phone_number(phone) }.compact
-
-          Rails.logger.info "Found #{registered_normalized.length} registered phone numbers"
+          Rails.logger.info "Found #{registered_numbers.length} registered phone numbers"
 
           render json: {
             success: true,
-            registered_numbers: registered_normalized,
+            registered_numbers: registered_numbers,
             total_checked: normalized_numbers.length,
-            registered_count: registered_normalized.length
+            registered_count: registered_numbers.length
           }, status: :ok
 
         rescue => e
           Rails.logger.error "ContactsController#check_registered error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
+          Rails.logger.error "Error class: #{e.class}"
+          Rails.logger.error "Backtrace: #{e.backtrace.join("\n")}"
           
           render json: {
             success: false,
@@ -79,7 +76,8 @@ module Api
           
           render json: {
             success: true,
-            message: 'Contact sync feature coming soon'
+            message: 'Contact sync feature coming soon',
+            contacts: []
           }, status: :ok
 
         rescue => e
@@ -117,41 +115,92 @@ module Api
 
       private
 
-      # Normalize phone number to digits only for consistent comparison
-      def normalize_phone_number(phone_number)
-        return nil if phone_number.blank?
+      # Database-agnostic method to find registered phone numbers
+      def find_registered_numbers(normalized_numbers, original_numbers)
+        # Get all registered users' phone numbers
+        all_registered_phones = User.where.not(phone_number: [nil, '']).pluck(:phone_number)
         
-        # Remove all non-digit characters
-        normalized = phone_number.gsub(/\D/, '')
+        Rails.logger.info "Found #{all_registered_phones.length} users with phone numbers"
         
-        # Handle different international formats
-        case normalized.length
-        when 10
-          # US number without country code - add +1
-          "+1#{normalized}"
-        when 11
-          # US number with country code 1
-          "+#{normalized}" if normalized.start_with?('1')
-        when 12
-          # International number with country code
-          "+#{normalized}"
-        when 13
-          # Number that already has + prefix removed
-          "+#{normalized}"
-        else
-          # For other lengths, just add + if it's a reasonable phone number length
-          normalized.length >= 8 && normalized.length <= 15 ? "+#{normalized}" : nil
+        # Normalize all registered phone numbers for comparison
+        registered_normalized = all_registered_phones.map { |phone| normalize_phone_number(phone) }.compact
+        
+        Rails.logger.info "Normalized registered phones: #{registered_normalized.inspect}"
+        
+        # Find matches between input and registered numbers
+        matches = []
+        
+        # Check normalized numbers
+        normalized_numbers.each do |norm_input|
+          if registered_normalized.include?(norm_input)
+            matches << norm_input
+          end
         end
+        
+        # Also check original input formats against registered numbers (for edge cases)
+        original_numbers.each do |orig_input|
+          normalized_orig = normalize_phone_number(orig_input.to_s)
+          if normalized_orig && registered_normalized.include?(normalized_orig) && !matches.include?(normalized_orig)
+            matches << normalized_orig
+          end
+        end
+        
+        Rails.logger.info "Final matches: #{matches.inspect}"
+        
+        matches.uniq
       end
 
-      # Alternative normalization method that's more flexible
-      def normalize_phone_number_flexible(phone_number)
+      # Simplified phone number normalization
+      def normalize_phone_number(phone_number)
         return nil if phone_number.blank?
         
         # Remove all non-digit characters
         digits_only = phone_number.gsub(/\D/, '')
         
-        # Return digits only for comparison - let the frontend handle formatting
+        Rails.logger.debug "Normalizing: '#{phone_number}' -> digits: '#{digits_only}'"
+        
+        # Must have at least 8 digits to be valid
+        return nil if digits_only.length < 8
+        
+        # Handle different phone number formats
+        case digits_only.length
+        when 8..9
+          # Short local numbers - add country code (assuming Kenya +254)
+          "+254#{digits_only}"
+        when 10
+          # Could be US (add +1) or other country without country code
+          # For Kenya, might be 07XXXXXXXX format
+          if digits_only.start_with?('07', '01')
+            # Kenyan mobile/landline format
+            "+254#{digits_only[1..-1]}" # Remove leading 0
+          else
+            # Assume US format
+            "+1#{digits_only}"
+          end
+        when 11
+          # Likely has country code already
+          if digits_only.start_with?('1')
+            "+#{digits_only}" # US number
+          elsif digits_only.start_with?('254')
+            "+#{digits_only}" # Kenya number
+          else
+            "+#{digits_only}" # Other country
+          end
+        when 12..15
+          # International format, add + if not present
+          "+#{digits_only}"
+        else
+          # Invalid length
+          Rails.logger.debug "Invalid phone number length: #{digits_only.length} for #{digits_only}"
+          nil
+        end
+      end
+
+      # Alternative simple normalization (digits only)
+      def normalize_phone_simple(phone_number)
+        return nil if phone_number.blank?
+        
+        digits_only = phone_number.gsub(/\D/, '')
         digits_only.length >= 8 ? digits_only : nil
       end
     end
