@@ -12,38 +12,28 @@ module Api
         # GET /api/v1/admin/notifications
         def index
           begin
-            # Pagination
+            Rails.logger.info "Admin notifications index called by user #{current_user.id}"
+            
+            # Pagination parameters
             page = [params[:page].to_i, 1].max
             per_page = [params[:per_page].to_i, 20].max.clamp(1, 100)
-            offset = (page - 1) * per_page
 
-            # Start with base query - FIXED: Build complete query first, then paginate
-            @notifications = Notification.includes(:user, :package)
+            # Build base query with safe includes
+            base_query = Notification.includes(:user, :package)
 
-            # Apply filters BEFORE pagination
-            @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
-            @notifications = @notifications.where(status: params[:status]) if params[:status].present?
-            @notifications = @notifications.where(priority: params[:priority]) if params[:priority].present?
-            @notifications = @notifications.where(read: params[:read] == 'true') if params[:read].present?
-
-            # Search filter - FIXED: Handle joins properly
-            if params[:search].present?
-              search_term = "%#{params[:search]}%"
-              @notifications = @notifications.joins(:user)
-                                           .where(
-                                             "notifications.title ILIKE ? OR notifications.message ILIKE ? OR users.name ILIKE ?",
-                                             search_term, search_term, search_term
-                                           )
-            end
-
-            # Get total count BEFORE applying pagination - FIXED: Count the filtered query
-            total_count = @notifications.count
+            # Apply filters safely
+            filtered_query = apply_filters(base_query)
+            
+            # Get total count before pagination
+            total_count = filtered_query.count
             total_pages = (total_count.to_f / per_page).ceil
-
-            # FIXED: Apply pagination AFTER building the complete filtered query
-            @notifications = @notifications.order(created_at: :desc)
-                                          .offset(offset)
+            
+            # Apply pagination and ordering
+            @notifications = filtered_query.order(created_at: :desc)
+                                          .offset((page - 1) * per_page)
                                           .limit(per_page)
+
+            Rails.logger.info "Found #{@notifications.count} notifications (#{total_count} total)"
 
             render json: {
               success: true,
@@ -55,9 +45,10 @@ module Api
                 per_page: per_page
               }
             }, status: :ok
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#index error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#index error: #{e.class}: #{e.message}"
+            Rails.logger.error e.backtrace.first(10).join("\n")
             
             render json: {
               success: false,
@@ -70,53 +61,58 @@ module Api
         # GET /api/v1/admin/notifications/stats
         def stats
           begin
-            total_notifications = Notification.count
-            unread_notifications = Notification.where(read: false).count
-            delivered_notifications = Notification.where(delivered: true).count
-            pending_notifications = Notification.where(status: 'pending').count
-            expired_notifications = Notification.where('expires_at <= ?', Time.current).count
+            Rails.logger.info "Admin notifications stats called by user #{current_user.id}"
+            
+            # Use raw SQL counts to avoid potential enum issues
+            stats_data = {
+              total: Notification.count,
+              unread: Notification.where(read: false).count,
+              delivered: Notification.where(delivered: true).count,
+              pending: Notification.where("status = 'pending' OR status IS NULL").count,
+              expired: Notification.where('expires_at <= ?', Time.current).count
+            }
 
-            # Group by notification type
+            # Group by type - using string values to avoid enum issues
             by_type = Notification.group(:notification_type).count
-
-            # Group by priority
-            by_priority = Notification.group(:priority).count
+            
+            # Group by priority - convert to integer keys for consistency
+            by_priority_raw = Notification.group(:priority).count
+            by_priority = {}
+            by_priority_raw.each do |priority, count|
+              key = case priority.to_i
+                   when 2 then 'urgent'
+                   when 1 then 'high' 
+                   else 'normal'
+                   end
+              by_priority[key] = count
+            end
 
             # Group by status
             by_status = Notification.group(:status).count
 
-            # Recent activity (last 7 days) - FIXED: Handle gracefully without groupdate
+            # Recent activity (simple approach)
             recent_activity = {}
-            begin
-              # Simple daily count for the last 7 days without groupdate dependency
-              7.downto(0) do |days_ago|
-                date = days_ago.days.ago.beginning_of_day
-                date_end = date.end_of_day
-                count = Notification.where(created_at: date..date_end).count
-                recent_activity[date.strftime('%Y-%m-%d')] = count
-              end
-            rescue => e
-              Rails.logger.warn "Could not generate recent activity stats: #{e.message}"
-              recent_activity = {}
+            7.downto(0) do |days_ago|
+              date = days_ago.days.ago.beginning_of_day
+              date_end = date.end_of_day
+              count = Notification.where(created_at: date..date_end).count
+              recent_activity[date.strftime('%Y-%m-%d')] = count
             end
 
             render json: {
               success: true,
-              data: {
-                total: total_notifications,
-                unread: unread_notifications,
-                delivered: delivered_notifications,
-                pending: pending_notifications,
-                expired: expired_notifications,
+              data: stats_data.merge({
                 by_type: by_type,
                 by_priority: by_priority,
                 by_status: by_status,
                 recent_activity: recent_activity
-              }
+              })
             }, status: :ok
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#stats error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#stats error: #{e.class}: #{e.message}"
+            Rails.logger.error e.backtrace.first(10).join("\n")
+            
             render json: {
               success: false,
               message: 'Failed to fetch notification statistics',
@@ -149,9 +145,11 @@ module Api
                 errors: @notification.errors.full_messages
               }, status: :unprocessable_entity
             end
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#create error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#create error: #{e.class}: #{e.message}"
+            Rails.logger.error e.backtrace.first(10).join("\n")
+            
             render json: {
               success: false,
               message: 'Failed to create notification',
@@ -170,9 +168,10 @@ module Api
               message: 'Notification marked as read',
               data: serialize_admin_notification(@notification)
             }, status: :ok
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#mark_as_read error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#mark_as_read error: #{e.class}: #{e.message}"
+            
             render json: {
               success: false,
               message: 'Failed to mark notification as read',
@@ -191,9 +190,10 @@ module Api
               message: 'Notification marked as unread',
               data: serialize_admin_notification(@notification)
             }, status: :ok
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#mark_as_unread error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#mark_as_unread error: #{e.class}: #{e.message}"
+            
             render json: {
               success: false,
               message: 'Failed to mark notification as unread',
@@ -211,9 +211,10 @@ module Api
               success: true,
               message: 'Notification deleted successfully'
             }, status: :ok
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#destroy error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#destroy error: #{e.class}: #{e.message}"
+            
             render json: {
               success: false,
               message: 'Failed to delete notification',
@@ -234,7 +235,7 @@ module Api
             target_users = if broadcast_params[:user_ids].present?
               User.where(id: broadcast_params[:user_ids])
             else
-              User.all # Broadcast to all users
+              User.all
             end
 
             notifications_created = 0
@@ -262,9 +263,11 @@ module Api
                 target_users_count: target_users.count
               }
             }, status: :created
+            
           rescue => e
-            Rails.logger.error "Admin::NotificationsController#broadcast error: #{e.message}"
-            Rails.logger.error e.backtrace.join("\n")
+            Rails.logger.error "Admin::NotificationsController#broadcast error: #{e.class}: #{e.message}"
+            Rails.logger.error e.backtrace.first(10).join("\n")
+            
             render json: {
               success: false,
               message: 'Failed to broadcast notification',
@@ -285,7 +288,8 @@ module Api
         end
 
         def ensure_admin_user!
-          unless current_user&.role == 'admin'
+          unless current_user&.admin?
+            Rails.logger.warn "Non-admin user #{current_user&.id} attempted to access admin notifications"
             render json: {
               success: false,
               message: 'Access denied. Admin privileges required.'
@@ -293,80 +297,182 @@ module Api
           end
         end
 
-        # Enhanced serialization for admin view - FIXED: Handle nil values properly
+        def apply_filters(base_query)
+          query = base_query
+
+          # Type filter - handle both string and symbol enum values
+          if params[:type].present?
+            query = query.where(notification_type: params[:type])
+          end
+
+          # Status filter
+          if params[:status].present?
+            query = query.where(status: params[:status])
+          end
+
+          # Priority filter - handle integer values
+          if params[:priority].present?
+            query = query.where(priority: params[:priority].to_i)
+          end
+
+          # Read status filter
+          if params[:read].present?
+            read_value = params[:read] == 'true'
+            query = query.where(read: read_value)
+          end
+
+          # Search filter - be careful with joins
+          if params[:search].present?
+            search_term = "%#{params[:search].downcase}%"
+            query = query.joins(:user).where(
+              "LOWER(notifications.title) LIKE ? OR LOWER(notifications.message) LIKE ? OR LOWER(users.name) LIKE ?",
+              search_term, search_term, search_term
+            )
+          end
+
+          query
+        end
+
+        # Safe serialization that handles all edge cases
         def serialize_admin_notification(notification)
-          result = {
-            id: notification.id,
-            title: notification.title || '',
-            message: notification.message || '',
-            notification_type: notification.notification_type || 'general',
-            priority: notification.priority || 0,
-            read: !!notification.read,
-            delivered: !!notification.delivered,
-            status: notification.status || 'pending',
-            channel: notification.channel || 'in_app',
-            created_at: notification.created_at&.iso8601,
-            read_at: notification.read_at&.iso8601,
-            delivered_at: notification.delivered_at&.iso8601,
-            expires_at: notification.expires_at&.iso8601,
-            action_url: notification.action_url,
-            icon: notification.icon || 'notifications',
-            metadata: notification.try(:metadata) || {}
-          }
-
-          # Add user information - FIXED: Handle cases where user might be nil
-          if notification.user
-            result[:user] = {
-              id: notification.user.id,
-              name: notification.user.name || 'Unknown User',
-              email: notification.user.email,
-              phone: notification.user.phone,
-              role: notification.user.role || 'user'
+          begin
+            result = {
+              id: notification.id,
+              title: safe_string(notification.title),
+              message: safe_string(notification.message),
+              notification_type: safe_string(notification.notification_type, 'general'),
+              priority: safe_integer(notification.priority, 0),
+              read: !!notification.read,
+              delivered: !!notification.delivered,
+              status: safe_string(notification.status, 'pending'),
+              channel: safe_string(notification.channel, 'in_app'),
+              created_at: safe_datetime(notification.created_at),
+              read_at: safe_datetime(notification.read_at),
+              delivered_at: safe_datetime(notification.delivered_at),
+              expires_at: safe_datetime(notification.expires_at),
+              action_url: notification.action_url,
+              icon: safe_string(notification.icon, 'notifications'),
+              metadata: safe_json(notification.metadata)
             }
-          else
-            result[:user] = {
-              id: nil,
-              name: 'System',
-              email: nil,
-              phone: nil,
-              role: 'system'
-            }
-          end
 
-          # Add package information if present - FIXED: Handle nil package
-          if notification.package
-            result[:package] = {
-              id: notification.package.id,
-              code: notification.package.code,
-              state: notification.package.state
-            }
-          end
-
-          # Add computed fields - FIXED: Use safe navigation and handle missing methods
-          if notification.created_at
-            begin
-              result[:formatted_created_at] = notification.created_at.strftime('%B %d, %Y at %I:%M %p')
-              # Use simple time calculation instead of Rails helper that might not be available
-              time_diff = Time.current - notification.created_at
-              if time_diff < 1.minute
-                result[:time_since_creation] = 'just now'
-              elsif time_diff < 1.hour
-                result[:time_since_creation] = "#{(time_diff / 1.minute).round} minutes ago"
-              elsif time_diff < 1.day
-                result[:time_since_creation] = "#{(time_diff / 1.hour).round} hours ago"
-              else
-                result[:time_since_creation] = "#{(time_diff / 1.day).round} days ago"
-              end
-            rescue => e
-              Rails.logger.warn "Error formatting notification times: #{e.message}"
-              result[:formatted_created_at] = notification.created_at.to_s
-              result[:time_since_creation] = 'unknown'
+            # Add user information safely
+            if notification.user
+              result[:user] = {
+                id: notification.user.id,
+                name: safe_string(notification.user.name, 'Unknown User'),
+                email: notification.user.email,
+                phone: notification.user.phone,
+                role: safe_string(notification.user.role, 'user')
+              }
+            else
+              result[:user] = {
+                id: nil,
+                name: 'System',
+                email: nil,
+                phone: nil,
+                role: 'system'
+              }
             end
+
+            # Add package information if present
+            if notification.package
+              result[:package] = {
+                id: notification.package.id,
+                code: safe_string(notification.package.code),
+                state: safe_string(notification.package.state)
+              }
+            end
+
+            # Add computed fields safely
+            if notification.created_at
+              result[:formatted_created_at] = format_datetime(notification.created_at)
+              result[:time_since_creation] = time_ago_text(notification.created_at)
+            else
+              result[:formatted_created_at] = 'Unknown date'
+              result[:time_since_creation] = 'Unknown'
+            end
+
+            result[:expired] = notification.expires_at ? notification.expires_at <= Time.current : false
+
+            result
+          rescue => e
+            Rails.logger.error "Error serializing notification #{notification.id}: #{e.message}"
+            
+            # Return minimal safe data if serialization fails
+            {
+              id: notification.id,
+              title: 'Error loading notification',
+              message: 'Unable to load notification details',
+              notification_type: 'general',
+              priority: 0,
+              read: false,
+              delivered: false,
+              status: 'error',
+              channel: 'in_app',
+              created_at: Time.current.iso8601,
+              expired: false,
+              user: { id: nil, name: 'Unknown', role: 'unknown' }
+            }
           end
+        end
 
-          result[:expired] = notification.expires_at ? notification.expires_at <= Time.current : false
+        # Helper methods for safe data handling
+        def safe_string(value, default = '')
+          value.to_s.presence || default
+        end
 
-          result
+        def safe_integer(value, default = 0)
+          value.to_i || default
+        end
+
+        def safe_datetime(value)
+          value&.iso8601
+        end
+
+        def safe_json(value)
+          case value
+          when Hash
+            value
+          when String
+            begin
+              JSON.parse(value)
+            rescue JSON::ParserError
+              {}
+            end
+          else
+            {}
+          end
+        end
+
+        def format_datetime(datetime)
+          datetime.strftime('%B %d, %Y at %I:%M %p')
+        rescue
+          datetime.to_s
+        end
+
+        # Custom time ago implementation that doesn't rely on view helpers
+        def time_ago_text(time)
+          return 'Unknown' unless time
+          
+          time_diff = Time.current - time
+          
+          case time_diff
+          when 0..59
+            'just now'
+          when 60..3599
+            minutes = (time_diff / 60).round
+            "#{minutes} minute#{'s' if minutes != 1} ago"
+          when 3600..86399
+            hours = (time_diff / 3600).round
+            "#{hours} hour#{'s' if hours != 1} ago"
+          when 86400..2591999
+            days = (time_diff / 86400).round
+            "#{days} day#{'s' if days != 1} ago"
+          else
+            time.strftime('%b %d, %Y')
+          end
+        rescue
+          'Unknown'
         end
       end
     end
