@@ -619,6 +619,37 @@ resources :updates, only: [:create, :index] do
         get :customer_preference_trends, to: 'analytics#customer_preference_trends'
       end
 
+
+
+# ==========================================
+      # 🔐 ADMIN ROUTES
+      # ==========================================
+      
+      namespace :admin do
+        # Admin Notifications Management
+        resources :notifications, only: [:index, :show, :create, :destroy] do
+          member do
+            patch :mark_as_read
+            patch :mark_as_unread
+          end
+          
+          collection do
+            get :stats
+            post :broadcast
+          end
+        end
+
+        # Admin Conversations
+        resources :conversations, only: [:index, :show] do
+          member do
+            patch :assign_to_me
+            patch :transfer
+            patch 'status', to: 'conversations#update_status'
+          end
+        end
+
+
+
       # ==========================================
       # 📄 ENHANCED REPORTS AND EXPORTS
       # ==========================================
