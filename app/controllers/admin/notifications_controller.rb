@@ -83,10 +83,19 @@ module Api
             # Group by status
             by_status = Notification.group(:status).count
 
-            # Recent activity (last 7 days)
-            recent_activity = Notification.where('created_at >= ?', 7.days.ago)
-                                        .group_by_day(:created_at)
-                                        .count
+            # Recent activity (last 7 days) - handle if groupdate is not available
+            recent_activity = begin
+              if Notification.respond_to?(:group_by_day)
+                Notification.where('created_at >= ?', 7.days.ago)
+                           .group_by_day(:created_at)
+                           .count
+              else
+                # Fallback if groupdate gem is not available
+                {}
+              end
+            rescue
+              {}
+            end
 
             render json: {
               success: true,
