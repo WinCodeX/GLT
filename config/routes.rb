@@ -1,4 +1,4 @@
-# config/routes.rb (Add Sidekiq Web UI)
+# config/routes.rb (Updated with Admin Notifications)
 require 'sidekiq/web'
 
 Rails.application.routes.draw do
@@ -14,28 +14,38 @@ Rails.application.routes.draw do
     mount Sidekiq::Web => '/admin/sidekiq'
   end
 
-
-
-
   # ==========================================
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
   # ==========================================
   
-
- # Remove the conflicting single route and use proper namespace routing
-namespace :admin do
-  root 'updates#index'  # This makes /admin route to admin/updates#index
-  resources :updates do
-    member do
-      patch :publish
-      patch :unpublish
+  # Remove the conflicting single route and use proper namespace routing
+  namespace :admin do
+    root 'updates#index'  # This makes /admin route to admin/updates#index
+    
+    resources :updates do
+      member do
+        patch :publish
+        patch :unpublish
+      end
+      collection do
+        post :upload_bundle_only
+        get :stats
+      end
     end
-    collection do
-      post :upload_bundle_only
-      get :stats
+
+    # FIXED: Admin Notifications Management
+    resources :notifications, only: [:index, :show, :create, :destroy] do
+      member do
+        patch :mark_as_read
+        patch :mark_as_unread
+      end
+      
+      collection do
+        get :stats
+        post :broadcast
+      end
     end
   end
-end
 
 get '/dashboard', to: 'sessions#dashboard', as: :dashboard
   # Simple web-based sign in/out
@@ -607,48 +617,6 @@ resources :updates, only: [:create, :index] do
         get :cost_efficiency_analysis, to: 'analytics#cost_efficiency_analysis'
         get :delivery_success_rates, to: 'analytics#delivery_success_rates'
         get :customer_preference_trends, to: 'analytics#customer_preference_trends'
-      end
-
-      # ==========================================
-      # 🔐 ADMIN ROUTES
-      # ==========================================
-      
-      namespace :admin do
-        # Admin Notifications Management
-        resources :notifications, only: [:index, :show, :create, :destroy] do
-          member do
-            patch :mark_as_read
-            patch :mark_as_unread
-          end
-          
-          collection do
-            get :stats
-            post :broadcast
-          end
-        end
-
-        # Admin Conversations
-        resources :conversations, only: [:index, :show] do
-          member do
-            patch :assign_to_me
-            patch :transfer
-            patch 'status', to: 'conversations#update_status'
-          end
-        end
-        
-        # Admin Analytics
-        get 'analytics/scanning', to: 'analytics#scanning_overview'
-        get 'analytics/packages', to: 'analytics#package_analytics'
-        get 'analytics/performance', to: 'analytics#performance_metrics'
-        get 'analytics/fragile_packages', to: 'analytics#fragile_package_analytics'
-        
-        # ADDED: Enhanced admin analytics
-        get 'analytics/delivery_types', to: 'analytics#delivery_type_analytics'
-        get 'analytics/pricing_overview', to: 'analytics#pricing_overview'
-        get 'analytics/package_sizes', to: 'analytics#package_size_analytics'
-        get 'analytics/operational_efficiency', to: 'analytics#operational_efficiency'
-        get 'analytics/revenue_optimization', to: 'analytics#revenue_optimization'
-        get 'analytics/notifications', to: 'analytics#notifications_analytics'
       end
 
       # ==========================================
