@@ -647,6 +647,9 @@ resources :updates, only: [:create, :index] do
             patch 'status', to: 'conversations#update_status'
           end
         end
+
+       # ADD THIS: Admin Users Management
+        get 'users/search', to: 'users#search'
       end
 
 
