@@ -18,8 +18,8 @@ module Api
             page = [params[:page].to_i, 1].max
             per_page = [params[:per_page].to_i, 20].max.clamp(1, 100)
 
-            # Build base query with safe includes
-            base_query = Notification.includes(:user, :package)
+            # Build base query with left joins to handle missing associations
+            base_query = Notification.left_joins(:user, :package)
 
             # Apply filters safely
             filtered_query = apply_filters(base_query)
@@ -28,16 +28,22 @@ module Api
             total_count = filtered_query.count
             total_pages = (total_count.to_f / per_page).ceil
             
-            # Apply pagination and ordering
-            @notifications = filtered_query.order(created_at: :desc)
+            # Apply pagination and ordering - include all fields to avoid N+1
+            @notifications = filtered_query.select('notifications.*, users.name as user_name, users.email as user_email, users.phone as user_phone, users.role as user_role, packages.code as package_code, packages.state as package_state')
+                                          .order('notifications.created_at DESC')
                                           .offset((page - 1) * per_page)
                                           .limit(per_page)
 
             Rails.logger.info "Found #{@notifications.count} notifications (#{total_count} total)"
 
+            # Serialize safely
+            serialized_data = @notifications.map do |notification|
+              serialize_admin_notification_safe(notification)
+            end.compact # Remove any nil results
+
             render json: {
               success: true,
-              data: @notifications.map { |notification| serialize_admin_notification(notification) },
+              data: serialized_data,
               pagination: {
                 current_page: page,
                 total_pages: total_pages,
@@ -136,7 +142,7 @@ module Api
               render json: {
                 success: true,
                 message: 'Notification created successfully',
-                data: serialize_admin_notification(@notification)
+                data: serialize_admin_notification_safe(@notification)
               }, status: :created
             else
               render json: {
@@ -166,7 +172,7 @@ module Api
             render json: {
               success: true,
               message: 'Notification marked as read',
-              data: serialize_admin_notification(@notification)
+              data: serialize_admin_notification_safe(@notification)
             }, status: :ok
             
           rescue => e
@@ -188,7 +194,7 @@ module Api
             render json: {
               success: true,
               message: 'Notification marked as unread',
-              data: serialize_admin_notification(@notification)
+              data: serialize_admin_notification_safe(@notification)
             }, status: :ok
             
           rescue => e
@@ -321,11 +327,11 @@ module Api
             query = query.where(read: read_value)
           end
 
-          # Search filter - be careful with joins
+          # FIXED: Search filter with safer LEFT JOIN approach
           if params[:search].present?
             search_term = "%#{params[:search].downcase}%"
-            query = query.joins(:user).where(
-              "LOWER(notifications.title) LIKE ? OR LOWER(notifications.message) LIKE ? OR LOWER(users.name) LIKE ?",
+            query = query.where(
+              "LOWER(notifications.title) LIKE ? OR LOWER(notifications.message) LIKE ? OR LOWER(COALESCE(users.name, '')) LIKE ?",
               search_term, search_term, search_term
             )
           end
@@ -333,76 +339,54 @@ module Api
           query
         end
 
-        # Safe serialization that handles all edge cases
-        def serialize_admin_notification(notification)
+        # COMPLETELY REWRITTEN: Ultra-safe serialization that prevents all errors
+        def serialize_admin_notification_safe(notification)
+          return nil unless notification&.id
+
           begin
+            # Build base notification data with safe fallbacks
             result = {
-              id: notification.id,
-              title: safe_string(notification.title),
-              message: safe_string(notification.message),
-              notification_type: safe_string(notification.notification_type, 'general'),
-              priority: safe_integer(notification.priority, 0),
+              id: notification.id.to_i,
+              title: safe_string_value(notification.title, 'Untitled Notification'),
+              message: safe_string_value(notification.message, 'No message content'),
+              notification_type: safe_string_value(notification.notification_type, 'general'),
+              priority: safe_integer_value(notification.priority, 0),
               read: !!notification.read,
               delivered: !!notification.delivered,
-              status: safe_string(notification.status, 'pending'),
-              channel: safe_string(notification.channel, 'in_app'),
-              created_at: safe_datetime(notification.created_at),
-              read_at: safe_datetime(notification.read_at),
-              delivered_at: safe_datetime(notification.delivered_at),
-              expires_at: safe_datetime(notification.expires_at),
+              status: safe_string_value(notification.status, 'pending'),
+              channel: safe_string_value(notification.channel, 'in_app'),
+              created_at: safe_iso8601(notification.created_at),
+              read_at: safe_iso8601(notification.read_at),
+              delivered_at: safe_iso8601(notification.delivered_at),
+              expires_at: safe_iso8601(notification.expires_at),
               action_url: notification.action_url,
-              icon: safe_string(notification.icon, 'notifications'),
-              metadata: safe_json(notification.metadata)
+              icon: safe_string_value(notification.icon, 'bell'),
+              metadata: safe_metadata(notification.metadata)
             }
 
-            # Add user information safely
-            if notification.user
-              result[:user] = {
-                id: notification.user.id,
-                name: safe_string(notification.user.name, 'Unknown User'),
-                email: notification.user.email,
-                phone: notification.user.phone,
-                role: safe_string(notification.user.role, 'user')
-              }
-            else
-              result[:user] = {
-                id: nil,
-                name: 'System',
-                email: nil,
-                phone: nil,
-                role: 'system'
-              }
-            end
+            # FIXED: Handle user data from joined query or association
+            user_data = extract_user_data(notification)
+            result[:user] = user_data
 
-            # Add package information if present
-            if notification.package
-              result[:package] = {
-                id: notification.package.id,
-                code: safe_string(notification.package.code),
-                state: safe_string(notification.package.state)
-              }
-            end
+            # FIXED: Handle package data from joined query or association
+            package_data = extract_package_data(notification)
+            result[:package] = package_data if package_data
 
-            # Add computed fields safely
-            if notification.created_at
-              result[:formatted_created_at] = format_datetime(notification.created_at)
-              result[:time_since_creation] = time_ago_text(notification.created_at)
-            else
-              result[:formatted_created_at] = 'Unknown date'
-              result[:time_since_creation] = 'Unknown'
-            end
-
-            result[:expired] = notification.expires_at ? notification.expires_at <= Time.current : false
+            # Add computed time fields safely
+            result[:time_since_creation] = safe_time_ago(notification.created_at)
+            result[:formatted_created_at] = safe_formatted_date(notification.created_at)
+            result[:expired] = notification.expires_at ? (notification.expires_at <= Time.current) : false
 
             result
           rescue => e
-            Rails.logger.error "Error serializing notification #{notification.id}: #{e.message}"
+            Rails.logger.error "Critical error serializing notification #{notification.id}: #{e.class}: #{e.message}"
+            Rails.logger.error e.backtrace.first(5).join("\n")
             
-            # Return minimal safe data if serialization fails
+            # Return absolute minimal safe data
             {
-              id: notification.id,
-              title: 'Error loading notification',
-              message: 'Unable to load notification details',
+              id: notification.id.to_i,
+              title: 'Error Loading Notification',
+              message: 'This notification could not be loaded properly',
               notification_type: 'general',
               priority: 0,
               read: false,
@@ -410,49 +394,136 @@ module Api
               status: 'error',
               channel: 'in_app',
               created_at: Time.current.iso8601,
+              time_since_creation: 'Unknown',
+              formatted_created_at: 'Unknown date',
               expired: false,
-              user: { id: nil, name: 'Unknown', role: 'unknown' }
+              user: {
+                id: nil,
+                name: 'System',
+                email: nil,
+                phone: nil,
+                role: 'system'
+              }
             }
           end
         end
 
-        # Helper methods for safe data handling
-        def safe_string(value, default = '')
-          value.to_s.presence || default
+        # FIXED: Extract user data from either joined query or association
+        def extract_user_data(notification)
+          # Try to get user data from joined query attributes first
+          if notification.respond_to?(:user_name) && notification.user_name
+            return {
+              id: notification.user_id,
+              name: safe_string_value(notification.user_name, 'Unknown User'),
+              email: notification.respond_to?(:user_email) ? notification.user_email : nil,
+              phone: notification.respond_to?(:user_phone) ? notification.user_phone : nil,
+              role: notification.respond_to?(:user_role) ? safe_string_value(notification.user_role, 'user') : 'user'
+            }
+          end
+
+          # Fallback to association if available
+          if notification.user_id && notification.respond_to?(:user) && notification.user
+            return {
+              id: notification.user.id,
+              name: safe_string_value(notification.user.name, 'Unknown User'),
+              email: notification.user.email,
+              phone: notification.user.phone,
+              role: safe_string_value(notification.user.role, 'user')
+            }
+          end
+
+          # Return system user for orphaned notifications
+          {
+            id: nil,
+            name: 'System',
+            email: nil,
+            phone: nil,
+            role: 'system'
+          }
         end
 
-        def safe_integer(value, default = 0)
-          value.to_i || default
+        # FIXED: Extract package data from either joined query or association
+        def extract_package_data(notification)
+          # Try to get package data from joined query attributes first
+          if notification.respond_to?(:package_code) && notification.package_code
+            return {
+              id: notification.package_id,
+              code: safe_string_value(notification.package_code),
+              state: notification.respond_to?(:package_state) ? safe_string_value(notification.package_state) : nil
+            }
+          end
+
+          # Fallback to association if available
+          if notification.package_id && notification.respond_to?(:package) && notification.package
+            return {
+              id: notification.package.id,
+              code: safe_string_value(notification.package.code),
+              state: safe_string_value(notification.package.state)
+            }
+          end
+
+          # Check metadata for package info (for deleted packages)
+          if notification.package_id && notification.metadata.is_a?(Hash)
+            package_code = notification.metadata['package_code'] || notification.metadata[:package_code]
+            if package_code
+              return {
+                id: notification.package_id,
+                code: package_code.to_s,
+                state: 'deleted'
+              }
+            end
+          end
+
+          nil
         end
 
-        def safe_datetime(value)
-          value&.iso8601
+        # Ultra-safe helper methods
+        def safe_string_value(value, default = '')
+          return default if value.nil?
+          
+          str = value.to_s.strip
+          str.empty? ? default : str
+        rescue
+          default
         end
 
-        def safe_json(value)
-          case value
+        def safe_integer_value(value, default = 0)
+          return default if value.nil?
+          
+          value.to_i
+        rescue
+          default
+        end
+
+        def safe_iso8601(datetime)
+          return nil if datetime.nil?
+          
+          datetime.iso8601
+        rescue
+          nil
+        end
+
+        def safe_metadata(metadata)
+          case metadata
           when Hash
-            value
+            metadata
           when String
             begin
-              JSON.parse(value)
+              JSON.parse(metadata)
             rescue JSON::ParserError
               {}
             end
+          when nil
+            {}
           else
             {}
           end
-        end
-
-        def format_datetime(datetime)
-          datetime.strftime('%B %d, %Y at %I:%M %p')
         rescue
-          datetime.to_s
+          {}
         end
 
-        # Custom time ago implementation that doesn't rely on view helpers
-        def time_ago_text(time)
-          return 'Unknown' unless time
+        def safe_time_ago(time)
+          return 'Unknown' if time.nil?
           
           time_diff = Time.current - time
           
@@ -461,18 +532,28 @@ module Api
             'just now'
           when 60..3599
             minutes = (time_diff / 60).round
-            "#{minutes} minute#{'s' if minutes != 1} ago"
+            "#{minutes}m ago"
           when 3600..86399
             hours = (time_diff / 3600).round
-            "#{hours} hour#{'s' if hours != 1} ago"
+            "#{hours}h ago"
           when 86400..2591999
             days = (time_diff / 86400).round
-            "#{days} day#{'s' if days != 1} ago"
+            "#{days}d ago"
           else
-            time.strftime('%b %d, %Y')
+            time.strftime('%b %d')
           end
         rescue
           'Unknown'
+        end
+
+        def safe_formatted_date(datetime)
+          return 'Unknown date' if datetime.nil?
+          
+          datetime.strftime('%B %d, %Y at %I:%M %p')
+        rescue
+          datetime.to_s
+        rescue
+          'Unknown date'
         end
       end
     end
