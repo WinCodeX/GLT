@@ -609,7 +609,25 @@ resources :updates, only: [:create, :index] do
         get :customer_preference_trends, to: 'analytics#customer_preference_trends'
       end
 
+      # ==========================================
+      # 🔐 ADMIN ROUTES
+      # ==========================================
+      
       namespace :admin do
+        # Admin Notifications Management
+        resources :notifications, only: [:index, :show, :create, :destroy] do
+          member do
+            patch :mark_as_read
+            patch :mark_as_unread
+          end
+          
+          collection do
+            get :stats
+            post :broadcast
+          end
+        end
+
+        # Admin Conversations
         resources :conversations, only: [:index, :show] do
           member do
             patch :assign_to_me
@@ -618,6 +636,7 @@ resources :updates, only: [:create, :index] do
           end
         end
         
+        # Admin Analytics
         get 'analytics/scanning', to: 'analytics#scanning_overview'
         get 'analytics/packages', to: 'analytics#package_analytics'
         get 'analytics/performance', to: 'analytics#performance_metrics'
@@ -629,6 +648,7 @@ resources :updates, only: [:create, :index] do
         get 'analytics/package_sizes', to: 'analytics#package_size_analytics'
         get 'analytics/operational_efficiency', to: 'analytics#operational_efficiency'
         get 'analytics/revenue_optimization', to: 'analytics#revenue_optimization'
+        get 'analytics/notifications', to: 'analytics#notifications_analytics'
       end
 
       # ==========================================
@@ -650,12 +670,14 @@ resources :updates, only: [:create, :index] do
         get 'special_handling', to: 'reports#special_handling_report'
         get 'cost_analysis', to: 'reports#cost_analysis_report'
         get 'operational_metrics', to: 'reports#operational_metrics_report'
+        get 'notifications', to: 'reports#notifications_report'
         
         post 'export/packages', to: 'reports#export_packages'
         post 'export/revenue', to: 'reports#export_revenue'
         post 'export/analytics', to: 'reports#export_analytics'
         post 'export/delivery_types', to: 'reports#export_delivery_types'
         post 'export/pricing_analysis', to: 'reports#export_pricing_analysis'
+        post 'export/notifications', to: 'reports#export_notifications'
       end
 
       # ==========================================
@@ -666,6 +688,7 @@ resources :updates, only: [:create, :index] do
       get 'health', to: 'status#ping'
       get 'health/pricing', to: 'health#pricing_system_health'
       get 'health/delivery_types', to: 'health#delivery_types_health'
+      get 'health/notifications', to: 'health#notifications_health'
     end
   end
 
@@ -718,6 +741,7 @@ resources :updates, only: [:create, :index] do
     post 'collection/pickup_scheduled', to: 'webhooks#collection_pickup_scheduled'
     post 'large_package/handling_alert', to: 'webhooks#large_package_handling_alert'
     post 'pricing/update_notification', to: 'webhooks#pricing_update_notification'
+    post 'notifications/delivery_status', to: 'webhooks#notification_delivery_status'
   end
 
   # ==========================================
@@ -735,6 +759,7 @@ resources :updates, only: [:create, :index] do
   get "health/google_oauth" => "health#google_oauth_system", as: :google_oauth_health_check
   get "health/pricing_system" => "health#pricing_system", as: :pricing_system_health_check
   get "health/delivery_types" => "health#delivery_types_system", as: :delivery_types_health_check
+  get "health/notifications" => "health#notifications_system", as: :notifications_health_check
   
   # ==========================================
   # 📱 PROGRESSIVE WEB APP SUPPORT
@@ -755,6 +780,7 @@ resources :updates, only: [:create, :index] do
   get '/docs/pricing', to: 'documentation#pricing_docs'
   get '/docs/delivery_types', to: 'documentation#delivery_types_docs'
   get '/docs/package_sizes', to: 'documentation#package_sizes_docs'
+  get '/docs/notifications', to: 'documentation#notifications_docs'
 
   # ==========================================
   # 🔀 CATCH-ALL AND REDIRECTS
