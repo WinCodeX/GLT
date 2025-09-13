@@ -17,19 +17,16 @@ module Api
             per_page = [params[:per_page].to_i, 20].max.clamp(1, 100)
             offset = (page - 1) * per_page
 
-            # Base query - all notifications across all users
+            # Start with base query - FIXED: Build complete query first, then paginate
             @notifications = Notification.includes(:user, :package)
-                                       .order(created_at: :desc)
-                                       .offset(offset)
-                                       .limit(per_page)
 
-            # Apply filters
+            # Apply filters BEFORE pagination
             @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
             @notifications = @notifications.where(status: params[:status]) if params[:status].present?
             @notifications = @notifications.where(priority: params[:priority]) if params[:priority].present?
             @notifications = @notifications.where(read: params[:read] == 'true') if params[:read].present?
 
-            # Search filter
+            # Search filter - FIXED: Handle joins properly
             if params[:search].present?
               search_term = "%#{params[:search]}%"
               @notifications = @notifications.joins(:user)
@@ -39,9 +36,14 @@ module Api
                                            )
             end
 
-            # Get total count for pagination
-            total_count = @notifications.except(:offset, :limit, :order).count
+            # Get total count BEFORE applying pagination - FIXED: Count the filtered query
+            total_count = @notifications.count
             total_pages = (total_count.to_f / per_page).ceil
+
+            # FIXED: Apply pagination AFTER building the complete filtered query
+            @notifications = @notifications.order(created_at: :desc)
+                                          .offset(offset)
+                                          .limit(per_page)
 
             render json: {
               success: true,
@@ -83,18 +85,19 @@ module Api
             # Group by status
             by_status = Notification.group(:status).count
 
-            # Recent activity (last 7 days) - handle if groupdate is not available
-            recent_activity = begin
-              if Notification.respond_to?(:group_by_day)
-                Notification.where('created_at >= ?', 7.days.ago)
-                           .group_by_day(:created_at)
-                           .count
-              else
-                # Fallback if groupdate gem is not available
-                {}
+            # Recent activity (last 7 days) - FIXED: Handle gracefully without groupdate
+            recent_activity = {}
+            begin
+              # Simple daily count for the last 7 days without groupdate dependency
+              7.downto(0) do |days_ago|
+                date = days_ago.days.ago.beginning_of_day
+                date_end = date.end_of_day
+                count = Notification.where(created_at: date..date_end).count
+                recent_activity[date.strftime('%Y-%m-%d')] = count
               end
-            rescue
-              {}
+            rescue => e
+              Rails.logger.warn "Could not generate recent activity stats: #{e.message}"
+              recent_activity = {}
             end
 
             render json: {
@@ -113,6 +116,7 @@ module Api
             }, status: :ok
           rescue => e
             Rails.logger.error "Admin::NotificationsController#stats error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
             render json: {
               success: false,
               message: 'Failed to fetch notification statistics',
@@ -147,6 +151,7 @@ module Api
             end
           rescue => e
             Rails.logger.error "Admin::NotificationsController#create error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
             render json: {
               success: false,
               message: 'Failed to create notification',
@@ -157,55 +162,64 @@ module Api
 
         # PATCH /api/v1/admin/notifications/:id/mark_as_read
         def mark_as_read
-          @notification.update!(read: true, read_at: Time.current)
-          
-          render json: {
-            success: true,
-            message: 'Notification marked as read',
-            data: serialize_admin_notification(@notification)
-          }, status: :ok
-        rescue => e
-          Rails.logger.error "Admin::NotificationsController#mark_as_read error: #{e.message}"
-          render json: {
-            success: false,
-            message: 'Failed to mark notification as read',
-            error: Rails.env.development? ? e.message : 'Internal server error'
-          }, status: :internal_server_error
+          begin
+            @notification.update!(read: true, read_at: Time.current)
+            
+            render json: {
+              success: true,
+              message: 'Notification marked as read',
+              data: serialize_admin_notification(@notification)
+            }, status: :ok
+          rescue => e
+            Rails.logger.error "Admin::NotificationsController#mark_as_read error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
+            render json: {
+              success: false,
+              message: 'Failed to mark notification as read',
+              error: Rails.env.development? ? e.message : 'Internal server error'
+            }, status: :internal_server_error
+          end
         end
 
         # PATCH /api/v1/admin/notifications/:id/mark_as_unread
         def mark_as_unread
-          @notification.update!(read: false, read_at: nil)
-          
-          render json: {
-            success: true,
-            message: 'Notification marked as unread',
-            data: serialize_admin_notification(@notification)
-          }, status: :ok
-        rescue => e
-          Rails.logger.error "Admin::NotificationsController#mark_as_unread error: #{e.message}"
-          render json: {
-            success: false,
-            message: 'Failed to mark notification as unread',
-            error: Rails.env.development? ? e.message : 'Internal server error'
-          }, status: :internal_server_error
+          begin
+            @notification.update!(read: false, read_at: nil)
+            
+            render json: {
+              success: true,
+              message: 'Notification marked as unread',
+              data: serialize_admin_notification(@notification)
+            }, status: :ok
+          rescue => e
+            Rails.logger.error "Admin::NotificationsController#mark_as_unread error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
+            render json: {
+              success: false,
+              message: 'Failed to mark notification as unread',
+              error: Rails.env.development? ? e.message : 'Internal server error'
+            }, status: :internal_server_error
+          end
         end
 
         # DELETE /api/v1/admin/notifications/:id
         def destroy
-          @notification.destroy!
-          
-          render json: {
-            success: true,
-            message: 'Notification deleted successfully'
-          }, status: :ok
-        rescue => e
-          Rails.logger.error "Admin::NotificationsController#destroy error: #{e.message}"
-          render json: {
-            success: false,
-            message: 'Failed to delete notification',
-            error: Rails.env.development? ? e.message : 'Internal server error'
-          }, status: :internal_server_error
+          begin
+            @notification.destroy!
+            
+            render json: {
+              success: true,
+              message: 'Notification deleted successfully'
+            }, status: :ok
+          rescue => e
+            Rails.logger.error "Admin::NotificationsController#destroy error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
+            render json: {
+              success: false,
+              message: 'Failed to delete notification',
+              error: Rails.env.development? ? e.message : 'Internal server error'
+            }, status: :internal_server_error
+          end
         end
 
         # POST /api/v1/admin/notifications/broadcast
@@ -250,6 +264,7 @@ module Api
             }, status: :created
           rescue => e
             Rails.logger.error "Admin::NotificationsController#broadcast error: #{e.message}"
+            Rails.logger.error e.backtrace.join("\n")
             render json: {
               success: false,
               message: 'Failed to broadcast notification',
@@ -270,7 +285,7 @@ module Api
         end
 
         def ensure_admin_user!
-          unless current_user.role == 'admin'
+          unless current_user&.role == 'admin'
             render json: {
               success: false,
               message: 'Access denied. Admin privileges required.'
@@ -278,39 +293,47 @@ module Api
           end
         end
 
-        # Enhanced serialization for admin view
+        # Enhanced serialization for admin view - FIXED: Handle nil values properly
         def serialize_admin_notification(notification)
           result = {
             id: notification.id,
-            title: notification.title,
-            message: notification.message,
-            notification_type: notification.notification_type,
-            priority: notification.priority,
+            title: notification.title || '',
+            message: notification.message || '',
+            notification_type: notification.notification_type || 'general',
+            priority: notification.priority || 0,
             read: !!notification.read,
             delivered: !!notification.delivered,
-            status: notification.status,
-            channel: notification.channel,
+            status: notification.status || 'pending',
+            channel: notification.channel || 'in_app',
             created_at: notification.created_at&.iso8601,
             read_at: notification.read_at&.iso8601,
             delivered_at: notification.delivered_at&.iso8601,
             expires_at: notification.expires_at&.iso8601,
             action_url: notification.action_url,
             icon: notification.icon || 'notifications',
-            metadata: notification.metadata || {}
+            metadata: notification.try(:metadata) || {}
           }
 
-          # Add user information
+          # Add user information - FIXED: Handle cases where user might be nil
           if notification.user
             result[:user] = {
               id: notification.user.id,
-              name: notification.user.name,
+              name: notification.user.name || 'Unknown User',
               email: notification.user.email,
               phone: notification.user.phone,
-              role: notification.user.role
+              role: notification.user.role || 'user'
+            }
+          else
+            result[:user] = {
+              id: nil,
+              name: 'System',
+              email: nil,
+              phone: nil,
+              role: 'system'
             }
           end
 
-          # Add package information if present
+          # Add package information if present - FIXED: Handle nil package
           if notification.package
             result[:package] = {
               id: notification.package.id,
@@ -319,10 +342,26 @@ module Api
             }
           end
 
-          # Add computed fields
+          # Add computed fields - FIXED: Use safe navigation and handle missing methods
           if notification.created_at
-            result[:formatted_created_at] = notification.created_at.strftime('%B %d, %Y at %I:%M %p')
-            result[:time_since_creation] = time_ago_in_words(notification.created_at)
+            begin
+              result[:formatted_created_at] = notification.created_at.strftime('%B %d, %Y at %I:%M %p')
+              # Use simple time calculation instead of Rails helper that might not be available
+              time_diff = Time.current - notification.created_at
+              if time_diff < 1.minute
+                result[:time_since_creation] = 'just now'
+              elsif time_diff < 1.hour
+                result[:time_since_creation] = "#{(time_diff / 1.minute).round} minutes ago"
+              elsif time_diff < 1.day
+                result[:time_since_creation] = "#{(time_diff / 1.hour).round} hours ago"
+              else
+                result[:time_since_creation] = "#{(time_diff / 1.day).round} days ago"
+              end
+            rescue => e
+              Rails.logger.warn "Error formatting notification times: #{e.message}"
+              result[:formatted_created_at] = notification.created_at.to_s
+              result[:time_since_creation] = 'unknown'
+            end
           end
 
           result[:expired] = notification.expires_at ? notification.expires_at <= Time.current : false
