@@ -1,5 +1,5 @@
 # app/controllers/api/v1/push_tokens_controller.rb
-class Api::V1::PushTokensController < Api::V1::BaseController
+class Api::V1::PushTokensController < ApplicationController
   before_action :authenticate_user!
   
   # POST /api/v1/push_tokens
