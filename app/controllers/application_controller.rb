@@ -1,11 +1,12 @@
-# app/controllers/application_controller.rb - Fixed for pure JWT authentication
+# app/controllers/application_controller.rb - Fixed to work properly with devise-jwt
 class ApplicationController < ActionController::API
   include ActionController::MimeResponds
   
   # ===========================================
-  # 🔐 JWT AUTHENTICATION (FIXED - MAINTAINS DEVISE METHOD NAMES)
+  # 🔐 DEVISE-JWT AUTHENTICATION (FIXED)
   # ===========================================
   
+  # Let devise-jwt handle authentication through its middleware
   before_action :authenticate_user!, unless: :skip_authentication?
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :log_user_activity, if: :user_signed_in?
@@ -16,85 +17,38 @@ class ApplicationController < ActionController::API
   rescue_from CanCan::AccessDenied, with: :forbidden_response if defined?(CanCan)
 
   # ===========================================
-  # 🔐 OVERRIDE DEVISE authenticate_user! WITH JWT IMPLEMENTATION
+  # 🔐 OVERRIDE ONLY WHEN NECESSARY (Let devise-jwt handle most authentication)
   # ===========================================
 
   def authenticate_user!
     # Skip authentication for routes that don't need it
     return if skip_authentication?
     
-    # Extract JWT token from Authorization header
-    token = extract_jwt_token
+    # Let devise-jwt handle the authentication through its middleware
+    # This will validate JWT tokens without session timeout interference
+    super
     
-    unless token.present?
-      render_unauthorized('Missing authentication token')
-      return
-    end
-
-    begin
-      # Decode JWT token directly (no Devise session checks)
-      decoded_token = JWT.decode(
-        token, 
-        jwt_secret_key, 
-        true, 
-        { algorithm: 'HS256' }
-      )
-      
-      user_data = decoded_token.first
-      @current_user = User.find_by(id: user_data['sub'])
-      
-      unless @current_user.present?
-        Rails.logger.warn "JWT token valid but user not found: #{user_data['sub']}"
-        render_unauthorized('User not found')
-        return
-      end
-      
-      Rails.logger.info "JWT authenticated user: #{@current_user.email}"
-      
-    rescue JWT::DecodeError => e
-      Rails.logger.warn "JWT decode error: #{e.message}"
-      render_unauthorized('Invalid token')
-      return
-    rescue JWT::ExpiredSignature
-      # This shouldn't happen since our tokens don't expire, but handle it anyway
-      Rails.logger.warn "JWT token expired"
-      render_unauthorized('Token expired')
-      return
-    rescue => e
-      Rails.logger.error "JWT authentication error: #{e.message}"
-      render_unauthorized('Authentication failed')
-      return
+  rescue => e
+    # Log authentication errors for debugging
+    Rails.logger.warn "Authentication failed: #{e.message}"
+    
+    # Handle specific devise-jwt errors
+    case e.message
+    when /jwt/i, /token/i
+      render_unauthorized('Invalid or expired token')
+    else
+      render_unauthorized('Authentication required')
     end
   end
 
-  # Override Devise methods for JWT compatibility
-  def current_user
-    @current_user
-  end
-
-  def user_signed_in?
-    current_user.present?
-  end
+  # devise-jwt provides current_user and user_signed_in? automatically
+  # No need to override these methods
 
   private
 
   # ===========================================
-  # 🔧 JWT HELPER METHODS
+  # 🔧 AUTHENTICATION HELPERS
   # ===========================================
-
-  def extract_jwt_token
-    auth_header = request.headers['Authorization']
-    return nil unless auth_header.present?
-    
-    # Extract token from "Bearer TOKEN" format
-    auth_header.split(' ').last if auth_header.start_with?('Bearer ')
-  end
-
-  def jwt_secret_key
-    ENV['DEVISE_JWT_SECRET_KEY'] || 
-    Rails.application.credentials.jwt_secret_key || 
-    Rails.application.secret_key_base
-  end
 
   def render_unauthorized(message = 'Unauthorized')
     render json: { 
@@ -127,7 +81,7 @@ class ApplicationController < ActionController::API
     oauth_patterns = [
       %r{^/api/v1/login$},                # Login endpoint
       %r{^/api/v1/signup$},               # Signup endpoint
-      %r{^/api/v1/sessions$},             # Sessions endpoint (POST for create)
+      %r{^/api/v1/sessions},              # Sessions endpoints
       %r{^/api/v1/google_login$},         # Google login
       %r{^/api/v1/auth/google},           # Google OAuth endpoints
       %r{^/api/v1/auth/failure},          # OAuth failure
@@ -213,7 +167,7 @@ class ApplicationController < ActionController::API
   # ===========================================
 
   def configure_permitted_parameters
-    return unless devise_parameter_sanitizer.present?
+    return unless respond_to?(:devise_parameter_sanitizer) && devise_parameter_sanitizer.present?
     
     devise_parameter_sanitizer.permit(:sign_up, keys: [
       :first_name, :last_name, :phone_number
@@ -343,5 +297,41 @@ class ApplicationController < ActionController::API
     
     staff_roles = [:admin, :super_admin, :agent, :warehouse, :support]
     staff_roles.any? { |role| current_user_has_role?(role) }
+  end
+
+  # ===========================================
+  # 🔧 DEVISE-JWT INTEGRATION HELPERS
+  # ===========================================
+
+  # Check if JWT token is present in request
+  def jwt_token_present?
+    request.headers['Authorization']&.start_with?('Bearer ')
+  end
+
+  # Get JWT payload (if needed for custom logic)
+  def jwt_payload
+    return nil unless jwt_token_present?
+    
+    begin
+      token = request.headers['Authorization'].split(' ').last
+      decoded = JWT.decode(token, Rails.application.secret_key_base, true, { algorithm: 'HS256' })
+      decoded.first
+    rescue => e
+      Rails.logger.warn "Failed to decode JWT payload: #{e.message}"
+      nil
+    end
+  end
+
+  # Override Devise's after_sign_in_path_for for API
+  def after_sign_in_path_for(resource)
+    # For API requests, don't redirect
+    return nil if request.format.json?
+    super
+  end
+
+  # Override Devise's after_sign_out_path_for for API
+  def after_sign_out_path_for(resource_or_scope)
+    return nil if request.format.json?
+    super
   end
 end
