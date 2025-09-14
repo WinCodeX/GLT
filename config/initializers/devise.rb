@@ -1,4 +1,4 @@
-# config/initializers/devise.rb - COMPLETELY FIXED for JWT consistency
+# config/initializers/devise.rb - FIXED: JWT session expiration issues resolved
 
 Devise.setup do |config|
   # ===========================================
@@ -15,11 +15,11 @@ Devise.setup do |config|
   config.strip_whitespace_keys = [:email]
   
   # ===========================================
-  # 📱 API-ONLY CONFIGURATION (COMPLETE FIX)
+  # 📱 API-ONLY CONFIGURATION (FIXED)
   # ===========================================
   
-  # CRITICAL: Complete session storage skip for API-only
-  config.skip_session_storage = [:http_auth, :params_auth, :token_auth, :database_auth]
+  # CRITICAL FIX: Complete session storage skip for ALL auth strategies
+  config.skip_session_storage = [:http_auth, :params_auth, :token_auth, :database_auth, :jwt_auth]
   
   # CRITICAL: No navigational formats for pure API
   config.navigational_formats = []
@@ -52,16 +52,22 @@ Devise.setup do |config|
   config.sign_out_via = [:delete, :post]  # Both methods for API flexibility
 
   # ===========================================
-  # 🔐 JWT CONFIGURATION (COMPLETELY FIXED)
+  # 🔐 JWT CONFIGURATION (FIXED - Session expiration issues resolved)
   # ===========================================
   
   config.jwt do |jwt|
-    # CRITICAL FIX: Ensure consistent secret key
-    jwt_secret = ENV['DEVISE_JWT_SECRET_KEY'].presence || 
-                 Rails.application.credentials.devise_jwt_secret_key.presence ||
-                 Rails.application.secret_key_base
+    # CRITICAL FIX: Single consistent secret key source
+    jwt_secret = ENV['DEVISE_JWT_SECRET_KEY']
+    
+    if jwt_secret.blank?
+      jwt_secret = Rails.application.secret_key_base
+      Rails.logger.warn "⚠️ Using Rails secret_key_base for JWT. Set DEVISE_JWT_SECRET_KEY for production."
+    end
     
     jwt.secret = jwt_secret
+    
+    # CRITICAL FIX: Explicit revocation strategy to prevent session issues
+    jwt.revocation_strategy = Devise::JWT::RevocationStrategies::Null
     
     # Log the secret being used (first 10 chars only for security)
     Rails.logger.info "🔐 JWT Secret configured: #{jwt_secret[0..10]}..."
@@ -88,6 +94,7 @@ Devise.setup do |config|
     
     # Add debugging for JWT operations
     if Rails.env.development?
+      Rails.logger.info "🔐 JWT revocation strategy: #{jwt.revocation_strategy}"
       Rails.logger.info "🔐 JWT dispatch routes: #{jwt.dispatch_requests.map(&:last)}"
       Rails.logger.info "🔐 JWT revocation routes: #{jwt.revocation_requests.map(&:last)}"
       Rails.logger.info "🔐 JWT expiration: #{jwt.expiration_time || 'NEVER'}"
@@ -142,6 +149,7 @@ Devise.setup do |config|
         begin
           jwt_config = Devise.jwt
           Rails.logger.info "✅ JWT secret: CONFIGURED (#{jwt_config.secret[0..10]}...)"
+          Rails.logger.info "✅ JWT revocation strategy: #{jwt_config.revocation_strategy}"
           Rails.logger.info "✅ JWT expiration: #{jwt_config.expiration_time || 'NEVER EXPIRES'}"
           Rails.logger.info "✅ JWT algorithm: #{jwt_config.algorithm}"
           Rails.logger.info "✅ JWT dispatch routes: #{jwt_config.dispatch_requests.size} configured"
