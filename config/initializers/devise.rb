@@ -66,8 +66,7 @@ Devise.setup do |config|
     
     jwt.secret = jwt_secret
     
-    # CRITICAL FIX: Explicit revocation strategy to prevent session issues
-    jwt.revocation_strategy = Devise::JWT::RevocationStrategies::Null
+    # NOTE: Revocation strategy is configured in User model, not here
     
     # Log the secret being used (first 10 chars only for security)
     Rails.logger.info "🔐 JWT Secret configured: #{jwt_secret[0..10]}..."
@@ -94,7 +93,6 @@ Devise.setup do |config|
     
     # Add debugging for JWT operations
     if Rails.env.development?
-      Rails.logger.info "🔐 JWT revocation strategy: #{jwt.revocation_strategy}"
       Rails.logger.info "🔐 JWT dispatch routes: #{jwt.dispatch_requests.map(&:last)}"
       Rails.logger.info "🔐 JWT revocation routes: #{jwt.revocation_requests.map(&:last)}"
       Rails.logger.info "🔐 JWT expiration: #{jwt.expiration_time || 'NEVER'}"
@@ -149,7 +147,6 @@ Devise.setup do |config|
         begin
           jwt_config = Devise.jwt
           Rails.logger.info "✅ JWT secret: CONFIGURED (#{jwt_config.secret[0..10]}...)"
-          Rails.logger.info "✅ JWT revocation strategy: #{jwt_config.revocation_strategy}"
           Rails.logger.info "✅ JWT expiration: #{jwt_config.expiration_time || 'NEVER EXPIRES'}"
           Rails.logger.info "✅ JWT algorithm: #{jwt_config.algorithm}"
           Rails.logger.info "✅ JWT dispatch routes: #{jwt_config.dispatch_requests.size} configured"
