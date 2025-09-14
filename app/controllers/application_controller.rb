@@ -3,10 +3,10 @@ class ApplicationController < ActionController::API
   include ActionController::MimeResponds
   
   # ===========================================
-  # 🔐 JWT AUTHENTICATION (FIXED - NO SESSION INTERFERENCE)
+  # 🔐 JWT AUTHENTICATION (FIXED - MAINTAINS DEVISE METHOD NAMES)
   # ===========================================
   
-  before_action :authenticate_user_via_jwt!, unless: :skip_authentication?
+  before_action :authenticate_user!, unless: :skip_authentication?
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :log_user_activity, if: :user_signed_in?
   
@@ -16,10 +16,10 @@ class ApplicationController < ActionController::API
   rescue_from CanCan::AccessDenied, with: :forbidden_response if defined?(CanCan)
 
   # ===========================================
-  # 🔐 PURE JWT AUTHENTICATION (NO DEVISE INTERFERENCE)
+  # 🔐 OVERRIDE DEVISE authenticate_user! WITH JWT IMPLEMENTATION
   # ===========================================
 
-  def authenticate_user_via_jwt!
+  def authenticate_user!
     # Skip authentication for routes that don't need it
     return if skip_authentication?
     
