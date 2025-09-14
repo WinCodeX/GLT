@@ -1,4 +1,4 @@
-# app/controllers/api/v1/sessions_controller.rb - Fixed to work properly with devise-jwt
+# app/controllers/api/v1/sessions_controller.rb - FIXED: No authentication interference
 require 'google-id-token'
 require 'open-uri'
 
@@ -8,38 +8,38 @@ module Api
       respond_to :json
       
       # ===========================================
-      # 🔐 REGULAR LOGIN (FIXED - Using devise-jwt properly)
+      # 🔐 REGULAR LOGIN (FIXED - Clean devise-jwt flow)
       # ===========================================
 
       def create
+        # Let devise-jwt handle authentication without interference
         self.resource = warden.authenticate!(auth_options)
         
         if resource
-          # Let devise-jwt handle token generation through its normal flow
+          # Clean sign_in flow for devise-jwt
           sign_in(resource_name, resource)
           resource.mark_online! if resource.respond_to?(:mark_online!)
           
           Rails.logger.info "User login successful: #{resource.email}"
           
-          # devise-jwt will automatically add token to response headers
+          # devise-jwt automatically adds token to response headers
           render json: {
             status: 'success',
             message: 'Logged in successfully',
             user: serialize_user(resource)
           }, status: :ok
+        else
+          # This should not happen with warden.authenticate! but handle gracefully
+          render json: {
+            status: 'error',
+            message: 'Authentication failed',
+            code: 'auth_failed'
+          }, status: :unauthorized
         end
-        
-      rescue => e
-        Rails.logger.warn "Login failed: #{e.message}"
-        render json: {
-          status: 'error',
-          message: 'Invalid email or password',
-          code: 'invalid_credentials'
-        }, status: :unauthorized
       end
 
       # ===========================================
-      # 🚪 LOGOUT (Let devise-jwt handle token revocation)
+      # 🚪 LOGOUT (Clean devise-jwt revocation)
       # ===========================================
       
       def destroy
@@ -48,7 +48,7 @@ module Api
           Rails.logger.info "User logout: #{current_user.email}"
         end
         
-        # Let devise-jwt handle token revocation through its normal flow
+        # Let devise-jwt handle token revocation cleanly
         sign_out(resource_name)
         
         render json: {
@@ -58,7 +58,7 @@ module Api
       end
 
       # ===========================================
-      # 🔐 GOOGLE LOGIN (FIXED - Using devise-jwt properly)
+      # 🔐 GOOGLE LOGIN (FIXED - Clean authentication flow)
       # ===========================================
 
       def google_login
@@ -72,26 +72,32 @@ module Api
           }, status: :unprocessable_entity
         end
 
-        validator = GoogleIDToken::Validator.new
-        
         begin
+          # Validate Google token
+          validator = GoogleIDToken::Validator.new
           payload = validator.check(credential, ENV['GOOGLE_CLIENT_ID'])
+          
+          # Extract user information
           email = payload['email']
           name = payload['name']
           google_avatar_url = payload['picture']
           first_name, last_name = name.split(' ', 2)
 
+          # Find or create user
           user = User.find_or_initialize_by(email: email)
           is_new_user = user.new_record?
           
           if is_new_user
-            user.first_name = first_name || 'Google'
-            user.last_name = last_name || 'User'
-            user.phone_number = nil
-            user.password = Devise.friendly_token[0, 20]
-            user.provider = 'google_oauth2'
-            user.uid = payload['sub']
-            user.google_image_url = google_avatar_url
+            user.assign_attributes(
+              first_name: first_name || 'Google',
+              last_name: last_name || 'User',
+              phone_number: nil,
+              password: Devise.friendly_token[0, 20],
+              provider: 'google_oauth2',
+              uid: payload['sub'],
+              google_image_url: google_avatar_url
+            )
+            
             user.save!
             user.add_role(:client) if user.roles.blank?
             
@@ -100,16 +106,16 @@ module Api
             Rails.logger.info "Existing Google user login: #{email}"
           end
 
-          # Handle Google avatar attachment
+          # Handle Google avatar attachment (non-blocking)
           if google_avatar_url.present? && !user.avatar.attached?
             attach_google_avatar(user, google_avatar_url)
           end
 
-          # Use devise-jwt's normal sign_in flow to generate token
-          sign_in(user)
+          # Clean sign_in flow for devise-jwt
+          sign_in(:user, user)
           user.mark_online! if user.respond_to?(:mark_online!)
 
-          # devise-jwt will automatically add token to response headers
+          # devise-jwt automatically adds token to response headers
           render json: {
             status: 'success',
             message: 'Signed in with Google.',
@@ -118,15 +124,25 @@ module Api
           }, status: :ok
 
         rescue GoogleIDToken::ValidationError => e
-          Rails.logger.error "Google token invalid: #{e.message}"
+          Rails.logger.error "Google token validation failed: #{e.message}"
           render json: { 
             status: 'error',
             message: 'Invalid Google token',
-            code: 'invalid_token'
+            code: 'invalid_google_token'
           }, status: :unauthorized
           
+        rescue ActiveRecord::RecordInvalid => e
+          Rails.logger.error "User save failed: #{e.message}"
+          render json: {
+            status: 'error', 
+            message: 'Failed to create user account',
+            errors: e.record.errors.full_messages,
+            code: 'user_creation_failed'
+          }, status: :unprocessable_entity
+          
         rescue => e
-          Rails.logger.error "Google login error: #{e.message}"
+          Rails.logger.error "Google login unexpected error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           render json: {
             status: 'error', 
             message: 'Google authentication failed',
@@ -220,10 +236,10 @@ module Api
       end
 
       # ===========================================
-      # 🔧 DEVISE OVERRIDES FOR JWT
+      # 🔧 DEVISE OVERRIDES FOR JWT (FIXED)
       # ===========================================
 
-      # Override respond_with to work properly with devise-jwt
+      # Clean respond_with for devise-jwt compatibility
       def respond_with(resource, _opts = {})
         if resource.persisted?
           render json: {
