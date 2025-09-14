@@ -110,25 +110,36 @@ class Notification < ApplicationRecord
     end
   end
 
-  # NEW: INSTANT PUSH NOTIFICATION METHOD
+  # FIXED: INSTANT PUSH NOTIFICATION METHOD - Extract control parameters
   def self.create_and_broadcast!(attributes)
+    # Extract control parameters that aren't database attributes
+    should_send_immediate_push = attributes.delete(:instant_push)
+    
+    # Create the notification with only valid database attributes
     notification = create!(attributes)
     
-    # Instant push notification for real-time delivery
-    if notification.channel == 'push' || attributes[:instant_push]
-      PushNotificationService.new.send_immediate(notification)
+    # Send immediate push notification if requested or if channel is push
+    if notification.channel == 'push' || should_send_immediate_push
+      begin
+        PushNotificationService.new.send_immediate(notification)
+        Rails.logger.info "📱 Immediate push sent for notification #{notification.id}"
+      rescue => e
+        Rails.logger.error "❌ Immediate push failed for notification #{notification.id}: #{e.message}"
+      end
     end
     
     notification
   end
 
-  # NEW: ENHANCED NOTIFICATION CREATION WITH PUSH SUPPORT
+  # FIXED: ENHANCED NOTIFICATION CREATION WITH PUSH SUPPORT
   def self.create_with_push(attributes)
-    # Default to push channel for instant delivery
-    attributes = attributes.merge(
-      channel: 'push',
-      instant_push: true
-    ) unless attributes[:channel]
+    # Set default channel to push and mark for immediate sending
+    unless attributes.key?(:channel)
+      attributes[:channel] = 'push'
+    end
+    
+    # Always send immediate push for this method
+    attributes[:instant_push] = true
     
     create_and_broadcast!(attributes)
   end
