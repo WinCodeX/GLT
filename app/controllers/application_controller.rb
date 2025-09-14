@@ -1,12 +1,12 @@
-# app/controllers/application_controller.rb - Fixed to work properly with devise-jwt
+# app/controllers/application_controller.rb - FIXED: Removed authentication interference
 class ApplicationController < ActionController::API
   include ActionController::MimeResponds
   
   # ===========================================
-  # 🔐 DEVISE-JWT AUTHENTICATION (FIXED)
+  # 🔐 DEVISE-JWT AUTHENTICATION (COMPLETELY FIXED)
   # ===========================================
   
-  # Let devise-jwt handle authentication through its middleware
+  # Let devise-jwt handle authentication through its middleware ONLY
   before_action :authenticate_user!, unless: :skip_authentication?
   before_action :configure_permitted_parameters, if: :devise_controller?
   before_action :log_user_activity, if: :user_signed_in?
@@ -17,32 +17,10 @@ class ApplicationController < ActionController::API
   rescue_from CanCan::AccessDenied, with: :forbidden_response if defined?(CanCan)
 
   # ===========================================
-  # 🔐 OVERRIDE ONLY WHEN NECESSARY (Let devise-jwt handle most authentication)
-  # ===========================================
-
-  def authenticate_user!
-    # Skip authentication for routes that don't need it
-    return if skip_authentication?
-    
-    # Let devise-jwt handle the authentication through its middleware
-    # This will validate JWT tokens without session timeout interference
-    super
-    
-  rescue => e
-    # Log authentication errors for debugging
-    Rails.logger.warn "Authentication failed: #{e.message}"
-    
-    # Handle specific devise-jwt errors
-    case e.message
-    when /jwt/i, /token/i
-      render_unauthorized('Invalid or expired token')
-    else
-      render_unauthorized('Authentication required')
-    end
-  end
-
+  # 🚫 REMOVED: authenticate_user! override that was causing token invalidation
   # devise-jwt provides current_user and user_signed_in? automatically
-  # No need to override these methods
+  # No custom authentication logic needed
+  # ===========================================
 
   private
 
@@ -300,7 +278,7 @@ class ApplicationController < ActionController::API
   end
 
   # ===========================================
-  # 🔧 DEVISE-JWT INTEGRATION HELPERS
+  # 🔧 FIXED: JWT INTEGRATION HELPERS (No manual token handling)
   # ===========================================
 
   # Check if JWT token is present in request
@@ -308,19 +286,8 @@ class ApplicationController < ActionController::API
     request.headers['Authorization']&.start_with?('Bearer ')
   end
 
-  # Get JWT payload (if needed for custom logic)
-  def jwt_payload
-    return nil unless jwt_token_present?
-    
-    begin
-      token = request.headers['Authorization'].split(' ').last
-      decoded = JWT.decode(token, Rails.application.secret_key_base, true, { algorithm: 'HS256' })
-      decoded.first
-    rescue => e
-      Rails.logger.warn "Failed to decode JWT payload: #{e.message}"
-      nil
-    end
-  end
+  # REMOVED: jwt_payload method that was manually decoding tokens
+  # devise-jwt handles all token validation automatically
 
   # Override Devise's after_sign_in_path_for for API
   def after_sign_in_path_for(resource)
