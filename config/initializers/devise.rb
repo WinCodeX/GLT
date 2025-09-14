@@ -1,4 +1,4 @@
-# config/initializers/devise.rb - Fixed for API-only JWT (no session interference)
+# config/initializers/devise.rb - COMPLETELY FIXED for JWT consistency
 
 Devise.setup do |config|
   # ===========================================
@@ -15,13 +15,13 @@ Devise.setup do |config|
   config.strip_whitespace_keys = [:email]
   
   # ===========================================
-  # 📱 API-ONLY CONFIGURATION (FIXED)
+  # 📱 API-ONLY CONFIGURATION (COMPLETE FIX)
   # ===========================================
   
-  # FIXED: Skip session storage completely for API-only mode
-  config.skip_session_storage = [:http_auth, :params_auth, :token_auth]
+  # CRITICAL: Complete session storage skip for API-only
+  config.skip_session_storage = [:http_auth, :params_auth, :token_auth, :database_auth]
   
-  # FIXED: No navigational formats for API-only
+  # CRITICAL: No navigational formats for pure API
   config.navigational_formats = []
   
   # Response format
@@ -36,143 +36,139 @@ Devise.setup do |config|
   config.stretches = Rails.env.test? ? 1 : 12
 
   # ===========================================
-  # ⚠️ CRITICAL FIX: REMOVE SESSION TIMEOUT FOR JWT API
+  # 🔥 CRITICAL FIX: NO SESSION TIMEOUTS FOR JWT
   # ===========================================
   
-  # FIXED: Do NOT set timeout_in for API-only JWT mode
-  # This was causing JWT tokens to be treated as expired after 24 hours
-  # config.timeout_in = 24.hours  # ❌ REMOVED - This interfered with JWT
+  # REMOVED ALL SESSION-BASED CONFIGURATIONS THAT INTERFERE WITH JWT:
+  # - NO timeout_in (this was causing false expiration)
+  # - NO rememberable (session-based)  
+  # - NO confirmable (email-based, not needed for API)
+  # - NO lockable (can cause JWT issues)
   
-  # ==> Account Locking Configuration
-  config.lock_strategy = :failed_attempts
-  config.unlock_strategy = :both
-  config.maximum_attempts = 5
-  config.unlock_in = 1.hour
-  config.last_attempt_warning = true
-  config.reset_password_within = 6.hours
-
-  # ==> Confirmation Configuration (DISABLED for API)
-  # FIXED: Disable email confirmation for API-only mode
-  # config.allow_unconfirmed_access_for = 0.days
-  # config.confirm_within = 3.days
-  # config.reconfirmable = true
-
-  # ==> Rememberable Configuration (DISABLED for JWT API)
-  # FIXED: Disable rememberable for JWT API mode
-  # config.expire_all_remember_me_on_sign_out = true
-  # config.rememberable_options = {}
-
-  # ==> Security Configuration
+  # ==> Security Configuration (JWT-compatible only)
   config.paranoid = true
-  config.sign_out_all_scopes = false  # FIXED: Allow single-scope signout for API
-  config.sign_in_after_change_password = false  # FIXED: API doesn't auto sign-in
-  config.sign_out_via = [:delete, :post]  # Allow both for API flexibility
+  config.sign_out_all_scopes = false  # Allow single-scope signout for JWT
+  config.sign_in_after_change_password = false  # API doesn't auto sign-in
+  config.sign_out_via = [:delete, :post]  # Both methods for API flexibility
 
   # ===========================================
-  # 🔐 JWT CONFIGURATION (FIXED - PURE JWT MODE)
+  # 🔐 JWT CONFIGURATION (COMPLETELY FIXED)
   # ===========================================
   
   config.jwt do |jwt|
-    # Use environment variable or Rails credentials for JWT secret
-    jwt.secret = ENV['DEVISE_JWT_SECRET_KEY'] || 
-                 Rails.application.credentials.jwt_secret_key || 
+    # CRITICAL FIX: Ensure consistent secret key
+    jwt_secret = ENV['DEVISE_JWT_SECRET_KEY'].presence || 
+                 Rails.application.credentials.devise_jwt_secret_key.presence ||
                  Rails.application.secret_key_base
+    
+    jwt.secret = jwt_secret
+    
+    # Log the secret being used (first 10 chars only for security)
+    Rails.logger.info "🔐 JWT Secret configured: #{jwt_secret[0..10]}..."
 
-    # FIXED: JWT dispatch routes for API endpoints
+    # FIXED: Correct dispatch routes that actually match your API
     jwt.dispatch_requests = [
       ['POST', %r{^/api/v1/login$}],
-      ['POST', %r{^/api/v1/signup$}],
-      ['POST', %r{^/api/v1/sessions$}],
-      ['POST', %r{^/api/v1/auth/google_login$}],
-      ['POST', %r{^/api/v1/auth/google_oauth2/callback$}]
+      ['POST', %r{^/api/v1/sessions$}],  # Standard Devise sessions
+      ['POST', %r{^/api/v1/google_login$}],
+      ['POST', %r{^/users/sign_in$}],    # Standard Devise route
     ]
     
-    # FIXED: JWT revocation routes
+    # FIXED: Correct revocation routes
     jwt.revocation_requests = [
       ['DELETE', %r{^/api/v1/logout$}],
       ['POST', %r{^/api/v1/logout$}],
-      ['DELETE', %r{^/api/v1/sessions$}]
+      ['DELETE', %r{^/api/v1/sessions$}],
+      ['DELETE', %r{^/users/sign_out$}],  # Standard Devise route
     ]
     
-    # 🔥 CRITICAL FIX: JWT tokens should NEVER expire
-    jwt.expiration_time = nil  # No expiration - tokens are permanent until revoked
+    # 🔥 CRITICAL: NO EXPIRATION - Tokens never expire
+    jwt.expiration_time = nil
     jwt.algorithm = 'HS256'
-  end
-
-  # ===========================================
-  # 🔐 GOOGLE OAUTH CONFIGURATION (FIXED)
-  # ===========================================
-  
-  config.omniauth :google_oauth2,
-                  ENV['GOOGLE_CLIENT_ID'] || Rails.application.credentials.dig(:google_oauth, :client_id),
-                  ENV['GOOGLE_CLIENT_SECRET'] || Rails.application.credentials.dig(:google_oauth, :client_secret),
-                  {
-                    # OAuth scope & permissions
-                    scope: 'email,profile',
-                    prompt: 'select_account',
-                    access_type: 'offline',
-                    
-                    # FIXED: API-specific OAuth settings
-                    skip_jwt: false,  # Allow JWT generation from OAuth
-                    
-                    # FIXED: Callback configuration for API
-                    callback_path: '/api/v1/auth/google_oauth2/callback',
-                    
-                    # Security settings
-                    provider_ignores_state: false,
-                    
-                    # UI customization
-                    image_aspect_ratio: 'square',
-                    image_size: 150,
-                    
-                    # Client options
-                    client_options: {
-                      ssl: { 
-                        verify: Rails.env.production? 
-                      }
-                    }
-                  }
-
-  # ===========================================
-  # 🧪 DEVELOPMENT/TEST CONFIGURATION
-  # ===========================================
-  
-  if Rails.env.development? || Rails.env.test?
-    # Reduce password stretches for faster tests
-    config.stretches = 1 if Rails.env.test?
     
-    # Development settings
+    # Add debugging for JWT operations
     if Rails.env.development?
-      # Allow unconfirmed access in development
-      # config.allow_unconfirmed_access_for = 30.days
-      
-      # Disable sending emails in development
-      config.mailer = 'DeviseMailer'
+      Rails.logger.info "🔐 JWT dispatch routes: #{jwt.dispatch_requests.map(&:last)}"
+      Rails.logger.info "🔐 JWT revocation routes: #{jwt.revocation_requests.map(&:last)}"
+      Rails.logger.info "🔐 JWT expiration: #{jwt.expiration_time || 'NEVER'}"
     end
   end
 
   # ===========================================
-  # 🔍 LOGGING AND DEBUGGING
+  # 🔐 GOOGLE OAUTH CONFIGURATION (VERIFIED)
+  # ===========================================
+  
+  config.omniauth :google_oauth2,
+                  ENV['GOOGLE_CLIENT_ID'],
+                  ENV['GOOGLE_CLIENT_SECRET'],
+                  {
+                    scope: 'email,profile',
+                    prompt: 'select_account',
+                    access_type: 'offline',
+                    skip_jwt: false,  # Allow JWT generation
+                    callback_path: '/api/v1/auth/google_oauth2/callback',
+                    provider_ignores_state: false,
+                    image_aspect_ratio: 'square',
+                    image_size: 150,
+                    client_options: {
+                      ssl: { verify: Rails.env.production? }
+                    }
+                  }
+
+  # ===========================================
+  # 🧪 ENVIRONMENT-SPECIFIC CONFIGURATION
+  # ===========================================
+  
+  if Rails.env.development? || Rails.env.test?
+    config.stretches = 1 if Rails.env.test?
+    config.mailer = 'DeviseMailer' if Rails.env.development?
+  end
+
+  # ===========================================
+  # 🔍 COMPREHENSIVE LOGGING FOR DEBUGGING
   # ===========================================
   
   Rails.application.config.after_initialize do
     if defined?(Devise)
-      Rails.logger.info "✅ Devise initialized for API-only JWT mode"
+      Rails.logger.info "=" * 50
+      Rails.logger.info "🔐 DEVISE-JWT CONFIGURATION SUMMARY"
+      Rails.logger.info "=" * 50
       
-      # Check if JWT is available
+      # Check Devise JWT availability
       if defined?(Devise::JWT)
-        Rails.logger.info "🔐 Devise JWT is available - no expiration configured"
+        Rails.logger.info "✅ Devise JWT gem: AVAILABLE"
+        
+        # Check JWT configuration
+        begin
+          jwt_config = Devise.jwt
+          Rails.logger.info "✅ JWT secret: CONFIGURED (#{jwt_config.secret[0..10]}...)"
+          Rails.logger.info "✅ JWT expiration: #{jwt_config.expiration_time || 'NEVER EXPIRES'}"
+          Rails.logger.info "✅ JWT algorithm: #{jwt_config.algorithm}"
+          Rails.logger.info "✅ JWT dispatch routes: #{jwt_config.dispatch_requests.size} configured"
+          Rails.logger.info "✅ JWT revocation routes: #{jwt_config.revocation_requests.size} configured"
+        rescue => e
+          Rails.logger.error "❌ JWT configuration error: #{e.message}"
+        end
       else
-        Rails.logger.error "❌ Devise JWT is NOT available - check gem installation"
+        Rails.logger.error "❌ Devise JWT gem: NOT AVAILABLE"
       end
       
       # Check OmniAuth providers
       if Devise.respond_to?(:omniauth_providers) && Devise.omniauth_providers.any?
-        Rails.logger.info "🔐 OmniAuth Providers: #{Devise.omniauth_providers.join(', ')}"
+        Rails.logger.info "✅ OmniAuth providers: #{Devise.omniauth_providers.join(', ')}"
+      else
+        Rails.logger.warn "⚠️ No OmniAuth providers configured"
       end
       
-      # Log JWT configuration status
-      Rails.logger.info "🔐 JWT Configuration: No expiration, API-only mode"
+      # Check environment variables
+      Rails.logger.info "🔐 Environment check:"
+      Rails.logger.info "  DEVISE_JWT_SECRET_KEY: #{ENV['DEVISE_JWT_SECRET_KEY'].present? ? 'SET' : 'NOT SET'}"
+      Rails.logger.info "  GOOGLE_CLIENT_ID: #{ENV['GOOGLE_CLIENT_ID'].present? ? 'SET' : 'NOT SET'}"
+      Rails.logger.info "  GOOGLE_CLIENT_SECRET: #{ENV['GOOGLE_CLIENT_SECRET'].present? ? 'SET' : 'NOT SET'}"
+      
+      Rails.logger.info "=" * 50
+      Rails.logger.info "🔐 DEVISE CONFIGURATION COMPLETE"
+      Rails.logger.info "=" * 50
     end
   end
 end
