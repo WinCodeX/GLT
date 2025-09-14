@@ -1,4 +1,4 @@
-# config/application.rb - Fixed session configuration
+# config/application.rb - FIXED: Pure JWT API without session interference
 
 if defined?(Dotenv)
   require 'dotenv/rails-now'
@@ -25,37 +25,31 @@ module GltApi
     config.autoload_lib(ignore: %w(assets tasks))
     
     # ===========================================
-    # 🔧 API-ONLY WITH SESSIONS CONFIGURATION
+    # 🔧 PURE API-ONLY CONFIGURATION (FIXED)
     # ===========================================
     
-    # Keep API-only mode but add back necessary middleware for OAuth
+    # Strict API-only mode - no session-based authentication
     config.api_only = true
     
     # ===========================================
-    # 📁 LARGE FILE UPLOAD CONFIGURATION (FIXED)
+    # 📁 LARGE FILE UPLOAD CONFIGURATION
     # ===========================================
     
     # Fix for 119MB APK uploads - increase request size limit
     config.action_dispatch.max_request_size = 250 * 1024 * 1024 # 250MB in bytes
     
     # ===========================================
-    # 🍪 SESSION CONFIGURATION (FIXED)
+    # 🚫 REMOVED: SESSION CONFIGURATION THAT WAS CAUSING JWT CONFLICTS
     # ===========================================
     
-    # Configure session store first
-    config.session_store :cookie_store, 
-      key: '_glt_api_session',
-      secure: false,  # Set to true when HTTPS is working
-      httponly: true,
-      same_site: :lax,
-      expire_after: 1.hour
-    
-    # Add middleware in correct order
-    config.middleware.use ActionDispatch::Cookies
-    config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
-    
-    # Flash middleware (sometimes needed for session functionality)
-    config.middleware.use ActionDispatch::Flash
+    # CRITICAL FIX: Removed all session-related middleware and configuration
+    # The following was causing JWT token authentication to expire:
+    # - config.session_store :cookie_store with expire_after: 1.hour
+    # - ActionDispatch::Cookies middleware
+    # - ActionDispatch::Session::CookieStore middleware  
+    # - ActionDispatch::Flash middleware
+    #
+    # JWT tokens are stateless and don't require sessions
     
     # ===========================================
     # 🌐 CORS CONFIGURATION
@@ -67,7 +61,7 @@ module GltApi
         resource '*', 
           headers: :any,
           methods: [:get, :post, :put, :patch, :delete, :options, :head],
-          credentials: false
+          credentials: false  # IMPORTANT: false for JWT-based auth
       end
     end
     
@@ -88,6 +82,23 @@ module GltApi
       g.skip_helper true
       g.skip_views true
       g.skip_assets true
+    end
+    
+    # ===========================================
+    # 🔧 JWT-SPECIFIC CONFIGURATIONS
+    # ===========================================
+    
+    # Ensure no session storage interference with JWT
+    config.middleware.delete ActionDispatch::Cookies
+    config.middleware.delete ActionDispatch::Session::CookieStore
+    config.middleware.delete ActionDispatch::Flash
+    
+    # Optional: Add request/response logging for debugging
+    if Rails.env.development?
+      config.log_level = :debug
+      
+      # Log authentication-related requests
+      config.middleware.use Rack::CommonLogger, Rails.logger
     end
   end
 end
