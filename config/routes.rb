@@ -374,6 +374,9 @@ resources :updates, only: [:create, :index] do
       end
     end
 
+      # ADD THIS LINE FOR PUSH TOKENS
+      resources :push_tokens, only: [:create, :destroy], param: :token
+
       # ==========================================
       # 🎨 DEDICATED QR CODE ENDPOINTS
       # ==========================================

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_12_170000) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_14_114040) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -363,6 +363,23 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_12_170000) do
     t.index ["origin_area_id"], name: "index_prices_on_origin_area_id"
   end
 
+  create_table "push_tokens", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "token", null: false
+    t.string "platform", null: false
+    t.json "device_info", default: {}
+    t.boolean "active", default: true
+    t.integer "failure_count", default: 0
+    t.datetime "last_used_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["active"], name: "index_push_tokens_on_active"
+    t.index ["last_used_at"], name: "index_push_tokens_on_last_used_at"
+    t.index ["token"], name: "index_push_tokens_on_token", unique: true
+    t.index ["user_id", "platform"], name: "index_push_tokens_on_user_id_and_platform"
+    t.index ["user_id"], name: "index_push_tokens_on_user_id"
+  end
+
   create_table "roles", force: :cascade do |t|
     t.string "name"
     t.string "resource_type"
@@ -463,6 +480,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_12_170000) do
   add_foreign_key "prices", "agents", column: "origin_agent_id"
   add_foreign_key "prices", "areas", column: "destination_area_id"
   add_foreign_key "prices", "areas", column: "origin_area_id"
+  add_foreign_key "push_tokens", "users"
   add_foreign_key "user_businesses", "businesses"
   add_foreign_key "user_businesses", "users"
 end

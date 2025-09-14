@@ -32,7 +32,8 @@ class User < ApplicationRecord
   has_many :package_tracking_events, dependent: :destroy
   has_many :package_print_logs, dependent: :destroy
 
-has_many :notifications, dependent: :destroy
+  has_many :push_tokens, dependent: :destroy
+  has_many :notifications, dependent: :destroy
 
   # Messaging system relationships
   has_many :conversation_participants, dependent: :destroy
@@ -77,6 +78,20 @@ has_many :notifications, dependent: :destroy
   scope :recent_scanners, -> { joins(:package_tracking_events).where(package_tracking_events: { created_at: 1.week.ago.. }).distinct }
   scope :google_users, -> { where(provider: 'google_oauth2') }
   scope :regular_users, -> { where(provider: nil) }
+
+
+# ADD THESE METHODS
+  def active_push_tokens
+    push_tokens.active
+  end
+  
+  def has_push_notifications_enabled?
+    active_push_tokens.any?
+  end
+  
+  def expo_push_tokens
+    active_push_tokens.expo_tokens
+  end
 
   # ===========================================
   # 🔐 JWT METHODS

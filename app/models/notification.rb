@@ -3,6 +3,7 @@ class Notification < ApplicationRecord
   belongs_to :user
   belongs_to :package, optional: true
 
+  # EXISTING ENUM DEFINITIONS (PRESERVED)
   enum notification_type: {
     package_rejected: 'package_rejected',
     package_expired: 'package_expired', 
@@ -11,7 +12,11 @@ class Notification < ApplicationRecord
     package_collected: 'package_collected',
     resubmission_available: 'resubmission_available',
     final_warning: 'final_warning',
-    general: 'general'
+    general: 'general',
+    # NEW: Add package update types for push notifications
+    package_ready: 'package_ready',
+    package_update: 'package_update',
+    payment_failed: 'payment_failed'
   }
 
   enum channel: {
@@ -24,7 +29,9 @@ class Notification < ApplicationRecord
   enum priority: {
     normal: 0,
     high: 1,
-    urgent: 2
+    urgent: 2,
+    # NEW: Add low priority for compatibility
+    low: -1
   }
 
   enum status: {
@@ -36,6 +43,7 @@ class Notification < ApplicationRecord
 
   validates :title, :message, :notification_type, presence: true
 
+  # EXISTING SCOPES (PRESERVED) + NEW ONES
   scope :unread, -> { where(read: false) }
   scope :read, -> { where(read: true) }
   scope :recent, -> { order(created_at: :desc) }
@@ -45,9 +53,12 @@ class Notification < ApplicationRecord
   scope :expired, -> { where('expires_at <= ?', Time.current) }
   scope :deliverable, -> { where(status: ['pending', 'failed']).active }
 
+  # ENHANCED CALLBACKS - PRESERVE EXISTING + ADD PUSH FUNCTIONALITY
   after_create :schedule_delivery
+  after_create_commit :broadcast_to_user  # NEW: Real-time broadcast
   after_update :handle_delivery_status_change
 
+  # EXISTING METHODS (PRESERVED)
   def mark_as_read!
     return if read?
     
@@ -99,7 +110,30 @@ class Notification < ApplicationRecord
     end
   end
 
-  # Create notification for package rejection
+  # NEW: INSTANT PUSH NOTIFICATION METHOD
+  def self.create_and_broadcast!(attributes)
+    notification = create!(attributes)
+    
+    # Instant push notification for real-time delivery
+    if notification.channel == 'push' || attributes[:instant_push]
+      PushNotificationService.new.send_immediate(notification)
+    end
+    
+    notification
+  end
+
+  # NEW: ENHANCED NOTIFICATION CREATION WITH PUSH SUPPORT
+  def self.create_with_push(attributes)
+    # Default to push channel for instant delivery
+    attributes = attributes.merge(
+      channel: 'push',
+      instant_push: true
+    ) unless attributes[:channel]
+    
+    create_and_broadcast!(attributes)
+  end
+
+  # EXISTING BUSINESS LOGIC METHODS (PRESERVED + ENHANCED WITH PUSH)
   def self.create_package_rejection(package:, reason:, auto_rejected: false)
     title = auto_rejected ? "Package #{package.code} Automatically Rejected" : "Package #{package.code} Rejected"
     
@@ -109,7 +143,8 @@ class Notification < ApplicationRecord
       "Your package #{package.code} has been rejected. Reason: #{reason}. You can resubmit this package if eligible."
     end
 
-    create!(
+    # ENHANCED: Use push notifications for immediate delivery
+    create_with_push(
       user: package.user,
       package: package,
       title: title,
@@ -127,9 +162,9 @@ class Notification < ApplicationRecord
     )
   end
 
-  # Create notification for package expiry warning
   def self.create_expiry_warning(package:, hours_remaining:)
-    create!(
+    # ENHANCED: Use push notifications for critical warnings
+    create_with_push(
       user: package.user,
       package: package,
       title: "Package #{package.code} Expires Soon",
@@ -145,11 +180,11 @@ class Notification < ApplicationRecord
     )
   end
 
-  # Create notification for successful resubmission
   def self.create_resubmission_success(package:, new_deadline:)
     deadline_hours = ((new_deadline - Time.current) / 1.hour).round(1)
     
-    create!(
+    # ENHANCED: Use push notifications for positive updates
+    create_with_push(
       user: package.user,
       package: package,
       title: "Package #{package.code} Resubmitted Successfully",
@@ -166,8 +201,102 @@ class Notification < ApplicationRecord
     )
   end
 
+  # NEW: ADDITIONAL PACKAGE NOTIFICATION METHODS WITH PUSH
+  def self.create_package_delivered(package:)
+    create_with_push(
+      user: package.user,
+      package: package,
+      title: "Package Delivered!",
+      message: "Your package #{package.code} has been delivered successfully.",
+      notification_type: 'package_delivered',
+      priority: 'high',
+      icon: 'check-circle',
+      action_url: "/track/#{package.code}"
+    )
+  end
+
+  def self.create_package_ready(package:)
+    create_with_push(
+      user: package.user,
+      package: package,
+      title: "Package Ready for Pickup",
+      message: "Package #{package.code} is ready for collection.",
+      notification_type: 'package_ready',
+      priority: 'normal',
+      icon: 'clock',
+      action_url: "/track/#{package.code}"
+    )
+  end
+
+  def self.create_payment_reminder(package:)
+    create_with_push(
+      user: package.user,
+      package: package,
+      title: "Payment Due",
+      message: "Package #{package.code} payment is due. Total: $#{package.total_amount}",
+      notification_type: 'payment_reminder',
+      priority: 'normal',
+      icon: 'credit-card',
+      action_url: "/packages/#{package.id}/payment"
+    )
+  end
+
+  def self.create_payment_failed(package:, reason: nil)
+    message = reason ? 
+      "Payment for package #{package.code} failed: #{reason}. Please update payment method." :
+      "Payment for package #{package.code} failed. Please update payment method."
+    
+    create_with_push(
+      user: package.user,
+      package: package,
+      title: "Payment Failed",
+      message: message,
+      notification_type: 'payment_failed',
+      priority: 'high',
+      icon: 'x-circle',
+      action_url: "/packages/#{package.id}/payment"
+    )
+  end
+
+  # NEW: GENERAL NOTIFICATION METHODS
+  def self.create_broadcast_notification(title, message, user_scope = User.all, options = {})
+    notifications_created = 0
+    
+    user_scope.find_each do |user|
+      create_with_push({
+        user: user,
+        title: title,
+        message: message,
+        notification_type: options[:type] || 'general',
+        priority: options[:priority] || 'normal',
+        icon: options[:icon] || 'bell',
+        action_url: options[:action_url],
+        expires_at: options[:expires_at]
+      })
+      
+      notifications_created += 1
+    end
+    
+    Rails.logger.info "Broadcast sent to #{notifications_created} users"
+    notifications_created
+  end
+
+  def self.create_user_notification(user, title, message, options = {})
+    create_with_push({
+      user: user,
+      title: title,
+      message: message,
+      notification_type: options[:type] || 'general',
+      priority: options[:priority] || 'normal',
+      icon: options[:icon] || 'bell',
+      action_url: options[:action_url],
+      expires_at: options[:expires_at]
+    })
+  end
+
   private
 
+  # EXISTING CALLBACK METHODS (PRESERVED)
   def schedule_delivery
     # Schedule background job to deliver the notification
     DeliverNotificationJob.perform_later(self) if deliverable?
@@ -178,5 +307,28 @@ class Notification < ApplicationRecord
       # Retry failed notifications after some time
       RetryFailedNotificationJob.perform_in(30.minutes, self.id)
     end
+  end
+
+  # NEW: REAL-TIME BROADCAST METHOD
+  def broadcast_to_user
+    # Real-time update via ActionCable
+    ActionCable.server.broadcast(
+      "user_notifications_#{user.id}",
+      {
+        type: 'new_notification',
+        notification: {
+          id: id,
+          title: title,
+          message: message,
+          notification_type: notification_type,
+          priority: priority,
+          read: read,
+          created_at: created_at.iso8601,
+          icon: icon || 'bell',
+          package_code: package_code
+        },
+        unread_count: user.notifications.unread.count
+      }
+    )
   end
 end
