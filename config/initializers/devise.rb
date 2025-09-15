@@ -88,7 +88,7 @@ Devise.setup do |config|
     ]
     
     # 🔥 CRITICAL: NO EXPIRATION - Tokens never expire
-    jwt.expiration_time = nil
+    jwt.expiration_time = 10.years.to_i
     jwt.algorithm = 'HS256'
     
     # Add debugging for JWT operations
