@@ -2,73 +2,182 @@
 class PushNotificationService
   require 'net/http'
   require 'json'
+  require 'googleauth'
   
-  EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
-  BATCH_SIZE = 100
+  # Use FCM v1 API (recommended) instead of legacy API
+  FCM_V1_URL = 'https://fcm.googleapis.com/v1/projects/glt-logistics/messages:send'
+  FCM_LEGACY_URL = 'https://fcm.googleapis.com/fcm/send'
+  BATCH_SIZE = 500 # FCM supports up to 500 tokens per request
   
   def initialize
     @failed_tokens = []
   end
   
-  # Send immediate push notification (for real-time experience)
+  # Send immediate push notification
   def send_immediate(notification)
     return unless notification.user.push_tokens.active.any?
     
-    Rails.logger.info "📱 Sending immediate push for notification #{notification.id}"
+    Rails.logger.info "📱 Sending immediate FCM push for notification #{notification.id}"
     
-    tokens = notification.user.push_tokens.active.expo_tokens.pluck(:token)
-    return if tokens.empty?
+    # Get all active FCM tokens
+    fcm_tokens = notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+    return if fcm_tokens.empty?
     
-    messages = build_push_messages(notification, tokens)
-    send_to_expo(messages)
+    send_to_fcm(notification, fcm_tokens)
     
     notification.mark_as_delivered!
     cleanup_failed_tokens
     
   rescue => e
-    Rails.logger.error "❌ Immediate push failed for notification #{notification.id}: #{e.message}"
+    Rails.logger.error "❌ Immediate FCM push failed for notification #{notification.id}: #{e.message}"
     notification.mark_as_failed!
   end
   
   # Batch send for multiple notifications
   def send_batch(notifications)
-    expo_messages = []
-    
     notifications.each do |notification|
-      tokens = notification.user.push_tokens.active.expo_tokens.pluck(:token)
-      next if tokens.empty?
+      fcm_tokens = notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+      next if fcm_tokens.empty?
       
-      messages = build_push_messages(notification, tokens)
-      expo_messages.concat(messages)
-      
-      # Process in batches to avoid overwhelming the service
-      if expo_messages.size >= BATCH_SIZE
-        send_to_expo(expo_messages)
-        expo_messages = []
-      end
+      send_to_fcm(notification, fcm_tokens)
     end
     
-    # Send remaining messages
-    send_to_expo(expo_messages) if expo_messages.any?
     cleanup_failed_tokens
   end
   
   private
   
-  def build_push_messages(notification, tokens)
-    tokens.map do |token|
-      {
-        to: token,
-        title: notification.title,
-        body: notification.message,
-        data: build_notification_data(notification),
-        sound: determine_sound(notification),
-        badge: notification.user.notifications.unread.count,
-        priority: determine_priority(notification),
-        categoryId: determine_category(notification),
-        channelId: 'default'
-      }
+  def send_to_fcm(notification, tokens)
+    return if tokens.empty?
+    
+    Rails.logger.info "🔥 Sending #{tokens.size} FCM notifications"
+    
+    # Use multicast for multiple tokens (more efficient)
+    if tokens.size > 1
+      send_fcm_multicast(notification, tokens)
+    else
+      send_fcm_single(notification, tokens.first)
     end
+    
+  rescue => e
+    Rails.logger.error "❌ FCM send error: #{e.message}"
+    raise e
+  end
+  
+  # Send to multiple tokens at once (FCM v1 multicast)
+  def send_fcm_multicast(notification, tokens)
+    # Split into batches of 500 (FCM limit)
+    tokens.each_slice(BATCH_SIZE) do |token_batch|
+      payload = {
+        message: {
+          tokens: token_batch,
+          notification: build_fcm_notification(notification),
+          data: build_notification_data(notification).transform_values(&:to_s),
+          android: build_android_config(notification),
+          apns: build_apns_config(notification)
+        }
+      }
+      
+      send_fcm_request(payload, token_batch)
+    end
+  end
+  
+  # Send to single token
+  def send_fcm_single(notification, token)
+    payload = {
+      message: {
+        token: token,
+        notification: build_fcm_notification(notification),
+        data: build_notification_data(notification).transform_values(&:to_s),
+        android: build_android_config(notification),
+        apns: build_apns_config(notification)
+      }
+    }
+    
+    send_fcm_request(payload, [token])
+  end
+  
+  def send_fcm_request(payload, tokens)
+    uri = URI(FCM_V1_URL)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    http.read_timeout = 30
+    
+    request = Net::HTTP::Post.new(uri)
+    request['Authorization'] = "Bearer #{get_access_token}"
+    request['Content-Type'] = 'application/json'
+    request.body = payload.to_json
+    
+    response = http.request(request)
+    
+    if response.code == '200'
+      response_data = JSON.parse(response.body)
+      handle_fcm_v1_response(response_data, tokens)
+      Rails.logger.info "✅ FCM notifications sent successfully"
+    else
+      Rails.logger.error "❌ FCM push failed: #{response.code} - #{response.body}"
+      
+      # Mark tokens as potentially failed
+      if response.code.to_i >= 400
+        @failed_tokens.concat(tokens)
+      end
+      
+      raise "FCM push service error: #{response.code}"
+    end
+    
+  rescue Net::TimeoutError => e
+    Rails.logger.error "❌ FCM timeout: #{e.message}"
+    raise e
+  rescue => e
+    Rails.logger.error "❌ FCM request error: #{e.message}"
+    raise e
+  end
+  
+  def build_fcm_notification(notification)
+    {
+      title: notification.title,
+      body: notification.message,
+      image: notification.image_url # if you have images
+    }
+  end
+  
+  def build_android_config(notification)
+    {
+      notification: {
+        icon: 'notification_icon',
+        color: '#7c3aed',
+        sound: determine_sound(notification),
+        channel_id: determine_channel_id(notification),
+        priority: determine_android_priority(notification),
+        default_sound: determine_sound(notification) == 'default',
+        default_vibrate_timings: true,
+        default_light_settings: true
+      },
+      priority: 'high',
+      ttl: '3600s' # 1 hour TTL
+    }
+  end
+  
+  def build_apns_config(notification)
+    {
+      payload: {
+        aps: {
+          alert: {
+            title: notification.title,
+            body: notification.message
+          },
+          sound: determine_sound(notification),
+          badge: notification.user.notifications.unread.count,
+          category: determine_category(notification),
+          'content-available': 1,
+          'mutable-content': 1
+        }
+      },
+      headers: {
+        'apns-priority': determine_apns_priority(notification),
+        'apns-expiration': (Time.current + 1.hour).to_i.to_s
+      }
+    }
   end
   
   def build_notification_data(notification)
@@ -78,7 +187,6 @@ class PushNotificationService
       created_at: notification.created_at.iso8601
     }
     
-    # Add specific data based on notification type
     case notification.notification_type
     when 'package_update', 'package_delivered', 'package_ready'
       if notification.package
@@ -105,14 +213,34 @@ class PushNotificationService
     end
   end
   
-  def determine_priority(notification)
-    case notification.priority.to_s
-    when 'urgent'
-      'high'
-    when 'high'
-      'normal'
+  def determine_channel_id(notification)
+    case notification.notification_type
+    when 'package_update', 'package_delivered'
+      'packages'
+    when 'payment_reminder', 'payment_failed'
+      'urgent'
     else
       'default'
+    end
+  end
+  
+  def determine_android_priority(notification)
+    case notification.priority.to_s
+    when 'urgent'
+      'max'
+    when 'high'
+      'high'
+    else
+      'default'
+    end
+  end
+  
+  def determine_apns_priority(notification)
+    case notification.priority.to_s
+    when 'urgent'
+      '10'
+    else
+      '5'
     end
   end
   
@@ -125,64 +253,66 @@ class PushNotificationService
     end
   end
   
-  def send_to_expo(messages)
-    return if messages.empty?
-    
-    uri = URI(EXPO_PUSH_URL)
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
-    http.read_timeout = 30
-    
-    request = Net::HTTP::Post.new(uri)
-    request['Accept'] = 'application/json'
-    request['Content-Type'] = 'application/json'
-    request.body = messages.to_json
-    
-    Rails.logger.info "📱 Sending #{messages.size} push notifications to Expo"
-    
-    response = http.request(request)
-    
-    if response.code == '200'
-      response_data = JSON.parse(response.body)
-      handle_expo_response(response_data, messages)
-      Rails.logger.info "✅ Push notifications sent successfully"
-    else
-      Rails.logger.error "❌ Expo push failed: #{response.code} - #{response.body}"
-      raise "Expo push service error: #{response.code}"
-    end
-    
-  rescue Net::TimeoutError => e
-    Rails.logger.error "❌ Push notification timeout: #{e.message}"
-    raise e
-  rescue => e
-    Rails.logger.error "❌ Push notification error: #{e.message}"
-    raise e
-  end
-  
-  def handle_expo_response(response_data, messages)
-    return unless response_data['data']
-    
-    response_data['data'].each_with_index do |result, index|
-      next unless result['status'] == 'error'
-      
-      token = messages[index]['to']
-      error_type = result['details']['error']
-      
-      case error_type
-      when 'DeviceNotRegistered', 'InvalidCredentials'
-        @failed_tokens << token
-        Rails.logger.warn "🔄 Marking token as failed: #{token} - #{error_type}"
-      else
-        Rails.logger.warn "⚠️ Push error for token #{token}: #{error_type}"
+  def handle_fcm_v1_response(response_data, tokens)
+    # Handle multicast response
+    if response_data['responses']
+      response_data['responses'].each_with_index do |result, index|
+        next unless result['error']
+        
+        token = tokens[index]
+        error_code = result['error']['code']
+        error_message = result['error']['message']
+        
+        case error_code
+        when 'UNREGISTERED', 'INVALID_ARGUMENT'
+          @failed_tokens << token
+          Rails.logger.warn "🔄 Marking FCM token as failed: #{token[0..20]}... - #{error_code}"
+        else
+          Rails.logger.warn "⚠️ FCM error for token #{token[0..20]}...: #{error_code} - #{error_message}"
+        end
       end
     end
+    
+    # Handle single message response
+    if response_data['error']
+      error_code = response_data['error']['code']
+      @failed_tokens.concat(tokens)
+      Rails.logger.warn "🔄 Marking FCM tokens as failed: #{error_code}"
+    end
+  end
+  
+  def get_access_token
+    # Use service account for FCM v1 API
+    authorizer = Google::Auth::ServiceAccountCredentials.make_creds(
+      json_key_io: StringIO.new(service_account_json),
+      scope: 'https://www.googleapis.com/auth/firebase.messaging'
+    )
+    
+    authorizer.fetch_access_token!['access_token']
+  rescue => e
+    Rails.logger.error "❌ Failed to get FCM access token: #{e.message}"
+    raise "FCM authentication failed"
+  end
+  
+  def service_account_json
+    # Try multiple sources for service account JSON
+    json = Rails.application.credentials.firebase_service_account_json ||
+           Rails.application.credentials.dig(:firebase, :service_account_json) ||
+           ENV['FIREBASE_SERVICE_ACCOUNT_JSON']
+    
+    if json.nil?
+      raise "Firebase service account JSON not configured"
+    end
+    
+    # Handle both string and hash formats
+    json.is_a?(String) ? json : json.to_json
   end
   
   def cleanup_failed_tokens
     return if @failed_tokens.empty?
     
     PushToken.where(token: @failed_tokens).find_each(&:mark_as_failed!)
-    Rails.logger.info "🧹 Cleaned up #{@failed_tokens.size} failed tokens"
+    Rails.logger.info "🧹 Cleaned up #{@failed_tokens.size} failed FCM tokens"
     @failed_tokens = []
   end
 end
