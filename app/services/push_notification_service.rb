@@ -1,8 +1,10 @@
 # app/services/push_notification_service.rb
 class PushNotificationService
   require 'net/http'
+  require 'net/https'
   require 'json'
   require 'googleauth'
+  require 'timeout'
   
   # Use FCM v1 API (recommended) instead of legacy API
   FCM_V1_URL = 'https://fcm.googleapis.com/v1/projects/glt-logistics/messages:send'
@@ -35,6 +37,7 @@ class PushNotificationService
     
   rescue => e
     Rails.logger.error "Immediate FCM push failed for notification #{notification.id}: #{e.message}"
+    Rails.logger.error "Error details: #{e.class.name} - #{e.backtrace.first(3).join(', ')}"
     update_notification_status(notification, 'failed')
   end
   
@@ -114,13 +117,19 @@ class PushNotificationService
     http = Net::HTTP.new(uri.host, uri.port)
     http.use_ssl = true
     http.read_timeout = 30
+    http.open_timeout = 30
     
     request = Net::HTTP::Post.new(uri)
     request['Authorization'] = "Bearer #{get_access_token}"
     request['Content-Type'] = 'application/json'
     request.body = payload.to_json
     
-    response = http.request(request)
+    response = nil
+    
+    # Use Timeout module instead of Net::TimeoutError
+    Timeout::timeout(30) do
+      response = http.request(request)
+    end
     
     if response.code == '200'
       response_data = JSON.parse(response.body)
@@ -137,7 +146,7 @@ class PushNotificationService
       raise "FCM push service error: #{response.code}"
     end
     
-  rescue Net::TimeoutError => e
+  rescue Timeout::Error => e
     Rails.logger.error "FCM timeout: #{e.message}"
     raise e
   rescue => e
@@ -317,36 +326,70 @@ class PushNotificationService
     authorizer.fetch_access_token!['access_token']
   rescue => e
     Rails.logger.error "Failed to get FCM access token: #{e.message}"
+    Rails.logger.error "Error class: #{e.class.name}"
+    Rails.logger.error "Backtrace: #{e.backtrace.first(3).join(', ')}"
     raise "FCM authentication failed: #{e.message}"
   end
   
   def service_account_json
-    # Get Firebase service account JSON from credentials
-    firebase_config = Rails.application.credentials.firebase
+    # FIXED: Access the correct credentials key based on your screenshot
+    firebase_config = Rails.application.credentials.firebase_service_account_json
     
     if firebase_config.nil?
-      raise "Firebase credentials not configured"
+      Rails.logger.error "Firebase service account JSON not found in credentials"
+      raise "Firebase service account JSON not configured in Rails credentials"
     end
     
-    # Convert hash to JSON string if needed
-    firebase_config.is_a?(String) ? firebase_config : firebase_config.to_json
+    # The credential should already be a JSON string
+    json_string = firebase_config.to_s.strip
+    
+    # Validate that we have valid JSON
+    begin
+      parsed = JSON.parse(json_string)
+      
+      # Check for required Firebase fields
+      required_fields = %w[type project_id private_key client_email]
+      missing_fields = required_fields.select { |field| parsed[field].blank? }
+      
+      if missing_fields.any?
+        Rails.logger.error "Firebase credentials missing fields: #{missing_fields.join(', ')}"
+        raise "Firebase credentials missing required fields: #{missing_fields.join(', ')}"
+      end
+      
+      Rails.logger.info "Firebase service account JSON validated successfully"
+      json_string
+      
+    rescue JSON::ParserError => e
+      Rails.logger.error "Failed to parse Firebase service account JSON: #{e.message}"
+      Rails.logger.error "JSON content preview: #{json_string[0..100]}..."
+      raise "Firebase service account JSON is not valid JSON: #{e.message}"
+    end
   rescue => e
-    Rails.logger.error "Failed to get service account JSON: #{e.message}"
-    raise "Firebase service account JSON not configured properly"
+    Rails.logger.error "Failed to get Firebase service account JSON: #{e.message}"
+    raise "Firebase service account JSON not configured properly: #{e.message}"
   end
   
   def update_notification_status(notification, status)
     # Try different methods to update notification status
-    if notification.respond_to?(:mark_as_delivered!) && status == 'delivered'
-      notification.mark_as_delivered!
-    elsif notification.respond_to?(:mark_as_failed!) && status == 'failed'
-      notification.mark_as_failed!
-    elsif notification.respond_to?(:delivered=) && status == 'delivered'
-      notification.update(delivered: true, delivered_at: Time.current)
-    elsif notification.respond_to?(:status=)
-      notification.update(status: status)
-    else
-      Rails.logger.warn "Could not update notification #{notification.id} status to #{status}"
+    case status
+    when 'delivered'
+      if notification.respond_to?(:mark_as_delivered!)
+        notification.mark_as_delivered!
+      elsif notification.respond_to?(:delivered=)
+        notification.update(delivered: true, delivered_at: Time.current)
+      elsif notification.respond_to?(:status=)
+        notification.update(status: 'sent')
+      else
+        notification.update_column(:status, 'sent') if notification.respond_to?(:update_column)
+      end
+    when 'failed'
+      if notification.respond_to?(:mark_as_failed!)
+        notification.mark_as_failed!
+      elsif notification.respond_to?(:status=)
+        notification.update(status: 'failed')
+      else
+        notification.update_column(:status, 'failed') if notification.respond_to?(:update_column)
+      end
     end
   rescue => e
     Rails.logger.error "Failed to update notification status: #{e.message}"
