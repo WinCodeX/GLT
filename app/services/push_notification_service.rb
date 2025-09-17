@@ -6,7 +6,6 @@ class PushNotificationService
   
   # Use FCM v1 API (recommended) instead of legacy API
   FCM_V1_URL = 'https://fcm.googleapis.com/v1/projects/glt-logistics/messages:send'
-  FCM_LEGACY_URL = 'https://fcm.googleapis.com/fcm/send'
   BATCH_SIZE = 500 # FCM supports up to 500 tokens per request
   
   def initialize
@@ -15,28 +14,41 @@ class PushNotificationService
   
   # Send immediate push notification
   def send_immediate(notification)
-    return unless notification.user.push_tokens.active.any?
+    return unless notification.user&.push_tokens&.active&.any?
     
-    Rails.logger.info "📱 Sending immediate FCM push for notification #{notification.id}"
+    Rails.logger.info "Sending immediate FCM push for notification #{notification.id}"
     
-    # Get all active FCM tokens
-    fcm_tokens = notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+    # Get all active FCM tokens - remove platform filter if column doesn't exist
+    fcm_tokens = if notification.user.push_tokens.column_names.include?('platform')
+      notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+    else
+      notification.user.push_tokens.active.pluck(:token)
+    end
+    
     return if fcm_tokens.empty?
     
     send_to_fcm(notification, fcm_tokens)
     
-    notification.mark_as_delivered!
+    # Update notification status safely
+    update_notification_status(notification, 'delivered')
     cleanup_failed_tokens
     
   rescue => e
-    Rails.logger.error "❌ Immediate FCM push failed for notification #{notification.id}: #{e.message}"
-    notification.mark_as_failed!
+    Rails.logger.error "Immediate FCM push failed for notification #{notification.id}: #{e.message}"
+    update_notification_status(notification, 'failed')
   end
   
   # Batch send for multiple notifications
   def send_batch(notifications)
     notifications.each do |notification|
-      fcm_tokens = notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+      next unless notification.user&.push_tokens&.active&.any?
+      
+      fcm_tokens = if notification.user.push_tokens.column_names.include?('platform')
+        notification.user.push_tokens.active.where(platform: 'fcm').pluck(:token)
+      else
+        notification.user.push_tokens.active.pluck(:token)
+      end
+      
       next if fcm_tokens.empty?
       
       send_to_fcm(notification, fcm_tokens)
@@ -50,7 +62,7 @@ class PushNotificationService
   def send_to_fcm(notification, tokens)
     return if tokens.empty?
     
-    Rails.logger.info "🔥 Sending #{tokens.size} FCM notifications"
+    Rails.logger.info "Sending #{tokens.size} FCM notifications"
     
     # Use multicast for multiple tokens (more efficient)
     if tokens.size > 1
@@ -60,7 +72,7 @@ class PushNotificationService
     end
     
   rescue => e
-    Rails.logger.error "❌ FCM send error: #{e.message}"
+    Rails.logger.error "FCM send error: #{e.message}"
     raise e
   end
   
@@ -113,9 +125,9 @@ class PushNotificationService
     if response.code == '200'
       response_data = JSON.parse(response.body)
       handle_fcm_v1_response(response_data, tokens)
-      Rails.logger.info "✅ FCM notifications sent successfully"
+      Rails.logger.info "FCM notifications sent successfully"
     else
-      Rails.logger.error "❌ FCM push failed: #{response.code} - #{response.body}"
+      Rails.logger.error "FCM push failed: #{response.code} - #{response.body}"
       
       # Mark tokens as potentially failed
       if response.code.to_i >= 400
@@ -126,19 +138,25 @@ class PushNotificationService
     end
     
   rescue Net::TimeoutError => e
-    Rails.logger.error "❌ FCM timeout: #{e.message}"
+    Rails.logger.error "FCM timeout: #{e.message}"
     raise e
   rescue => e
-    Rails.logger.error "❌ FCM request error: #{e.message}"
+    Rails.logger.error "FCM request error: #{e.message}"
     raise e
   end
   
   def build_fcm_notification(notification)
-    {
+    base_notification = {
       title: notification.title,
-      body: notification.message,
-      image: notification.image_url # if you have images
+      body: notification.message
     }
+    
+    # Only add image if the method exists and returns a value
+    if notification.respond_to?(:image_url) && notification.image_url.present?
+      base_notification[:image] = notification.image_url
+    end
+    
+    base_notification
   end
   
   def build_android_config(notification)
@@ -159,6 +177,12 @@ class PushNotificationService
   end
   
   def build_apns_config(notification)
+    badge_count = if notification.user.respond_to?(:notifications)
+      notification.user.notifications.where(read: false).count rescue 0
+    else
+      0
+    end
+    
     {
       payload: {
         aps: {
@@ -167,7 +191,7 @@ class PushNotificationService
             body: notification.message
           },
           sound: determine_sound(notification),
-          badge: notification.user.notifications.unread.count,
+          badge: badge_count,
           category: determine_category(notification),
           'content-available': 1,
           'mutable-content': 1
@@ -189,14 +213,16 @@ class PushNotificationService
     
     case notification.notification_type
     when 'package_update', 'package_delivered', 'package_ready'
-      if notification.package
+      if notification.respond_to?(:package) && notification.package
         data.merge!({
           package_id: notification.package.id.to_s,
           package_code: notification.package.code
         })
       end
     when 'payment_reminder', 'payment_failed'
-      data[:action_url] = notification.action_url if notification.action_url
+      if notification.respond_to?(:action_url) && notification.action_url
+        data[:action_url] = notification.action_url
+      end
     end
     
     data
@@ -266,9 +292,9 @@ class PushNotificationService
         case error_code
         when 'UNREGISTERED', 'INVALID_ARGUMENT'
           @failed_tokens << token
-          Rails.logger.warn "🔄 Marking FCM token as failed: #{token[0..20]}... - #{error_code}"
+          Rails.logger.warn "Marking FCM token as failed: #{token[0..20]}... - #{error_code}"
         else
-          Rails.logger.warn "⚠️ FCM error for token #{token[0..20]}...: #{error_code} - #{error_message}"
+          Rails.logger.warn "FCM error for token #{token[0..20]}...: #{error_code} - #{error_message}"
         end
       end
     end
@@ -277,7 +303,7 @@ class PushNotificationService
     if response_data['error']
       error_code = response_data['error']['code']
       @failed_tokens.concat(tokens)
-      Rails.logger.warn "🔄 Marking FCM tokens as failed: #{error_code}"
+      Rails.logger.warn "Marking FCM tokens as failed: #{error_code}"
     end
   end
   
@@ -290,29 +316,63 @@ class PushNotificationService
     
     authorizer.fetch_access_token!['access_token']
   rescue => e
-    Rails.logger.error "❌ Failed to get FCM access token: #{e.message}"
-    raise "FCM authentication failed"
+    Rails.logger.error "Failed to get FCM access token: #{e.message}"
+    raise "FCM authentication failed: #{e.message}"
   end
   
   def service_account_json
-    # Try multiple sources for service account JSON
-    json = Rails.application.credentials.firebase_service_account_json ||
-           Rails.application.credentials.dig(:firebase, :service_account_json) ||
-           ENV['FIREBASE_SERVICE_ACCOUNT_JSON']
+    # Get Firebase service account JSON from credentials
+    firebase_config = Rails.application.credentials.firebase
     
-    if json.nil?
-      raise "Firebase service account JSON not configured"
+    if firebase_config.nil?
+      raise "Firebase credentials not configured"
     end
     
-    # Handle both string and hash formats
-    json.is_a?(String) ? json : json.to_json
+    # Convert hash to JSON string if needed
+    firebase_config.is_a?(String) ? firebase_config : firebase_config.to_json
+  rescue => e
+    Rails.logger.error "Failed to get service account JSON: #{e.message}"
+    raise "Firebase service account JSON not configured properly"
+  end
+  
+  def update_notification_status(notification, status)
+    # Try different methods to update notification status
+    if notification.respond_to?(:mark_as_delivered!) && status == 'delivered'
+      notification.mark_as_delivered!
+    elsif notification.respond_to?(:mark_as_failed!) && status == 'failed'
+      notification.mark_as_failed!
+    elsif notification.respond_to?(:delivered=) && status == 'delivered'
+      notification.update(delivered: true, delivered_at: Time.current)
+    elsif notification.respond_to?(:status=)
+      notification.update(status: status)
+    else
+      Rails.logger.warn "Could not update notification #{notification.id} status to #{status}"
+    end
+  rescue => e
+    Rails.logger.error "Failed to update notification status: #{e.message}"
   end
   
   def cleanup_failed_tokens
     return if @failed_tokens.empty?
     
-    PushToken.where(token: @failed_tokens).find_each(&:mark_as_failed!)
-    Rails.logger.info "🧹 Cleaned up #{@failed_tokens.size} failed FCM tokens"
+    # Try different methods to mark tokens as failed
+    @failed_tokens.each do |token|
+      push_token = PushToken.find_by(token: token)
+      next unless push_token
+      
+      if push_token.respond_to?(:mark_as_failed!)
+        push_token.mark_as_failed!
+      elsif push_token.respond_to?(:active=)
+        push_token.update(active: false)
+      else
+        Rails.logger.warn "Could not mark token as failed: #{token[0..20]}..."
+      end
+    end
+    
+    Rails.logger.info "Cleaned up #{@failed_tokens.size} failed FCM tokens"
+    @failed_tokens = []
+  rescue => e
+    Rails.logger.error "Failed to cleanup tokens: #{e.message}"
     @failed_tokens = []
   end
 end
