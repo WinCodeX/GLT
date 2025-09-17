@@ -93,14 +93,26 @@ module Api
               :title, :message, :notification_type, :priority, :channel, 
               :expires_at, :action_url, :icon, :user_id, :package_id
             )
+            
+            # Get push notification preference (default to true)
+            send_push = params.dig(:notification, :send_push_notification) != false
 
             @notification = Notification.new(notification_params)
             
             if @notification.save
+              Rails.logger.info "📝 Created notification #{@notification.id} for user #{@notification.user_id}"
+              
+              # Send push notification if requested and user has push tokens
+              if send_push && should_send_push_notification?(@notification)
+                send_push_notification_async(@notification)
+              end
+              
               render json: {
                 success: true,
                 message: 'Notification created successfully',
-                data: simple_serialize(@notification)
+                data: simple_serialize(@notification).merge({
+                  push_sent: send_push && @notification.user&.push_tokens&.active&.any?
+                })
               }, status: :created
             else
               render json: {
@@ -184,6 +196,9 @@ module Api
               :title, :message, :notification_type, :priority, :channel,
               :expires_at, :action_url, :icon, user_ids: []
             )
+            
+            # Get push notification preference (default to true)
+            send_push = params.dig(:broadcast, :send_push_notification) != false
 
             target_users = if broadcast_params[:user_ids].present?
               User.where(id: broadcast_params[:user_ids])
@@ -192,9 +207,11 @@ module Api
             end
 
             notifications_created = 0
+            push_notifications_sent = 0
+            created_notifications = []
             
             target_users.find_each do |user|
-              user.notifications.create!(
+              notification = user.notifications.create!(
                 title: broadcast_params[:title],
                 message: broadcast_params[:message],
                 notification_type: broadcast_params[:notification_type] || 'general',
@@ -204,15 +221,32 @@ module Api
                 action_url: broadcast_params[:action_url],
                 icon: broadcast_params[:icon] || 'bell'
               )
+              
               notifications_created += 1
+              created_notifications << notification
+              
+              # Send push notification if requested and user has push tokens
+              if send_push && should_send_push_notification?(notification)
+                send_push_notification_async(notification)
+                push_notifications_sent += 1
+              end
             end
+
+            # Optional: Send batch push notifications for better performance
+            # if send_push && created_notifications.any?
+            #   send_batch_push_notifications_async(created_notifications)
+            # end
+
+            Rails.logger.info "📢 Broadcast completed: #{notifications_created} notifications created, #{push_notifications_sent} push notifications sent"
 
             render json: {
               success: true,
               message: "Broadcast sent to #{notifications_created} users",
               data: {
                 notifications_created: notifications_created,
-                target_users_count: target_users.count
+                push_notifications_sent: push_notifications_sent,
+                target_users_count: target_users.count,
+                push_enabled: send_push
               }
             }, status: :created
             
@@ -222,6 +256,42 @@ module Api
             render json: {
               success: false,
               message: 'Failed to broadcast notification',
+              error: Rails.env.development? ? e.message : 'Internal server error'
+            }, status: :internal_server_error
+          end
+        end
+
+        # POST /api/v1/admin/notifications/:id/resend_push
+        def resend_push
+          begin
+            @notification = Notification.find(params[:id])
+            
+            if should_send_push_notification?(@notification)
+              send_push_notification_async(@notification)
+              
+              render json: {
+                success: true,
+                message: 'Push notification resent successfully',
+                data: simple_serialize(@notification)
+              }, status: :ok
+            else
+              render json: {
+                success: false,
+                message: 'Cannot send push notification - user has no active push tokens'
+              }, status: :unprocessable_entity
+            end
+            
+          rescue ActiveRecord::RecordNotFound
+            render json: {
+              success: false,
+              message: 'Notification not found'
+            }, status: :not_found
+          rescue => e
+            Rails.logger.error "Admin::NotificationsController#resend_push error: #{e.message}"
+            
+            render json: {
+              success: false,
+              message: 'Failed to resend push notification',
               error: Rails.env.development? ? e.message : 'Internal server error'
             }, status: :internal_server_error
           end
@@ -244,6 +314,60 @@ module Api
               success: false,
               message: 'Access denied. Admin privileges required.'
             }, status: :forbidden
+          end
+        end
+
+        def should_send_push_notification?(notification)
+          return false unless notification.user
+          return false unless notification.user.push_tokens.active.any?
+          
+          # Optional: Add additional conditions
+          # return false if notification.channel == 'email_only'
+          # return false if notification.user.push_notifications_disabled?
+          
+          true
+        end
+
+        def send_push_notification_async(notification)
+          # Send push notification in background to avoid blocking the request
+          begin
+            Rails.logger.info "🚀 Sending push notification for notification #{notification.id}"
+            
+            # Use a background job for better performance (recommended)
+            # PushNotificationJob.perform_later(notification.id)
+            
+            # Or send immediately (current approach)
+            PushNotificationService.new.send_immediate(notification)
+            
+            Rails.logger.info "✅ Push notification sent for notification #{notification.id}"
+            
+          rescue => e
+            # Don't fail the main request if push notification fails
+            Rails.logger.error "❌ Failed to send push notification for notification #{notification.id}: #{e.message}"
+            
+            # Optional: Mark notification as failed or update status
+            # notification.update_column(:push_failed, true)
+          end
+        end
+
+        def send_batch_push_notifications_async(notifications)
+          # Send batch push notifications for better performance
+          begin
+            eligible_notifications = notifications.select { |n| should_send_push_notification?(n) }
+            return if eligible_notifications.empty?
+            
+            Rails.logger.info "🚀 Sending batch push notifications for #{eligible_notifications.size} notifications"
+            
+            # Use background job for batch processing
+            # BatchPushNotificationJob.perform_later(eligible_notifications.map(&:id))
+            
+            # Or send immediately
+            PushNotificationService.new.send_batch(eligible_notifications)
+            
+            Rails.logger.info "✅ Batch push notifications sent for #{eligible_notifications.size} notifications"
+            
+          rescue => e
+            Rails.logger.error "❌ Failed to send batch push notifications: #{e.message}"
           end
         end
 
@@ -279,7 +403,8 @@ module Api
                 name: user.name || 'Unknown User',
                 email: user.email,
                 phone: user.phone,
-                role: user.role || 'user'
+                role: user.role || 'user',
+                has_push_tokens: user.push_tokens.active.any?
               }
             else
               {
@@ -287,7 +412,8 @@ module Api
                 name: 'Deleted User',
                 email: nil,
                 phone: nil,
-                role: 'deleted'
+                role: 'deleted',
+                has_push_tokens: false
               }
             end
           else
@@ -296,7 +422,8 @@ module Api
               name: 'System',
               email: nil,
               phone: nil,
-              role: 'system'
+              role: 'system',
+              has_push_tokens: false
             }
           end
         rescue
@@ -305,7 +432,8 @@ module Api
             name: 'Unknown',
             email: nil,
             phone: nil,
-            role: 'unknown'
+            role: 'unknown',
+            has_push_tokens: false
           }
         end
 
