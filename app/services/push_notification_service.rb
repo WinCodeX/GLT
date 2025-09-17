@@ -168,20 +168,23 @@ class PushNotificationService
     base_notification
   end
   
+  # FIXED: Corrected Android config structure for FCM v1 API
   def build_android_config(notification)
     {
+      # Priority goes at the android level, not in notification
+      priority: determine_fcm_priority(notification),
+      ttl: '3600s',
       notification: {
         icon: 'notification_icon',
         color: '#7c3aed',
         sound: determine_sound(notification),
         channel_id: determine_channel_id(notification),
-        priority: determine_android_priority(notification),
+        # Removed priority from here - it was causing the error
         default_sound: determine_sound(notification) == 'default',
         default_vibrate_timings: true,
-        default_light_settings: true
-      },
-      priority: 'high',
-      ttl: '3600s' # 1 hour TTL
+        default_light_settings: true,
+        notification_priority: determine_notification_priority(notification)
+      }
     }
   end
   
@@ -259,14 +262,25 @@ class PushNotificationService
     end
   end
   
-  def determine_android_priority(notification)
+  # FCM message priority (for the android section)
+  def determine_fcm_priority(notification)
     case notification.priority.to_s
-    when 'urgent'
-      'max'
-    when 'high'
+    when 'urgent', 'high'
       'high'
     else
-      'default'
+      'normal'
+    end
+  end
+  
+  # Android notification priority (for the notification section)
+  def determine_notification_priority(notification)
+    case notification.priority.to_s
+    when 'urgent'
+      'PRIORITY_MAX'
+    when 'high'
+      'PRIORITY_HIGH'
+    else
+      'PRIORITY_DEFAULT'
     end
   end
   
@@ -332,7 +346,7 @@ class PushNotificationService
   end
   
   def service_account_json
-    # FIXED: Access the correct credentials key based on your screenshot
+    # Access the correct credentials key based on your screenshot
     firebase_config = Rails.application.credentials.firebase_service_account_json
     
     if firebase_config.nil?
@@ -369,30 +383,32 @@ class PushNotificationService
     raise "Firebase service account JSON not configured properly: #{e.message}"
   end
   
+  # FIXED: Safer notification status update without background jobs
   def update_notification_status(notification, status)
-    # Try different methods to update notification status
-    case status
-    when 'delivered'
-      if notification.respond_to?(:mark_as_delivered!)
-        notification.mark_as_delivered!
-      elsif notification.respond_to?(:delivered=)
-        notification.update(delivered: true, delivered_at: Time.current)
-      elsif notification.respond_to?(:status=)
-        notification.update(status: 'sent')
-      else
-        notification.update_column(:status, 'sent') if notification.respond_to?(:update_column)
+    begin
+      case status
+      when 'delivered'
+        if notification.respond_to?(:delivered=)
+          notification.update_columns(
+            delivered: true, 
+            delivered_at: Time.current,
+            status: 'sent'
+          )
+        elsif notification.respond_to?(:status=)
+          notification.update_column(:status, 'sent')
+        end
+      when 'failed'
+        if notification.respond_to?(:status=)
+          notification.update_column(:status, 'failed')
+        end
       end
-    when 'failed'
-      if notification.respond_to?(:mark_as_failed!)
-        notification.mark_as_failed!
-      elsif notification.respond_to?(:status=)
-        notification.update(status: 'failed')
-      else
-        notification.update_column(:status, 'failed') if notification.respond_to?(:update_column)
-      end
+      
+      Rails.logger.info "Updated notification #{notification.id} status to #{status}"
+      
+    rescue => e
+      Rails.logger.error "Failed to update notification status: #{e.message}"
+      # Don't re-raise to avoid breaking the main flow
     end
-  rescue => e
-    Rails.logger.error "Failed to update notification status: #{e.message}"
   end
   
   def cleanup_failed_tokens
@@ -403,12 +419,16 @@ class PushNotificationService
       push_token = PushToken.find_by(token: token)
       next unless push_token
       
-      if push_token.respond_to?(:mark_as_failed!)
-        push_token.mark_as_failed!
-      elsif push_token.respond_to?(:active=)
-        push_token.update(active: false)
-      else
-        Rails.logger.warn "Could not mark token as failed: #{token[0..20]}..."
+      begin
+        if push_token.respond_to?(:mark_as_failed!)
+          push_token.mark_as_failed!
+        elsif push_token.respond_to?(:active=)
+          push_token.update(active: false)
+        else
+          Rails.logger.warn "Could not mark token as failed: #{token[0..20]}..."
+        end
+      rescue => e
+        Rails.logger.error "Failed to mark token as failed: #{e.message}"
       end
     end
     
