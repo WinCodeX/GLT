@@ -36,7 +36,7 @@ module Api
 
           Rails.logger.info "Checking #{phone_numbers.length} phone numbers for registration status"
 
-          # Clean and normalize phone numbers using Ruby (database-agnostic)
+          # Clean and normalize phone numbers using unified logic
           normalized_numbers = phone_numbers.map do |number|
             normalize_phone_number(number.to_s)
           end.compact.uniq
@@ -150,58 +150,28 @@ module Api
         matches.uniq
       end
 
-      # Simplified phone number normalization
+      # Unified phone number normalization - matches User model exactly
       def normalize_phone_number(phone_number)
         return nil if phone_number.blank?
         
-        # Remove all non-digit characters
-        digits_only = phone_number.gsub(/\D/, '')
+        # Remove all non-digit characters except +
+        cleaned = phone_number.gsub(/[^\d\+]/, '')
         
-        Rails.logger.debug "Normalizing: '#{phone_number}' -> digits: '#{digits_only}'"
+        Rails.logger.debug "Normalizing: '#{phone_number}' -> cleaned: '#{cleaned}'"
         
-        # Must have at least 8 digits to be valid
-        return nil if digits_only.length < 8
-        
-        # Handle different phone number formats
-        case digits_only.length
-        when 8..9
-          # Short local numbers - add country code (assuming Kenya +254)
-          "+254#{digits_only}"
-        when 10
-          # Could be US (add +1) or other country without country code
-          # For Kenya, might be 07XXXXXXXX format
-          if digits_only.start_with?('07', '01')
-            # Kenyan mobile/landline format
-            "+254#{digits_only[1..-1]}" # Remove leading 0
-          else
-            # Assume US format
-            "+1#{digits_only}"
-          end
-        when 11
-          # Likely has country code already
-          if digits_only.start_with?('1')
-            "+#{digits_only}" # US number
-          elsif digits_only.start_with?('254')
-            "+#{digits_only}" # Kenya number
-          else
-            "+#{digits_only}" # Other country
-          end
-        when 12..15
-          # International format, add + if not present
-          "+#{digits_only}"
+        # Handle Kenyan phone numbers (exact match to User model logic)
+        if cleaned.match(/^0[17]\d{8}$/) # 0712345678
+          "+254#{cleaned[1..-1]}"
+        elsif cleaned.match(/^[17]\d{8}$/) # 712345678
+          "+254#{cleaned}"
+        elsif cleaned.match(/^254[17]\d{8}$/) # 254712345678
+          "+#{cleaned}"
+        elsif cleaned.match(/^\+254[17]\d{8}$/) # +254712345678
+          cleaned
         else
-          # Invalid length
-          Rails.logger.debug "Invalid phone number length: #{digits_only.length} for #{digits_only}"
-          nil
+          # For non-Kenyan numbers, keep original cleaned format
+          cleaned.presence
         end
-      end
-
-      # Alternative simple normalization (digits only)
-      def normalize_phone_simple(phone_number)
-        return nil if phone_number.blank?
-        
-        digits_only = phone_number.gsub(/\D/, '')
-        digits_only.length >= 8 ? digits_only : nil
       end
     end
   end
