@@ -82,12 +82,18 @@ class BusinessActivity < ApplicationRecord
   def self.activities_summary(business:, start_date: 1.month.ago, end_date: Time.current)
     activities = where(business: business, created_at: start_date..end_date)
     
+    # Use standard SQL grouping instead of groupdate gem
+    activities_by_day = activities
+      .group("DATE(created_at)")
+      .count
+      .transform_keys { |date_str| Date.parse(date_str).strftime('%Y-%m-%d') }
+    
     {
       total_activities: activities.count,
       package_activities: activities.package_activities.count,
       staff_activities: activities.staff_activities.count,
       activities_by_type: activities.group(:activity_type).count,
-      activities_by_day: activities.group_by_day(:created_at).count,
+      activities_by_day: activities_by_day,
       recent_activities: activities.recent.limit(10).map(&:summary_json)
     }
   end
@@ -142,6 +148,10 @@ class BusinessActivity < ApplicationRecord
   end
 
   def summary_json
+    # Use full_name instead of name to avoid NoMethodError
+    user_name = user.respond_to?(:full_name) && user.full_name.present? ? user.full_name : user.email
+    target_user_name = target_user&.respond_to?(:full_name) && target_user&.full_name&.present? ? target_user.full_name : target_user&.email
+    
     {
       id: id,
       activity_type: activity_type,
@@ -151,12 +161,12 @@ class BusinessActivity < ApplicationRecord
       activity_color: activity_color,
       user: {
         id: user.id,
-        name: user.name,
-        avatar_url: user.avatar_url
+        name: user_name,
+        avatar_url: user.respond_to?(:avatar_url) ? user.avatar_url : nil
       },
       target_user: target_user ? {
         id: target_user.id,
-        name: target_user.name
+        name: target_user_name
       } : nil,
       package: package ? {
         id: package.id,
@@ -181,35 +191,39 @@ class BusinessActivity < ApplicationRecord
   end
 
   def generate_description
+    # Use full_name instead of name to avoid NoMethodError
+    user_name = user.respond_to?(:full_name) && user.full_name.present? ? user.full_name : user.email
+    target_user_name = target_user&.respond_to?(:full_name) && target_user&.full_name&.present? ? target_user.full_name : target_user&.email
+    
     self.description = case activity_type
     when 'package_created'
       if target_user
-        "#{user.name} created a package for #{target_user.name}"
+        "#{user_name} created a package for #{target_user_name}"
       else
-        "#{user.name} created a package"
+        "#{user_name} created a package"
       end
     when 'package_delivered'
       "Package #{package&.code} was delivered"
     when 'package_cancelled'
       "Package #{package&.code} was cancelled"
     when 'staff_joined'
-      "#{target_user&.name} joined the business"
+      "#{target_user_name} joined the business"
     when 'staff_removed'
-      "#{target_user&.name} was removed from the business"
+      "#{target_user_name} was removed from the business"
     when 'invite_sent'
-      "#{user.name} sent an invite to join the business"
+      "#{user_name} sent an invite to join the business"
     when 'invite_accepted'
-      "#{target_user&.name} accepted the invitation"
+      "#{target_user_name} accepted the invitation"
     when 'business_updated'
-      "#{user.name} updated business information"
+      "#{user_name} updated business information"
     when 'logo_updated'
-      "#{user.name} updated the business logo"
+      "#{user_name} updated the business logo"
     when 'categories_updated'
-      "#{user.name} updated business categories"
+      "#{user_name} updated business categories"
     when 'business_created'
-      "#{user.name} created the business"
+      "#{user_name} created the business"
     else
-      "#{user.name} performed #{activity_type.humanize.downcase}"
+      "#{user_name} performed #{activity_type.humanize.downcase}"
     end
   end
 end
