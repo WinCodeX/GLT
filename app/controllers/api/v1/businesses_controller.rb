@@ -213,14 +213,12 @@ module Api
       end
 
 def staff
-  business = Business.find(params[:id])  # because it's a member route
-
   # owner (role = "owner")
-  owner_ub = business.user_businesses.includes(:user).find_by(role: "owner")
+  owner_ub = @business.user_businesses.includes(:user).find_by(role: "owner")
   owner = owner_ub&.user
 
   # staff members (role = "staff")
-  staff = business.user_businesses.includes(:user).where(role: "staff").map do |ub|
+  staff = @business.user_businesses.includes(:user).where(role: "staff").map do |ub|
     {
       id: ub.user.id,
       name: ub.user.name || ub.user.email,
