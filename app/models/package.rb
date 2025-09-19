@@ -104,7 +104,7 @@ class Package < ApplicationRecord
 
   # Callbacks
   before_create :generate_package_code_and_sequence, :set_initial_deadlines
-  after_create :generate_qr_code_files, :schedule_initial_expiry_job  # ← Add this
+  after_create :generate_qr_code_files, :schedule_initial_expiry_job
   before_save :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
 
   # ===========================================
@@ -656,6 +656,19 @@ class Package < ApplicationRecord
     case state
     when 'pending_unpaid', 'pending'
       self.expiry_deadline ||= 7.days.from_now
+    end
+  end
+
+  def schedule_initial_expiry_job
+    return unless expiry_deadline.present?
+    
+    # Schedule warning check (6 hours before expiry)
+    warning_time = expiry_deadline - 6.hours
+    if warning_time > Time.current
+      SchedulePackageExpiryJob.set(wait_until: warning_time).perform_later(id)
+    else
+      # If too close to deadline, schedule final check
+      SchedulePackageExpiryJob.set(wait_until: expiry_deadline).perform_later(id)
     end
   end
 
