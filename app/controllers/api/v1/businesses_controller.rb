@@ -213,7 +213,7 @@ module Api
       end
 
 def staff
-  business = Business.find(params[:business_id])
+  business = Business.find(params[:id])  # because it's a member route
 
   # owner (role = "owner")
   owner_ub = business.user_businesses.includes(:user).find_by(role: "owner")
