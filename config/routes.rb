@@ -1,9 +1,12 @@
-# config/routes.rb (Fixed - Added missing 'end' for admin namespace)
+# config/routes.rb
 require 'sidekiq/web'
 
 Rails.application.routes.draw do
 
-# Mount Sidekiq web interface (protect in production)
+  # ==========================================
+  # 💼 SIDEKIQ WEB INTERFACE
+  # ==========================================
+  
   if Rails.env.development?
     mount Sidekiq::Web => '/sidekiq'
   else
@@ -18,9 +21,8 @@ Rails.application.routes.draw do
   # 🔐 WEB AUTHENTICATION (Simple Sign In)
   # ==========================================
   
-  # Remove the conflicting single route and use proper namespace routing
   namespace :admin do
-    root 'updates#index'  # This makes /admin route to admin/updates#index
+    root 'updates#index'
     
     resources :updates do
       member do
@@ -33,7 +35,6 @@ Rails.application.routes.draw do
       end
     end
 
-    # FIXED: Admin Notifications Management
     resources :notifications, only: [:index, :show, :create, :destroy] do
       member do
         patch :mark_as_read
@@ -47,16 +48,16 @@ Rails.application.routes.draw do
     end
   end
 
-get '/dashboard', to: 'sessions#dashboard', as: :dashboard
-  # Simple web-based sign in/out
+  get '/dashboard', to: 'sessions#dashboard', as: :dashboard
   get '/sign_in', to: 'sessions#new', as: :sign_in
   post '/sign_in', to: 'sessions#create'
   delete '/sign_out', to: 'sessions#destroy', as: :sign_out
-  get '/logout', to: 'sessions#destroy'  # Alternative logout path
+  get '/logout', to: 'sessions#destroy'
 
   # ==========================================
-  # 🔐 AUTHENTICATION (Devise) - Must be first
+  # 🔐 AUTHENTICATION (Devise)
   # ==========================================
+  
   devise_for :users,
     path: 'api/v1',
     path_names: {
@@ -93,29 +94,32 @@ get '/dashboard', to: 'sessions#dashboard', as: :dashboard
   end
 
   # ==========================================
-  # 🔐 NEW: EXPO-AUTH-SESSION OAUTH ROUTES
+  # 🔐 EXPO-AUTH-SESSION OAUTH ROUTES
   # ==========================================
   
   namespace :api do
     namespace :auth do
-      # OAuth 2.0 endpoints for expo-auth-session
-      get 'authorize', to: 'oauth#authorize'           # Initial OAuth authorization
-      get 'callback', to: 'oauth#callback'             # Google OAuth callback
-      post 'token', to: 'oauth#token_exchange'         # Token exchange endpoint
-      get 'session', to: 'oauth#session'               # Get current session
-      post 'logout', to: 'oauth#logout'                # Logout endpoint
-      post 'refresh', to: 'oauth#refresh_token'        # Refresh token endpoint
+      get 'authorize', to: 'oauth#authorize'
+      get 'callback', to: 'oauth#callback'
+      post 'token', to: 'oauth#token_exchange'
+      get 'session', to: 'oauth#session'
+      post 'logout', to: 'oauth#logout'
+      post 'refresh', to: 'oauth#refresh_token'
     end
   end
 
   # ==========================================
-  # 🔐 LEGACY OAUTH ROUTES (Keep for backward compatibility)
+  # 🔗 API ROUTES
   # ==========================================
   
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
-resources :updates, only: [:create, :index] do
+      # ==========================================
+      # 📱 APP UPDATES
+      # ==========================================
+      
+      resources :updates, only: [:create, :index] do
         member do
           patch :publish
         end
@@ -127,27 +131,32 @@ resources :updates, only: [:create, :index] do
         end
       end
 
-
-      # Contacts routes
+      # ==========================================
+      # 📇 CONTACTS
+      # ==========================================
+      
       resources :contacts, only: [] do
         collection do
-          post :check_registered    # POST /api/v1/contacts/check_registered
-          get :my_contacts         # GET /api/v1/contacts/my_contacts (optional)
-          post :sync               # POST /api/v1/contacts/sync (optional)
+          post :check_registered
+          get :my_contacts
+          post :sync
         end
       end
 
-
-      # Google OAuth endpoints - FIXED to point to correct controller
+      # ==========================================
+      # 🔐 GOOGLE OAUTH
+      # ==========================================
+      
       get 'auth/google_oauth2/init', to: 'omniauth_callbacks#init'
       get 'auth/google_oauth2/callback', to: 'omniauth_callbacks#google_oauth2'
       post 'auth/google_oauth2/callback', to: 'omniauth_callbacks#google_oauth2'
       get 'auth/failure', to: 'omniauth_callbacks#failure'
-      
-      # Legacy Google login route (maintain compatibility) - keep in sessions
       post :google_login, to: 'sessions#google_login'
 
-      # MPESA API endpoints
+      # ==========================================
+      # 💳 MPESA API
+      # ==========================================
+      
       scope :mpesa do
         post 'stk_push', to: 'mpesa#stk_push'
         post 'stk_push_bulk', to: 'mpesa#stk_push_bulk'
@@ -159,25 +168,22 @@ resources :updates, only: [:create, :index] do
       end
 
       # ==========================================
-      # FIXED: TERMS AND CONDITIONS - MOVED TO API NAMESPACE
+      # 📄 TERMS AND CONDITIONS
       # ==========================================
       
-      # Terms and Conditions
       resources :terms do
         collection do
           get :current
         end
       end
 
-      # Alternative route for easy access to current terms
       get 'current_terms/:type', to: 'terms#current', defaults: { type: 'terms_of_service' }
       get 'current_terms', to: 'terms#current', defaults: { type: 'terms_of_service' }
 
       # ==========================================
-      # 🔐 USER MANAGEMENT & AUTHENTICATION
+      # 👤 USER MANAGEMENT
       # ==========================================
       
-      # User profile and management
       get 'users/me', to: 'users#me'
       get 'users', to: 'users#index'
       get 'me', to: 'me#show', defaults: { format: :json }
@@ -186,8 +192,8 @@ resources :updates, only: [:create, :index] do
         patch :update_avatar, on: :collection
         delete :destroy_avatar, on: :collection
       end
+
       get 'users/:user_id/avatar', to: 'avatars#show'
-      
       put 'me/avatar', to: 'me#update_avatar'
       delete 'me/avatar', to: 'me#destroy_avatar'
 
@@ -197,7 +203,6 @@ resources :updates, only: [:create, :index] do
       patch 'users/update', to: 'users#update'
       patch 'users/:id/assign_role', to: 'users#assign_role'
 
-      # User scanning analytics & stats
       get 'users/scanning_stats', to: 'users#scanning_stats'
       get 'users/scan_history', to: 'users#scan_history'
       get 'users/performance_metrics', to: 'users#performance_metrics'
@@ -207,28 +212,23 @@ resources :updates, only: [:create, :index] do
       # 🏢 BUSINESS MANAGEMENT
       # ==========================================
       
-      # Business Invites
       resources :invites, only: [:create], defaults: { format: :json } do
         collection do
           post :accept
         end
       end
 
-      # Businesses - UPDATED with full CRUD and categories support
       resources :businesses do
-# Business logo routes - nested under businesses
-  resource :logo, controller: 'business_logos', only: [:create, :show, :destroy]
-  
+        resource :logo, controller: 'business_logos', only: [:create, :show, :destroy]
+        
         member do
           post :add_categories
           delete :remove_category
           get :staff
           get :activities
-          
         end
       end
       
-      # Categories routes
       resources :categories, only: [:index, :show]
 
       # ==========================================
@@ -242,13 +242,12 @@ resources :updates, only: [:create, :index] do
         get :package_form_data, to: 'form_data#package_form_data'
         get :package_states, to: 'form_data#package_states'
         get :delivery_types, to: 'form_data#delivery_types'
-        # ADDED: Enhanced form data for new features
         get :package_sizes, to: 'form_data#package_sizes'
         get :pricing_options, to: 'form_data#pricing_options'
       end
 
       # ==========================================
-      # 💰 ENHANCED PRICING SYSTEM
+      # 💰 PRICING SYSTEM
       # ==========================================
       
       resources :prices, only: [:index, :create, :show, :update, :destroy] do
@@ -260,51 +259,42 @@ resources :updates, only: [:create, :index] do
           post :bulk_create
           get :matrix
           get :fragile_surcharge
-          # UPDATED: Enhanced pricing calculation endpoint
           post :calculate, to: 'prices#calculate'
           get :calculate, to: 'prices#calculate'
         end
       end
 
-      # UPDATED: Comprehensive pricing endpoints for all delivery types
       namespace :pricing do
-        # Main calculation endpoint
         post :calculate, to: 'prices#calculate'
         get :calculate, to: 'prices#calculate'
         
-        # Delivery type specific pricing
         get :fragile, to: 'prices#fragile_pricing'
         get :home, to: 'prices#home_pricing'
         get :office, to: 'prices#office_pricing'  
         get :collection, to: 'prices#collection_pricing'
         get :agent, to: 'prices#agent_pricing'
         
-        # Package size pricing
         get :package_sizes, to: 'prices#package_size_pricing'
         get :size_comparison, to: 'prices#package_size_comparison'
         
-        # Comprehensive pricing analysis
         get :matrix, to: 'prices#pricing_matrix'
         get :compare_all, to: 'prices#compare_all_delivery_types'
         get :route_analysis, to: 'prices#route_pricing_analysis'
         
-        # Bulk pricing operations
         post :bulk_calculate, to: 'prices#bulk_calculate'
         post :bulk_update, to: 'prices#bulk_update_pricing'
         
-        # Pricing validation and verification
         post :validate, to: 'prices#validate_pricing'
         get :verify_consistency, to: 'prices#verify_pricing_consistency'
       end
 
-      # Legacy pricing endpoints (maintain backward compatibility)
       get 'pricing', to: 'packages#calculate_pricing', defaults: { format: :json }
       post 'pricing/calculate', to: 'prices#calculate'
       get 'pricing/matrix', to: 'prices#pricing_matrix'
       get 'pricing/fragile', to: 'prices#fragile_pricing'
 
       # ==========================================
-      # 📦 ENHANCED PACKAGE MANAGEMENT SYSTEM
+      # 📦 PACKAGE MANAGEMENT
       # ==========================================
       
       resources :packages, only: [:index, :create, :show, :update, :destroy] do
@@ -321,12 +311,10 @@ resources :updates, only: [:create, :index] do
           patch :cancel
           get :timeline
           get :print_history
-          # ADDED: Enhanced package management endpoints
           get :delivery_options
           get :size_requirements
           patch :update_delivery_type
           patch :update_package_size
-         # NEW: Resubmission and rejection routes
           post :resubmit
           post :reject
           get :resubmission_info
@@ -344,7 +332,6 @@ resources :updates, only: [:create, :index] do
           get :qr_codes_batch
           get :thermal_qr_batch
           
-          # ADDED: Enhanced package filtering by delivery type and size
           get :fragile_packages
           get :home_deliveries
           get :office_deliveries
@@ -357,31 +344,31 @@ resources :updates, only: [:create, :index] do
           get :requiring_special_handling
           get :delivery_type_breakdown
           get :package_size_analytics
-          # NEW: Expiry management routes
-        get :expired_summary
-        post :force_expiry_check
+          get :expired_summary
+          post :force_expiry_check
         end
       end
 
-
-# NEW: Notifications routes
-    resources :notifications, only: [:index, :show, :destroy] do
-      member do
-        patch :mark_as_read
-      end
+      # ==========================================
+      # 📬 NOTIFICATIONS
+      # ==========================================
       
-      collection do
-        patch :mark_all_as_read
-        get :unread_count
-        get :summary
+      resources :notifications, only: [:index, :show, :destroy] do
+        member do
+          patch :mark_as_read
+        end
+        
+        collection do
+          patch :mark_all_as_read
+          get :unread_count
+          get :summary
+        end
       end
-    end
 
-      # ADD THIS LINE FOR PUSH TOKENS
       resources :push_tokens, only: [:create, :destroy], param: :token
 
       # ==========================================
-      # 🎨 DEDICATED QR CODE ENDPOINTS
+      # 🎨 QR CODE ENDPOINTS
       # ==========================================
       
       scope :qr_codes do
@@ -399,7 +386,7 @@ resources :updates, only: [:create, :index] do
       end
 
       # ==========================================
-      # 📱 ENHANCED SCANNING SYSTEM
+      # 📱 SCANNING SYSTEM
       # ==========================================
       
       scope :scanning do
@@ -419,14 +406,13 @@ resources :updates, only: [:create, :index] do
         get :sync_status, to: 'scanning#sync_status'
         delete :clear_offline_data, to: 'scanning#clear_offline_data'
         
-        # ADDED: Enhanced scanning with delivery type awareness
         get :fragile_scan_alerts, to: 'scanning#fragile_package_alerts'
         get :large_package_scan_requirements, to: 'scanning#large_package_requirements'
         get :special_handling_alerts, to: 'scanning#special_handling_alerts'
       end
 
       # ==========================================
-      # 🖨️ ENHANCED PRINTING SYSTEM
+      # 🖨️ PRINTING SYSTEM
       # ==========================================
       
       scope :printing do
@@ -453,7 +439,6 @@ resources :updates, only: [:create, :index] do
         get :thermal_capabilities, to: 'printing#thermal_printer_capabilities'
         post :validate_thermal_printer, to: 'printing#validate_thermal_printer'
         
-        # ADDED: Enhanced printing with delivery type specific formatting
         post 'package/:package_code/fragile_label', to: 'printing#print_fragile_label'
         post 'package/:package_code/collection_label', to: 'printing#print_collection_label'
         post 'package/:package_code/large_package_label', to: 'printing#print_large_package_label'
@@ -461,7 +446,7 @@ resources :updates, only: [:create, :index] do
       end
 
       # ==========================================
-      # 📍 ENHANCED TRACKING & EVENTS SYSTEM
+      # 📍 TRACKING & EVENTS
       # ==========================================
       
       resources :tracking_events, only: [:index, :show, :create] do
@@ -470,7 +455,6 @@ resources :updates, only: [:create, :index] do
           get :by_package
           get :by_user
           get :timeline
-          # ADDED: Enhanced tracking for delivery types
           get :fragile_events
           get :collection_events
           get :large_package_events
@@ -485,13 +469,12 @@ resources :updates, only: [:create, :index] do
         
         post :batch_status, to: 'tracking#batch_package_status'
         
-        # ADDED: Enhanced tracking for special delivery types
         get 'package/:package_code/special_handling_status', to: 'tracking#special_handling_status'
         get 'package/:package_code/delivery_requirements', to: 'tracking#delivery_requirements'
       end
 
       # ==========================================
-      # 🏢 ENHANCED LOCATION & AGENT MANAGEMENT
+      # 🏢 LOCATION & AGENT MANAGEMENT
       # ==========================================
       
       resources :areas, only: [:index, :create, :show, :update, :destroy] do
@@ -500,7 +483,6 @@ resources :updates, only: [:create, :index] do
           get :routes
           get :agents
           get :scan_activity
-          # ADDED: Enhanced area analytics
           get :delivery_type_breakdown
           get :package_size_distribution
           get :pricing_analysis
@@ -516,7 +498,6 @@ resources :updates, only: [:create, :index] do
         member do
           get :areas
           get :package_volume
-          # ADDED: Enhanced location analytics
           get :delivery_performance
           get :pricing_comparison
         end
@@ -528,7 +509,6 @@ resources :updates, only: [:create, :index] do
           get :performance
           get :scan_history
           patch :toggle_active
-          # ADDED: Enhanced agent analytics
           get :delivery_type_performance
           get :package_size_handling
           get :special_handling_stats
@@ -549,7 +529,6 @@ resources :updates, only: [:create, :index] do
           get :scan_history
           get :route_activity
           patch :toggle_active
-          # ADDED: Enhanced rider analytics
           get :delivery_type_stats
           get :special_handling_performance
         end
@@ -568,7 +547,6 @@ resources :updates, only: [:create, :index] do
           get :scan_history
           get :processing_queue
           patch :toggle_active
-          # ADDED: Enhanced warehouse analytics
           get :package_processing_stats
           get :special_handling_queue
         end
@@ -581,7 +559,7 @@ resources :updates, only: [:create, :index] do
       end
 
       # ==========================================
-      # 💬 CONVERSATIONS AND SUPPORT SYSTEM
+      # 💬 CONVERSATIONS
       # ==========================================
       
       resources :conversations, only: [:index, :show] do
@@ -603,7 +581,7 @@ resources :updates, only: [:create, :index] do
       get 'conversations/package_support', to: 'conversations#package_support'
 
       # ==========================================
-      # 📊 ENHANCED ANALYTICS AND REPORTING
+      # 📊 ANALYTICS
       # ==========================================
       
       namespace :analytics do
@@ -613,7 +591,6 @@ resources :updates, only: [:create, :index] do
         get :performance, to: 'analytics#performance_metrics'
         get :fragile_packages, to: 'analytics#fragile_package_analytics'
         
-        # ADDED: Enhanced analytics for new delivery types and package sizes
         get :delivery_type_breakdown, to: 'analytics#delivery_type_breakdown'
         get :package_size_analytics, to: 'analytics#package_size_analytics'
         get :pricing_analytics, to: 'analytics#pricing_analytics'
@@ -625,14 +602,11 @@ resources :updates, only: [:create, :index] do
         get :customer_preference_trends, to: 'analytics#customer_preference_trends'
       end
 
-
-
-# ==========================================
+      # ==========================================
       # 🔐 ADMIN ROUTES
       # ==========================================
       
       namespace :admin do
-        # Admin Notifications Management
         resources :notifications, only: [:index, :show, :create, :destroy] do
           member do
             patch :mark_as_read
@@ -645,7 +619,6 @@ resources :updates, only: [:create, :index] do
           end
         end
 
-        # Admin Conversations
         resources :conversations, only: [:index, :show] do
           member do
             patch :assign_to_me
@@ -654,14 +627,11 @@ resources :updates, only: [:create, :index] do
           end
         end
 
-       # ADD THIS: Admin Users Management
         get 'users/search', to: 'users#search'
       end
 
-
-
       # ==========================================
-      # 📄 ENHANCED REPORTS AND EXPORTS
+      # 📄 REPORTS
       # ==========================================
       
       scope :reports do
@@ -670,7 +640,6 @@ resources :updates, only: [:create, :index] do
         get 'performance', to: 'reports#performance_report'
         get 'fragile_packages', to: 'reports#fragile_packages_report'
         
-        # ADDED: Enhanced reporting for new delivery types
         get 'delivery_types', to: 'reports#delivery_types_report'
         get 'package_sizes', to: 'reports#package_sizes_report'
         get 'pricing_analysis', to: 'reports#pricing_analysis_report'
@@ -690,7 +659,7 @@ resources :updates, only: [:create, :index] do
       end
 
       # ==========================================
-      # 🏥 STATUS & HEALTH ENDPOINTS
+      # 🏥 STATUS & HEALTH
       # ==========================================
       
       get 'status', to: 'status#ping'
@@ -702,7 +671,7 @@ resources :updates, only: [:create, :index] do
   end
 
   # ==========================================
-  # 🌐 ENHANCED PUBLIC ENDPOINTS
+  # 🌐 PUBLIC ENDPOINTS
   # ==========================================
   
   scope :public do
@@ -713,11 +682,9 @@ resources :updates, only: [:create, :index] do
     get 'track/:code/qr/organic', to: 'public/tracking#organic_qr_code'
     get 'track/:code/qr/thermal', to: 'public/tracking#thermal_qr_code'
     
-    # ADDED: Public delivery type information
     get 'track/:code/delivery_info', to: 'public/tracking#delivery_information'
     get 'track/:code/special_handling', to: 'public/tracking#special_handling_info'
     
-    # Public pricing estimates
     get 'pricing/estimate', to: 'public/pricing#estimate'
     get 'pricing/delivery_types', to: 'public/pricing#delivery_types_info'
     get 'pricing/package_sizes', to: 'public/pricing#package_sizes_info'
@@ -726,7 +693,7 @@ resources :updates, only: [:create, :index] do
   get 'api/v1/track/:code', to: 'api/v1/packages#public_tracking', as: :package_tracking
 
   # ==========================================
-  # 🔗 ENHANCED WEBHOOK ENDPOINTS
+  # 🔗 WEBHOOKS
   # ==========================================
   
   scope :webhooks do
@@ -745,7 +712,6 @@ resources :updates, only: [:create, :index] do
     post 'auth/google/success', to: 'webhooks#google_auth_success'
     post 'auth/google/failure', to: 'webhooks#google_auth_failure'
     
-    # ADDED: Enhanced webhooks for delivery types
     post 'fragile/special_handling_alert', to: 'webhooks#fragile_handling_alert'
     post 'collection/pickup_scheduled', to: 'webhooks#collection_pickup_scheduled'
     post 'large_package/handling_alert', to: 'webhooks#large_package_handling_alert'
@@ -754,7 +720,7 @@ resources :updates, only: [:create, :index] do
   end
 
   # ==========================================
-  # 🏥 ENHANCED HEALTH CHECK & STATUS
+  # 🏥 HEALTH CHECKS
   # ==========================================
   
   get "up" => "rails/health#show", as: :rails_health_check
@@ -771,7 +737,7 @@ resources :updates, only: [:create, :index] do
   get "health/notifications" => "health#notifications_system", as: :notifications_health_check
   
   # ==========================================
-  # 📱 PROGRESSIVE WEB APP SUPPORT
+  # 📱 PWA SUPPORT
   # ==========================================
   
   get '/manifest.json', to: 'pwa#manifest'
@@ -779,7 +745,7 @@ resources :updates, only: [:create, :index] do
   get '/offline', to: 'pwa#offline'
 
   # ==========================================
-  # 📚 ENHANCED DOCUMENTATION
+  # 📚 DOCUMENTATION
   # ==========================================
   
   get '/docs', to: 'documentation#index'
@@ -792,14 +758,11 @@ resources :updates, only: [:create, :index] do
   get '/docs/notifications', to: 'documentation#notifications_docs'
 
   # ==========================================
-  # 🔀 CATCH-ALL AND REDIRECTS
+  # 🔀 ROOT AND CATCH-ALL
   # ==========================================
   
-  # FIXED: Use a conditional root that redirects unauthenticated users to sign in
-  # but allows API access to work normally
   root to: 'sessions#redirect_root'
   
-  # More specific catch-all that doesn't interfere with Active Storage
   constraints(->(request) { 
     !request.path.start_with?('/rails/active_storage/') &&
     !request.path.start_with?('/assets/') &&
