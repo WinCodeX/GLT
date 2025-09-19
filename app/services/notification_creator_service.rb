@@ -1,3 +1,4 @@
+
 # app/services/notification_creator_service.rb
 class NotificationCreatorService
   def self.create_package_notification(package, type, additional_data = {})
@@ -10,15 +11,20 @@ class NotificationCreatorService
       **build_notification_content(package, type, additional_data)
     }
     
-    # Create with instant push delivery
-    Notification.create_and_broadcast!(notification_data.merge(instant_push: true))
+    # Create notification and immediately deliver via push
+    notification = Notification.create!(notification_data)
+    
+    # Immediately send push notification
+    DeliverNotificationJob.perform_later(notification)
+    
+    notification
   end
   
   def self.create_broadcast_notification(title, message, user_scope = User.all, options = {})
     notifications_created = 0
     
     user_scope.find_each do |user|
-      Notification.create_and_broadcast!({
+      notification = Notification.create!({
         user: user,
         title: title,
         message: message,
@@ -27,9 +33,11 @@ class NotificationCreatorService
         priority: options[:priority] || 'normal',
         icon: options[:icon] || 'bell',
         action_url: options[:action_url],
-        expires_at: options[:expires_at],
-        instant_push: true
+        expires_at: options[:expires_at]
       })
+      
+      # Immediately send push notification
+      DeliverNotificationJob.perform_later(notification)
       
       notifications_created += 1
     end
@@ -39,7 +47,7 @@ class NotificationCreatorService
   end
   
   def self.create_user_notification(user, title, message, options = {})
-    Notification.create_and_broadcast!({
+    notification = Notification.create!({
       user: user,
       title: title,
       message: message,
@@ -48,18 +56,22 @@ class NotificationCreatorService
       priority: options[:priority] || 'normal',
       icon: options[:icon] || 'bell',
       action_url: options[:action_url],
-      expires_at: options[:expires_at],
-      instant_push: true
+      expires_at: options[:expires_at]
     })
+    
+    # Immediately send push notification
+    DeliverNotificationJob.perform_later(notification)
+    
+    notification
   end
   
   private
   
   def self.determine_priority(type)
     case type
-    when 'package_delivered', 'payment_failed'
+    when 'package_delivered', 'payment_failed', 'package_rejected', 'expiry_warning'
       'high'
-    when 'package_ready', 'payment_reminder'
+    when 'package_ready', 'payment_reminder', 'package_update'
       'normal'
     else
       'low'
@@ -67,7 +79,7 @@ class NotificationCreatorService
   end
   
   def self.build_notification_content(package, type, additional_data)
-    case type
+    base_content = case type
     when 'package_delivered'
       {
         title: 'Package Delivered!',
@@ -83,15 +95,27 @@ class NotificationCreatorService
     when 'payment_reminder'
       {
         title: 'Payment Due',
-        message: "Package #{package.code} payment is due. Total: $#{package.total_amount}",
+        message: "Package #{package.code} payment is due. Total: KES #{package.cost}",
         icon: 'credit-card',
         action_url: "/packages/#{package.id}/payment"
       }
-    when 'package_expired'
+    when 'expiry_warning'
       {
-        title: 'Package Storage Expiring',
+        title: 'Package Expiring Soon',
         message: "Package #{package.code} storage period will expire soon.",
         icon: 'alert-triangle'
+      }
+    when 'package_rejected'
+      {
+        title: 'Package Rejected',
+        message: "Package #{package.code} has been rejected.",
+        icon: 'x-circle'
+      }
+    when 'package_deleted'
+      {
+        title: 'Package Deleted',
+        message: "Package #{package.code} has been permanently deleted.",
+        icon: 'trash-2'
       }
     when 'payment_failed'
       {
@@ -106,6 +130,9 @@ class NotificationCreatorService
         message: "Your package #{package.code} has been updated.",
         icon: 'package'
       }
-    end.merge(additional_data)
+    end
+    
+    # Merge with additional data, allowing overrides
+    base_content.merge(additional_data)
   end
 end
