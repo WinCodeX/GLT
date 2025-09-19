@@ -1,5 +1,5 @@
+
 # app/jobs/deliver_notification_job.rb
-# REPLACE YOUR EXISTING FILE WITH THIS VERSION
 class DeliverNotificationJob < ApplicationJob
   queue_as :notifications
   
@@ -36,13 +36,28 @@ class DeliverNotificationJob < ApplicationJob
   def deliver_push_notification(notification)
     Rails.logger.info "📱 Delivering push notification #{notification.id}"
     
+    # Use the existing PushNotificationService
     push_service = PushNotificationService.new
     push_service.send_immediate(notification)
   end
   
   def deliver_in_app_notification(notification)
     # In-app notifications are handled by ActionCable broadcasting
-    Rails.logger.info "📲 In-app notification #{notification.id} ready for user #{notification.user.id}"
+    Rails.logger.info "📲 Broadcasting in-app notification #{notification.id} to user #{notification.user.id}"
+    
+    # Broadcast to user's notification channel
+    begin
+      ActionCable.server.broadcast(
+        "user_notifications_#{notification.user.id}",
+        {
+          type: 'new_notification',
+          notification: notification.as_json(include: [:package])
+        }
+      )
+    rescue => e
+      Rails.logger.error "Failed to broadcast notification #{notification.id}: #{e.message}"
+      raise e
+    end
   end
   
   def deliver_email_notification(notification)
