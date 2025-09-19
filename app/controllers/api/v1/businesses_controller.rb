@@ -213,8 +213,30 @@ module Api
       end
 
 def staff
-  # Implementation needed for staff listing
-  render json: { success: true, data: { staff: [] } }
+  business = Business.find(params[:business_id])
+
+  # owner (role = "owner")
+  owner_ub = business.user_businesses.includes(:user).find_by(role: "owner")
+  owner = owner_ub&.user
+
+  # staff members (role = "staff")
+  staff = business.user_businesses.includes(:user).where(role: "staff").map do |ub|
+    {
+      id: ub.user.id,
+      name: ub.user.name || ub.user.email,
+      active: ub.user.respond_to?(:online?) ? ub.user.online? : false
+    }
+  end
+
+  render json: {
+    success: true,
+    data: {
+      owner: owner ? { id: owner.id, name: owner.name || owner.email } : nil,
+      staff: staff,
+      active_members: staff.count { |s| s[:active] } + (owner ? 1 : 0),
+      total_members: staff.size + (owner ? 1 : 0)
+    }
+  }
 end
 
       private
