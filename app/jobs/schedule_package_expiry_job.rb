@@ -1,3 +1,4 @@
+
 # app/jobs/schedule_package_expiry_job.rb
 class SchedulePackageExpiryJob < ApplicationJob
   queue_as :default
@@ -20,7 +21,25 @@ class SchedulePackageExpiryJob < ApplicationJob
                   "Package expired"
                 end
         
-        package.reject_package!(reason: reason, auto_rejected: true)
+        if package.reject_package!(reason: reason, auto_rejected: true)
+          # Send immediate rejection notification
+          NotificationCreatorService.create_package_notification(
+            package,
+            'package_rejected',
+            {
+              title: "Package #{package.code} Auto-Rejected",
+              message: reason,
+              priority: 'high',
+              icon: 'x-circle',
+              action_url: "/packages/#{package.id}",
+              metadata: {
+                rejection_reason: reason,
+                auto_rejected: true,
+                can_resubmit: package.can_be_resubmitted?
+              }
+            }
+          )
+        end
       end
     # Check if package needs expiry warning
     elsif package.expiry_deadline.present? && 
@@ -31,14 +50,25 @@ class SchedulePackageExpiryJob < ApplicationJob
       
       # Only send warning if not already sent recently
       last_warning = package.notifications
-        .where(notification_type: 'final_warning')
+        .where(notification_type: 'expiry_warning')
         .where('created_at >= ?', 8.hours.ago)
         .exists?
       
       unless last_warning
-        Notification.create_expiry_warning(
-          package: package,
-          hours_remaining: hours_remaining
+        NotificationCreatorService.create_package_notification(
+          package,
+          'expiry_warning',
+          {
+            title: "Package #{package.code} Expiring Soon",
+            message: "Your package expires in #{hours_remaining.round(1)} hours. Please take action to avoid auto-rejection.",
+            priority: 'high',
+            icon: 'clock',
+            action_url: "/packages/#{package.id}",
+            metadata: {
+              hours_remaining: hours_remaining.round(1),
+              expiry_deadline: package.expiry_deadline
+            }
+          }
         )
       end
       
