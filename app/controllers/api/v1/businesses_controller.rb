@@ -288,6 +288,130 @@ module Api
         end
       end
 
+      def activities
+        begin
+          Rails.logger.info "Fetching activities for business #{@business.id} by user #{current_user.id}"
+          
+          # Handle pagination
+          page = [params[:page]&.to_i || 1, 1].max
+          per_page = [[params[:per_page]&.to_i || 20, 1].max, 50].min
+          
+          # Handle filtering by activity type
+          filter_type = params[:filter_type]
+          
+          # Check if BusinessActivity model exists
+          unless defined?(BusinessActivity)
+            # Return mock data if BusinessActivity model doesn't exist
+            return render json: {
+              success: true,
+              data: {
+                activities: [],
+                summary: {
+                  total_activities: 0,
+                  package_activities: 0,
+                  staff_activities: 0
+                }
+              },
+              pagination: {
+                current_page: page,
+                per_page: per_page,
+                total_count: 0,
+                total_pages: 0,
+                has_next: false,
+                has_prev: false
+              }
+            }, status: :ok
+          end
+          
+          # Build query for activities
+          activities_query = BusinessActivity.where(business: @business)
+                                           .includes(:user, :target_user, :package)
+                                           .recent
+          
+          # Apply filters
+          case filter_type
+          when 'package'
+            activities_query = activities_query.package_activities
+          when 'staff'
+            activities_query = activities_query.staff_activities
+          when 'today'
+            activities_query = activities_query.today
+          when 'week'
+            activities_query = activities_query.this_week
+          when 'month'
+            activities_query = activities_query.this_month
+          end
+          
+          # Get total count before pagination
+          total_count = activities_query.count
+          
+          # Apply pagination
+          activities = activities_query.offset((page - 1) * per_page)
+                                     .limit(per_page)
+          
+          # Get activities summary
+          summary = BusinessActivity.activities_summary(
+            business: @business,
+            start_date: 1.month.ago,
+            end_date: Time.current
+          )
+          
+          # Serialize activities
+          serialized_activities = activities.map do |activity|
+            activity_data = activity.summary_json
+            
+            # Fix the user name issue in serialization
+            if activity_data[:user] && activity_data[:user][:name].blank?
+              user = activity.user
+              activity_data[:user][:name] = user.full_name.present? ? user.full_name : user.email
+            end
+            
+            if activity_data[:target_user] && activity_data[:target_user][:name].blank?
+              target_user = activity.target_user
+              activity_data[:target_user][:name] = target_user.full_name.present? ? target_user.full_name : target_user.email
+            end
+            
+            activity_data
+          end
+          
+          render json: {
+            success: true,
+            data: {
+              activities: serialized_activities,
+              summary: summary.except(:recent_activities) # Exclude to avoid duplication
+            },
+            pagination: {
+              current_page: page,
+              per_page: per_page,
+              total_count: total_count,
+              total_pages: (total_count / per_page.to_f).ceil,
+              has_next: page * per_page < total_count,
+              has_prev: page > 1
+            },
+            filters: {
+              current_filter: filter_type,
+              available_filters: [
+                { key: 'all', label: 'All Activities' },
+                { key: 'package', label: 'Package Activities' },
+                { key: 'staff', label: 'Staff Activities' },
+                { key: 'today', label: 'Today' },
+                { key: 'week', label: 'This Week' },
+                { key: 'month', label: 'This Month' }
+              ]
+            }
+          }, status: :ok
+          
+        rescue StandardError => e
+          Rails.logger.error "Error fetching activities for business #{@business&.id}: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          render json: {
+            success: false,
+            message: "Failed to fetch activities",
+            errors: ["Unable to load activity information. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
+
       private
 
       def set_business
