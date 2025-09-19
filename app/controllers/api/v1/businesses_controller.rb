@@ -89,7 +89,7 @@ module Api
           update_params = business_params.except(:category_ids)
           
           # Update business attributes without validation to skip description validation
-          if update_params.any?
+          if update_params.present?
             @business.assign_attributes(update_params)
             unless @business.save(validate: false)
               Rails.logger.error "Business update failed: #{@business.errors.full_messages}"
