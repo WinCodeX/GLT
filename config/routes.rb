@@ -222,6 +222,9 @@ resources :updates, only: [:create, :index] do
         member do
           post :add_categories
           delete :remove_category
+          get :staff
+          get :activities
+          
         end
       end
       
