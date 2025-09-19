@@ -11,20 +11,21 @@ class DeleteRejectedPackageJob < ApplicationJob
       Rails.logger.info "Permanently deleting auto-rejected package: #{package.code}"
       
       begin
-        # Create final notification before deletion
-        Notification.create!(
-          user: package.user,
-          package_id: package.id,
-          title: "Package #{package.code} Permanently Deleted",
-          message: "Your rejected package #{package.code} has been permanently deleted from our system as it was not resubmitted within the allowed timeframe.",
-          notification_type: 'general',
-          priority: 'normal',
-          metadata: {
-            package_code: package.code,
-            rejected_at: package.rejected_at,
-            deletion_reason: 'Auto-deletion after rejection period expired'
-          },
-          icon: 'trash-2'
+        # Create final notification before deletion using the service
+        NotificationCreatorService.create_package_notification(
+          package,
+          'package_deleted',
+          {
+            title: "Package #{package.code} Permanently Deleted",
+            message: "Your rejected package #{package.code} has been permanently deleted from our system as it was not resubmitted within the allowed timeframe.",
+            priority: 'normal',
+            icon: 'trash-2',
+            metadata: {
+              package_code: package.code,
+              rejected_at: package.rejected_at,
+              deletion_reason: 'Auto-deletion after rejection period expired'
+            }
+          }
         )
         
         # Delete the package
