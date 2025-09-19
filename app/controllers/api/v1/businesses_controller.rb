@@ -1,10 +1,9 @@
-# app/controllers/api/v1/businesses_controller.rb
 module Api
   module V1
     class BusinessesController < ApplicationController
       before_action :authenticate_user!
       before_action :set_business, only: [:show, :update, :destroy, :staff]
-      before_action :authorize_business_access, only: [:show, :staff]  # Added :staff here
+      before_action :authorize_business_access, only: [:show, :staff]
       before_action :authorize_business_owner, only: [:update, :destroy]
 
       def create
@@ -211,72 +210,86 @@ module Api
           }, status: :internal_server_error
         end
       end
-def staff
-  begin
-    # Get the direct owner from the business association
-    owner = @business.owner
 
-    # Get staff members (role = "staff") from user_businesses
-    staff_members = @business.user_businesses.includes(:user).where(role: 'staff').map do |ub|
-      user = ub.user
-      {
-        id: user.id,
-        name: user.name.present? ? user.name : user.email,
-        email: user.email,
-        active: user.respond_to?(:online?) ? user.online? : false,
-        joined_at: ub.created_at.iso8601
-      }
-    end
+      def staff
+        begin
+          Rails.logger.info "Fetching staff for business #{@business.id} by user #{current_user.id}"
+          
+          # Get the direct owner from the business association
+          owner = @business.owner
+          Rails.logger.info "Business owner: #{owner&.id}"
 
-    # Always return a consistent owner structure
-    owner_data = if owner
-      {
-        id: owner.id,
-        name: owner.name.present? ? owner.name : owner.email,
-        email: owner.email,
-        avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil
-      }
-    else
-      # Fallback - this shouldn't happen but ensures consistency
-      {
-        id: nil,
-        name: "Unknown Owner",
-        email: "unknown@example.com",
-        avatar_url: nil
-      }
-    end
+          # Get staff members (role = "staff") from user_businesses
+          staff_members = @business.user_businesses.where(role: 'staff').map do |ub|
+            user = ub.user
+            {
+              id: user.id,
+              name: user.name.present? ? user.name : user.email,
+              email: user.email,
+              active: user.respond_to?(:online?) ? user.online? : false,
+              joined_at: ub.created_at.iso8601
+            }
+          end
 
-    active_count = staff_members.count { |s| s[:active] }
-    total_members = staff_members.size + 1 # +1 for owner
+          Rails.logger.info "Found #{staff_members.size} staff members"
 
-    render json: {
-      success: true,
-      data: {
-        owner: owner_data,
-        staff: staff_members,
-        stats: {
-          active_members: active_count + 1, # +1 for owner (assume active)
-          total_members: total_members,
-          staff_count: staff_members.size
-        }
-      }
-    }, status: :ok
+          # Always return a consistent owner structure
+          owner_data = if owner
+            {
+              id: owner.id,
+              name: owner.name.present? ? owner.name : owner.email,
+              email: owner.email,
+              avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil
+            }
+          else
+            # Fallback - this shouldn't happen but ensures consistency
+            Rails.logger.warn "No owner found for business #{@business.id}"
+            {
+              id: nil,
+              name: "Unknown Owner",
+              email: "unknown@example.com",
+              avatar_url: nil
+            }
+          end
 
-  rescue StandardError => e
-    Rails.logger.error "Error fetching staff: #{e.class} - #{e.message}"
-    render json: {
-      success: false,
-      message: "Failed to fetch staff",
-      errors: ["Unable to load staff information. Please try again."]
-    }, status: :internal_server_error
-  end
-end
+          active_count = staff_members.count { |s| s[:active] }
+          total_members = staff_members.size + 1 # +1 for owner
+
+          response_data = {
+            success: true,
+            data: {
+              owner: owner_data,
+              staff: staff_members,
+              stats: {
+                active_members: active_count + 1, # +1 for owner (assume active)
+                total_members: total_members,
+                staff_count: staff_members.size
+              }
+            }
+          }
+
+          Rails.logger.info "Successfully returning staff data for business #{@business.id}"
+          render json: response_data, status: :ok
+
+        rescue StandardError => e
+          Rails.logger.error "Error fetching staff for business #{@business&.id}: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          render json: {
+            success: false,
+            message: "Failed to fetch staff",
+            errors: ["Unable to load staff information. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
 
       private
 
       def set_business
-        @business = Business.includes(:categories, :owner).find(params[:id])
-      rescue ActiveRecord::RecordNotFound
+        # Preload all necessary associations for authorization and data access
+        @business = Business.includes(:categories, :owner, user_businesses: :user).find(params[:id])
+        Rails.logger.info "Set business: #{@business.id} for user #{current_user.id}"
+      rescue ActiveRecord::RecordNotFound => e
+        Rails.logger.error "Business not found: #{params[:id]} for user #{current_user.id}"
         render json: { 
           success: false, 
           message: "Business not found" 
@@ -284,12 +297,29 @@ end
       end
 
       def authorize_business_access
-        unless @business.owner == current_user || @business.users.include?(current_user)
-          render json: { 
-            success: false, 
-            message: "Unauthorized access" 
-          }, status: :forbidden
+        Rails.logger.info "Authorizing access for user #{current_user.id} to business #{@business.id}"
+        Rails.logger.info "Business owner: #{@business.owner&.id}"
+        
+        # Check if user is the owner
+        if @business.owner == current_user
+          Rails.logger.info "User #{current_user.id} is the owner of business #{@business.id}"
+          return
         end
+        
+        # Check if user is staff through user_businesses
+        staff_user_ids = @business.user_businesses.where(role: 'staff').pluck(:user_id)
+        Rails.logger.info "Business staff user IDs: #{staff_user_ids}"
+        
+        if staff_user_ids.include?(current_user.id)
+          Rails.logger.info "User #{current_user.id} is staff of business #{@business.id}"
+          return
+        end
+        
+        Rails.logger.warn "Unauthorized access attempt by user #{current_user.id} to business #{@business.id}"
+        render json: { 
+          success: false, 
+          message: "Unauthorized access" 
+        }, status: :forbidden
       end
 
       def authorize_business_owner
