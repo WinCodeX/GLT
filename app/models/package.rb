@@ -104,7 +104,7 @@ class Package < ApplicationRecord
 
   # Callbacks
   before_create :generate_package_code_and_sequence, :set_initial_deadlines
-  after_create :generate_qr_code_files
+  after_create :generate_qr_code_files, :schedule_initial_expiry_job  # ← Add this
   before_save :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
 
   # ===========================================
