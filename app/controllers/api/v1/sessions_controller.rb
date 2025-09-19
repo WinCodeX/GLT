@@ -12,31 +12,31 @@ module Api
       # ===========================================
 
       def create
-        # Let devise-jwt handle authentication without interference
-        self.resource = warden.authenticate!(auth_options)
-        
-        if resource
-          # Clean sign_in flow for devise-jwt
-          sign_in(resource_name, resource)
-          resource.mark_online! if resource.respond_to?(:mark_online!)
-          
-          Rails.logger.info "User login successful: #{resource.email}"
-          
-          # devise-jwt automatically adds token to response headers
-          render json: {
-            status: 'success',
-            message: 'Logged in successfully',
-            user: serialize_user(resource)
-          }, status: :ok
-        else
-          # This should not happen with warden.authenticate! but handle gracefully
-          render json: {
-            status: 'error',
-            message: 'Authentication failed',
-            code: 'auth_failed'
-          }, status: :unauthorized
-        end
-      end
+  self.resource = warden.authenticate!(auth_options)
+
+  if resource
+    sign_in(resource_name, resource)
+    resource.mark_online! if resource.respond_to?(:mark_online!)
+
+    Rails.logger.info "User login successful: #{resource.email}"
+
+    # Extract the JWT token
+    token = request.env['warden-jwt_auth.token']
+
+    render json: {
+      status: 'success',
+      message: 'Logged in successfully',
+      user: serialize_user(resource),
+      token: token # 👈 Add the token here
+    }, status: :ok
+  else
+    render json: {
+      status: 'error',
+      message: 'Authentication failed',
+      code: 'auth_failed'
+    }, status: :unauthorized
+  end
+end
 
       # ===========================================
       # 🚪 LOGOUT (Clean devise-jwt revocation)
