@@ -25,9 +25,10 @@ module Api
 
     render json: {
       status: 'success',
+token: token ,# 👈 Add the token here
       message: 'Logged in successfully',
-      user: serialize_user(resource),
-      token: token # 👈 Add the token here
+      user: serialize_user(resource)
+      
     }, status: :ok
   else
     render json: {
