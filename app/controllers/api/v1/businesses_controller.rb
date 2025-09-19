@@ -222,9 +222,12 @@ module Api
           # Get staff members (role = "staff") from user_businesses
           staff_members = @business.user_businesses.where(role: 'staff').map do |ub|
             user = ub.user
+            # Use full_name instead of name method
+            display_name = user.full_name.present? ? user.full_name : user.email
+            
             {
               id: user.id,
-              name: user.name.present? ? user.name : user.email,
+              name: display_name,
               email: user.email,
               active: user.respond_to?(:online?) ? user.online? : false,
               joined_at: ub.created_at.iso8601
@@ -235,9 +238,12 @@ module Api
 
           # Always return a consistent owner structure
           owner_data = if owner
+            # Use full_name instead of name method for owner too
+            display_name = owner.full_name.present? ? owner.full_name : owner.email
+            
             {
               id: owner.id,
-              name: owner.name.present? ? owner.name : owner.email,
+              name: display_name,
               email: owner.email,
               avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil
             }
@@ -356,10 +362,13 @@ module Api
         }
 
         if include_owner && business.owner
+          # Use full_name instead of name for consistency
+          owner_name = business.owner.full_name.present? ? business.owner.full_name : business.owner.email
+          
           json[:owner] = {
             id: business.owner.id,
             email: business.owner.email,
-            name: business.owner.name,
+            name: owner_name,
             avatar_url: business.owner.avatar_url
           }
         end
