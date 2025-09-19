@@ -288,11 +288,13 @@ create_user_safely(
     
     categories_data = [
       { name: "Books", description: "Books, literature, educational materials" },
+      { name: "Bible", description: "Bibles, religious texts, and Christian literature" },
       { name: "Clothes", description: "Clothing and fashion items" },
       { name: "Accessories", description: "Fashion and personal accessories" },
-      { name: "Adult Content", description: "Adult-oriented products and materials" },
+      { name: "Rosaries", description: "Religious rosaries, prayer beads, and devotional items" },
       { name: "African Inspired", description: "African-inspired products and crafts" },
       { name: "Agricultural equipment", description: "Farming and agricultural tools" },
+      { name: "Anime merch", description: "Anime merchandise, collectibles, and related products" },
       { name: "Apparel", description: "General clothing and apparel" },
       { name: "Arts and Design", description: "Art supplies and design materials" },
       { name: "Baby Products", description: "Baby care and children's products" },
