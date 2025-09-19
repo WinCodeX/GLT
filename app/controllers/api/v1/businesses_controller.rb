@@ -212,6 +212,11 @@ module Api
         end
       end
 
+def staff
+  # Implementation needed for staff listing
+  render json: { success: true, data: { staff: [] } }
+end
+
       private
 
       def set_business
