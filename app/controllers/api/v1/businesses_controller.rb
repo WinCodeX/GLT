@@ -3,7 +3,7 @@ module Api
   module V1
     class BusinessesController < ApplicationController
       before_action :authenticate_user!
-      before_action :set_business, only: [:show, :update, :destroy]
+      before_action :set_business, only: [:show, :update, :destroy, :staff]
       before_action :authorize_business_access, only: [:show]
       before_action :authorize_business_owner, only: [:update, :destroy]
 
