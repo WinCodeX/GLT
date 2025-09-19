@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_14_114040) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_19_132757) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -85,6 +85,26 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_14_114040) do
     t.string "initials", limit: 3
     t.index ["initials"], name: "idx_areas_initials", unique: true
     t.index ["location_id"], name: "index_areas_on_location_id"
+  end
+
+  create_table "business_activities", force: :cascade do |t|
+    t.bigint "business_id", null: false
+    t.bigint "user_id", null: false
+    t.bigint "target_user_id"
+    t.bigint "package_id"
+    t.string "activity_type", null: false
+    t.text "description", null: false
+    t.json "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["activity_type"], name: "index_business_activities_on_activity_type"
+    t.index ["business_id", "activity_type"], name: "index_business_activities_on_business_id_and_activity_type"
+    t.index ["business_id", "created_at"], name: "index_business_activities_on_business_id_and_created_at", order: { created_at: :desc }
+    t.index ["business_id"], name: "index_business_activities_on_business_id"
+    t.index ["package_id"], name: "index_business_activities_on_package_id"
+    t.index ["target_user_id"], name: "index_business_activities_on_target_user_id"
+    t.index ["user_id", "created_at"], name: "index_business_activities_on_user_id_and_created_at", order: { created_at: :desc }
+    t.index ["user_id"], name: "index_business_activities_on_user_id"
   end
 
   create_table "business_categories", force: :cascade do |t|
@@ -454,6 +474,10 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_14_114040) do
   add_foreign_key "agents", "areas"
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
+  add_foreign_key "business_activities", "businesses"
+  add_foreign_key "business_activities", "packages"
+  add_foreign_key "business_activities", "users"
+  add_foreign_key "business_activities", "users", column: "target_user_id"
   add_foreign_key "business_categories", "businesses"
   add_foreign_key "business_categories", "categories"
   add_foreign_key "business_invites", "businesses"
