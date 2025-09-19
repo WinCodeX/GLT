@@ -211,30 +211,65 @@ module Api
           }, status: :internal_server_error
         end
       end
-
 def staff
-  # owner (role = "owner")
-  owner_ub = @business.user_businesses.includes(:user).find_by(role: "owner")
-  owner = owner_ub&.user
+  begin
+    # Get the direct owner from the business association
+    owner = @business.owner
 
-  # staff members (role = "staff")
-  staff = @business.user_businesses.includes(:user).where(role: "staff").map do |ub|
-    {
-      id: ub.user.id,
-      name: ub.user.name || ub.user.email,
-      active: ub.user.respond_to?(:online?) ? ub.user.online? : false
-    }
+    # Get staff members (role = "staff") from user_businesses
+    staff_members = @business.user_businesses.includes(:user).where(role: 'staff').map do |ub|
+      user = ub.user
+      {
+        id: user.id,
+        name: user.name.present? ? user.name : user.email,
+        email: user.email,
+        active: user.respond_to?(:online?) ? user.online? : false,
+        joined_at: ub.created_at.iso8601
+      }
+    end
+
+    # Always return a consistent owner structure
+    owner_data = if owner
+      {
+        id: owner.id,
+        name: owner.name.present? ? owner.name : owner.email,
+        email: owner.email,
+        avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil
+      }
+    else
+      # Fallback - this shouldn't happen but ensures consistency
+      {
+        id: nil,
+        name: "Unknown Owner",
+        email: "unknown@example.com",
+        avatar_url: nil
+      }
+    end
+
+    active_count = staff_members.count { |s| s[:active] }
+    total_members = staff_members.size + 1 # +1 for owner
+
+    render json: {
+      success: true,
+      data: {
+        owner: owner_data,
+        staff: staff_members,
+        stats: {
+          active_members: active_count + 1, # +1 for owner (assume active)
+          total_members: total_members,
+          staff_count: staff_members.size
+        }
+      }
+    }, status: :ok
+
+  rescue StandardError => e
+    Rails.logger.error "Error fetching staff: #{e.class} - #{e.message}"
+    render json: {
+      success: false,
+      message: "Failed to fetch staff",
+      errors: ["Unable to load staff information. Please try again."]
+    }, status: :internal_server_error
   end
-
-  render json: {
-    success: true,
-    data: {
-      owner: owner ? { id: owner.id, name: owner.name || owner.email } : nil,
-      staff: staff,
-      active_members: staff.count { |s| s[:active] } + (owner ? 1 : 0),
-      total_members: staff.size + (owner ? 1 : 0)
-    }
-  }
 end
 
       private
