@@ -50,15 +50,15 @@ class BusinessActivity < ApplicationRecord
 
   # Class methods
   def self.create_package_activity(business:, user:, package:, activity_type:, metadata: {})
-    create!(
-      business: business,
-      user: user,
-      package: package,
-      activity_type: activity_type,
-      metadata: default_metadata.merge(metadata),
-      target_user: activity_type == 'package_created' ? package&.receiver_user : nil
-    )
-  end
+  create!(
+    business: business,
+    user: user,
+    package: package,
+    activity_type: activity_type,
+    metadata: default_metadata.merge(metadata),
+    target_user: nil  # Remove the receiver_user reference since it doesn't exist
+  )
+end
 
   def self.create_staff_activity(business:, user:, target_user:, activity_type:, metadata: {})
     create!(
