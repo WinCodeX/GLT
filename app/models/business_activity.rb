@@ -46,37 +46,54 @@ class BusinessActivity < ApplicationRecord
 
   # Callbacks
   before_validation :set_default_metadata
-  before_create :generate_description
+  # Removed problematic before_create callback
 
-  # Class methods
+  # Class methods - FIXED: Generate description explicitly with proper error handling
   def self.create_package_activity(business:, user:, package:, activity_type:, metadata: {})
-  create!(
-    business: business,
-    user: user,
-    package: package,
-    activity_type: activity_type,
-    metadata: default_metadata.merge(metadata),
-    target_user: activity_type == 'package_created' ? package&.user : nil
-  )
-end
+    activity = new(
+      business: business,
+      user: user,
+      package: package,
+      activity_type: activity_type,
+      metadata: default_metadata.merge(metadata),
+      target_user: nil # Simplified - no target_user for package activities
+    )
+    
+    # Generate description explicitly BEFORE validation
+    activity.description = activity.generate_description_for_activity
+    
+    activity.save!
+    activity
+  rescue => e
+    Rails.logger.error "Failed to create package activity: #{e.message}"
+    raise e
+  end
 
   def self.create_staff_activity(business:, user:, target_user:, activity_type:, metadata: {})
-    create!(
+    activity = new(
       business: business,
       user: user,
       target_user: target_user,
       activity_type: activity_type,
       metadata: default_metadata.merge(metadata)
     )
+    
+    activity.description = activity.generate_description_for_activity
+    activity.save!
+    activity
   end
 
   def self.create_business_activity(business:, user:, activity_type:, metadata: {})
-    create!(
+    activity = new(
       business: business,
       user: user,
       activity_type: activity_type,
       metadata: default_metadata.merge(metadata)
     )
+    
+    activity.description = activity.generate_description_for_activity
+    activity.save!
+    activity
   end
 
   def self.activities_summary(business:, start_date: 1.month.ago, end_date: Time.current)
@@ -149,8 +166,8 @@ end
 
   def summary_json
     # Use full_name instead of name to avoid NoMethodError
-    user_name = user.respond_to?(:full_name) && user.full_name.present? ? user.full_name : user.email
-    target_user_name = target_user&.respond_to?(:full_name) && target_user&.full_name&.present? ? target_user.full_name : target_user&.email
+    user_name = safe_user_name
+    target_user_name = safe_target_user_name
     
     {
       id: id,
@@ -176,26 +193,12 @@ end
     }
   end
 
-  private
-
-  def self.default_metadata
-    {
-      timestamp: Time.current.iso8601,
-      app_version: Rails.application.class.module_parent_name
-    }
-  end
-
-  def set_default_metadata
-    self.metadata ||= {}
-    self.metadata = self.class.default_metadata.merge(metadata)
-  end
-
-  def generate_description
-    # Use full_name instead of name to avoid NoMethodError
-    user_name = user.respond_to?(:full_name) && user.full_name.present? ? user.full_name : user.email
-    target_user_name = target_user&.respond_to?(:full_name) && target_user&.full_name&.present? ? target_user.full_name : target_user&.email
+  # FIXED: Robust description generation with fallbacks
+  def generate_description_for_activity
+    user_name = safe_user_name
+    target_user_name = safe_target_user_name
     
-    self.description = case activity_type
+    case activity_type
     when 'package_created'
       if target_user
         "#{user_name} created a package for #{target_user_name}"
@@ -203,9 +206,9 @@ end
         "#{user_name} created a package"
       end
     when 'package_delivered'
-      "Package #{package&.code} was delivered"
+      "Package #{package&.code || 'unknown'} was delivered"
     when 'package_cancelled'
-      "Package #{package&.code} was cancelled"
+      "Package #{package&.code || 'unknown'} was cancelled"
     when 'staff_joined'
       "#{target_user_name} joined the business"
     when 'staff_removed'
@@ -223,7 +226,60 @@ end
     when 'business_created'
       "#{user_name} created the business"
     else
-      "#{user_name} performed #{activity_type.humanize.downcase}"
+      "#{user_name} performed #{activity_type&.humanize&.downcase || 'an action'}"
     end
+  rescue => e
+    Rails.logger.error "Failed to generate description: #{e.message}"
+    "Activity performed" # Fallback description
+  end
+
+  private
+
+  def self.default_metadata
+    {
+      timestamp: Time.current.iso8601,
+      app_version: Rails.application.class.module_parent_name
+    }
+  end
+
+  def set_default_metadata
+    self.metadata ||= {}
+    self.metadata = self.class.default_metadata.merge(metadata)
+  end
+
+  # FIXED: Safe user name extraction with multiple fallbacks
+  def safe_user_name
+    return 'Unknown User' unless user
+    
+    if user.respond_to?(:full_name) && user.full_name.present?
+      user.full_name
+    elsif user.respond_to?(:name) && user.name.present?
+      user.name
+    elsif user.email.present?
+      user.email
+    else
+      "User ##{user.id}"
+    end
+  rescue => e
+    Rails.logger.error "Failed to get user name: #{e.message}"
+    'Unknown User'
+  end
+
+  # FIXED: Safe target user name extraction
+  def safe_target_user_name
+    return 'Unknown User' unless target_user
+    
+    if target_user.respond_to?(:full_name) && target_user.full_name.present?
+      target_user.full_name
+    elsif target_user.respond_to?(:name) && target_user.name.present?
+      target_user.name
+    elsif target_user.email.present?
+      target_user.email
+    else
+      "User ##{target_user.id}"
+    end
+  rescue => e
+    Rails.logger.error "Failed to get target user name: #{e.message}"
+    'Unknown User'
   end
 end
