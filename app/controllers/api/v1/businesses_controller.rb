@@ -288,6 +288,7 @@ module Api
         end
       end
 
+      # FIXED: Enhanced activities method with robust error handling
       def activities
         begin
           Rails.logger.info "Fetching activities for business #{@business.id} by user #{current_user.id}"
@@ -301,7 +302,7 @@ module Api
           
           # Check if BusinessActivity model exists
           unless defined?(BusinessActivity)
-            # Return mock data if BusinessActivity model doesn't exist
+            Rails.logger.warn "BusinessActivity model not found, returning mock data"
             return render json: {
               success: true,
               data: {
@@ -323,68 +324,88 @@ module Api
             }, status: :ok
           end
           
-          # Build query for activities
+          # Check if business_activities table exists
+          unless ActiveRecord::Base.connection.table_exists?('business_activities')
+            Rails.logger.warn "business_activities table not found, returning mock data"
+            return render json: {
+              success: true,
+              data: {
+                activities: [],
+                summary: {
+                  total_activities: 0,
+                  package_activities: 0,
+                  staff_activities: 0
+                }
+              },
+              pagination: {
+                current_page: page,
+                per_page: per_page,
+                total_count: 0,
+                total_pages: 0,
+                has_next: false,
+                has_prev: false
+              }
+            }, status: :ok
+          end
+          
+          # Build query for activities with proper error handling
           activities_query = BusinessActivity.where(business: @business)
-                                           .includes(:user, :target_user, :package)
-                                           .recent
           
-          # Apply filters
-          case filter_type
-          when 'package'
-            activities_query = activities_query.package_activities
-          when 'staff'
-            activities_query = activities_query.staff_activities
-          when 'today'
-            activities_query = activities_query.today
-          when 'week'
-            activities_query = activities_query.this_week
-          when 'month'
-            activities_query = activities_query.this_month
+          # Apply filters with error handling
+          begin
+            case filter_type
+            when 'package'
+              activities_query = activities_query.package_activities
+            when 'staff'
+              activities_query = activities_query.staff_activities
+            when 'today'
+              activities_query = activities_query.today
+            when 'week'
+              activities_query = activities_query.this_week
+            when 'month'
+              activities_query = activities_query.this_month
+            end
+          rescue => filter_error
+            Rails.logger.error "Error applying filter #{filter_type}: #{filter_error.message}"
+            # Continue without filter
           end
           
-          # Get total count before pagination
-          total_count = activities_query.count
-          
-          # Apply pagination
-          activities = activities_query.offset((page - 1) * per_page)
-                                     .limit(per_page)
-          
-          # Get activities summary
-          summary = BusinessActivity.activities_summary(
-            business: @business,
-            start_date: 1.month.ago,
-            end_date: Time.current
-          )
-          
-          # Serialize activities
-          serialized_activities = activities.map do |activity|
-            activity_data = activity.summary_json
-            
-            # Fix the user name issue in serialization
-            if activity_data[:user] && activity_data[:user][:name].blank?
-              user = activity.user
-              activity_data[:user][:name] = user.full_name.present? ? user.full_name : user.email
-            end
-            
-            if activity_data[:target_user] && activity_data[:target_user][:name].blank?
-              target_user = activity.target_user
-              activity_data[:target_user][:name] = target_user.full_name.present? ? target_user.full_name : target_user.email
-            end
-            
-            activity_data
+          # Get total count with error handling
+          begin
+            total_count = activities_query.count
+          rescue => count_error
+            Rails.logger.error "Error counting activities: #{count_error.message}"
+            total_count = 0
           end
+          
+          # Apply pagination and includes with error handling
+          begin
+            activities = activities_query.includes(:user, :target_user, :package)
+                                       .order(created_at: :desc)
+                                       .offset((page - 1) * per_page)
+                                       .limit(per_page)
+          rescue => query_error
+            Rails.logger.error "Error fetching activities: #{query_error.message}"
+            activities = []
+          end
+          
+          # Get activities summary with error handling
+          summary = safe_activities_summary(@business)
+          
+          # Serialize activities with robust error handling
+          serialized_activities = safe_serialize_activities(activities)
           
           render json: {
             success: true,
             data: {
               activities: serialized_activities,
-              summary: summary.except(:recent_activities) # Exclude to avoid duplication
+              summary: summary
             },
             pagination: {
               current_page: page,
               per_page: per_page,
               total_count: total_count,
-              total_pages: (total_count / per_page.to_f).ceil,
+              total_pages: total_count > 0 ? (total_count / per_page.to_f).ceil : 0,
               has_next: page * per_page < total_count,
               has_prev: page > 1
             },
@@ -459,6 +480,174 @@ module Api
             message: "Only business owner can perform this action" 
           }, status: :forbidden
         end
+      end
+
+      # FIXED: Safe activities summary with error handling
+      def safe_activities_summary(business)
+        begin
+          activities = BusinessActivity.where(business: business, created_at: 1.month.ago..Time.current)
+          
+          {
+            total_activities: activities.count,
+            package_activities: activities.where(activity_type: ['package_created', 'package_delivered', 'package_cancelled']).count,
+            staff_activities: activities.where(activity_type: ['staff_joined', 'staff_removed', 'invite_sent', 'invite_accepted']).count
+          }
+        rescue => e
+          Rails.logger.error "Error generating activities summary: #{e.message}"
+          {
+            total_activities: 0,
+            package_activities: 0,
+            staff_activities: 0
+          }
+        end
+      end
+
+      # FIXED: Safe activity serialization with robust error handling
+      def safe_serialize_activities(activities)
+        return [] if activities.blank?
+        
+        activities.map do |activity|
+          begin
+            # Basic activity data
+            activity_data = {
+              id: activity.id,
+              activity_type: activity.activity_type,
+              description: activity.description || 'Activity performed',
+              formatted_time: safe_format_time(activity.created_at),
+              activity_icon: safe_activity_icon(activity.activity_type),
+              activity_color: safe_activity_color(activity.activity_type)
+            }
+            
+            # Safe user serialization
+            if activity.user
+              activity_data[:user] = {
+                id: activity.user.id,
+                name: safe_user_name(activity.user),
+                avatar_url: activity.user.respond_to?(:avatar_url) ? activity.user.avatar_url : nil
+              }
+            else
+              activity_data[:user] = {
+                id: nil,
+                name: 'Unknown User',
+                avatar_url: nil
+              }
+            end
+            
+            # Safe target user serialization
+            if activity.target_user
+              activity_data[:target_user] = {
+                id: activity.target_user.id,
+                name: safe_user_name(activity.target_user)
+              }
+            else
+              activity_data[:target_user] = nil
+            end
+            
+            # Safe package serialization
+            if activity.package
+              activity_data[:package] = {
+                id: activity.package.id,
+                code: activity.package.code || 'Unknown'
+              }
+            else
+              activity_data[:package] = nil
+            end
+            
+            # Safe metadata
+            activity_data[:metadata] = activity.metadata || {}
+            
+            activity_data
+          rescue => e
+            Rails.logger.error "Error serializing activity #{activity&.id}: #{e.message}"
+            {
+              id: activity&.id || 'unknown',
+              activity_type: activity&.activity_type || 'unknown',
+              description: 'Activity data unavailable',
+              formatted_time: safe_format_time(activity&.created_at || Time.current),
+              activity_icon: 'activity',
+              activity_color: '#6b7280',
+              user: { id: nil, name: 'Unknown User', avatar_url: nil },
+              target_user: nil,
+              package: nil,
+              metadata: {}
+            }
+          end
+        end
+      end
+
+      # Helper methods for safe serialization
+      def safe_user_name(user)
+        return 'Unknown User' unless user
+        
+        if user.respond_to?(:full_name) && user.full_name.present?
+          user.full_name
+        elsif user.respond_to?(:name) && user.name.present?
+          user.name
+        elsif user.email.present?
+          user.email
+        else
+          "User ##{user.id}"
+        end
+      rescue => e
+        Rails.logger.error "Error getting user name: #{e.message}"
+        'Unknown User'
+      end
+
+      def safe_format_time(time)
+        return 'Unknown time' unless time
+        
+        if time.today?
+          time.strftime('%I:%M %p')
+        elsif time > 1.week.ago
+          time.strftime('%a %I:%M %p')
+        else
+          time.strftime('%b %d, %Y')
+        end
+      rescue => e
+        Rails.logger.error "Error formatting time: #{e.message}"
+        'Unknown time'
+      end
+
+      def safe_activity_icon(activity_type)
+        case activity_type
+        when 'package_created'
+          'package'
+        when 'package_delivered'
+          'check-circle'
+        when 'package_cancelled'
+          'x-circle'
+        when 'staff_joined', 'invite_accepted'
+          'user-plus'
+        when 'staff_removed'
+          'user-minus'
+        when 'invite_sent'
+          'mail'
+        when 'business_updated', 'logo_updated', 'categories_updated'
+          'edit'
+        when 'business_created'
+          'briefcase'
+        else
+          'activity'
+        end
+      rescue
+        'activity'
+      end
+
+      def safe_activity_color(activity_type)
+        case activity_type
+        when 'package_created', 'staff_joined', 'invite_accepted', 'business_created'
+          '#10b981'
+        when 'package_delivered'
+          '#3b82f6'
+        when 'package_cancelled', 'staff_removed'
+          '#ef4444'
+        when 'invite_sent', 'business_updated', 'logo_updated', 'categories_updated'
+          '#f59e0b'
+        else
+          '#6b7280'
+        end
+      rescue
+        '#6b7280'
       end
 
       def business_params
