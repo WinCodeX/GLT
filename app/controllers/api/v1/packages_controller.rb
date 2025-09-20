@@ -1,4 +1,4 @@
-# app/controllers/api/v1/packages_controller.rb - Enhanced with notification system and resubmission logic
+# app/controllers/api/v1/packages_controller.rb - Enhanced with notification system, resubmission logic, and business support
 module Api
   module V1
     class PackagesController < ApplicationController
@@ -10,7 +10,7 @@ module Api
       def index
         begin
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
                                          { origin_area: :location, destination_area: :location }, :user)
                                 .order(created_at: :desc)
           
@@ -26,6 +26,7 @@ module Api
           serialized_data = PackageSerializer.new(packages, {
             params: { 
               include_qr_code: false,
+              include_business: true,
               url_helper: self
             }
           }).serializable_hash
@@ -72,6 +73,7 @@ module Api
           serialized_data = PackageSerializer.new(@package, {
             params: { 
               include_qr_code: false,
+              include_business: true,
               url_helper: self
             }
           }).serializable_hash
@@ -121,10 +123,13 @@ module Api
           package.cost = calculate_package_cost(package)
 
           if package.save
-            Rails.logger.info "Package created successfully: #{package.code}"
+            Rails.logger.info "Package created successfully: #{package.code} for business: #{package.business&.name || 'None'}"
             
             serialized_data = PackageSerializer.new(package, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
             
             render json: {
@@ -186,7 +191,10 @@ module Api
             end
 
             serialized_data = PackageSerializer.new(@package.reload, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
 
             render json: {
@@ -281,7 +289,10 @@ module Api
           
           if @package.resubmit!(reason: reason)
             serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
 
             render json: {
@@ -329,7 +340,10 @@ module Api
 
           if @package.reject_package!(reason: reason, auto_rejected: auto_rejected)
             serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
 
             render json: {
@@ -480,7 +494,7 @@ module Api
       end
 
       # ===========================================
-      # EXISTING ENDPOINTS (UNCHANGED)
+      # EXISTING ENDPOINTS (UPDATED WITH BUSINESS SUPPORT)
       # ===========================================
 
       def search
@@ -495,13 +509,16 @@ module Api
 
         begin
           packages = current_user.accessible_packages
-                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
                                          { origin_area: :location, destination_area: :location }, :user)
-                                .where("code ILIKE ?", "%#{query}%")
+                                .where("code ILIKE ? OR business_name ILIKE ?", "%#{query}%", "%#{query}%")
                                 .limit(20)
 
           serialized_data = PackageSerializer.new(packages, {
-            params: { url_helper: self }
+            params: { 
+              include_business: true,
+              url_helper: self 
+            }
           }).serializable_hash
 
           render json: {
@@ -533,7 +550,8 @@ module Api
               tracking_url: qr_data[:tracking_url],
               package_code: @package.code,
               package_state: @package.state,
-              route_description: safe_route_description(@package)
+              route_description: safe_route_description(@package),
+              business_name: @package.business_name_display
             },
             message: 'QR code generated successfully'
           }
@@ -550,7 +568,10 @@ module Api
       def tracking_page
         begin
           serialized_data = PackageSerializer.new(@package, {
-            params: { url_helper: self }
+            params: { 
+              include_business: true,
+              url_helper: self 
+            }
           }).serializable_hash
 
           render json: {
@@ -575,7 +596,10 @@ module Api
             @package.update!(state: 'pending')
             
             serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
             
             render json: { 
@@ -605,7 +629,10 @@ module Api
             @package.update!(state: 'submitted')
             
             serialized_data = PackageSerializer.new(@package, {
-              params: { url_helper: self }
+              params: { 
+                include_business: true,
+                url_helper: self 
+              }
             }).serializable_hash
             
             render json: { 
@@ -636,7 +663,7 @@ module Api
       end
 
       def set_package
-        @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+        @package = Package.includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
                                    { origin_area: :location, destination_area: :location }, :user)
                          .find_by!(code: params[:id])
         ensure_package_has_code(@package)
@@ -649,7 +676,7 @@ module Api
 
       def set_package_for_authenticated_user
         @package = current_user.accessible_packages
-                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent,
+                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
                                         { origin_area: :location, destination_area: :location }, :user)
                                .find_by!(code: params[:id])
         ensure_package_has_code(@package)
@@ -662,7 +689,10 @@ module Api
 
       def apply_filters(packages)
         packages = packages.where(state: params[:state]) if params[:state].present?
-        packages = packages.where("code ILIKE ?", "%#{params[:search]}%") if params[:search].present?
+        packages = packages.where("code ILIKE ? OR business_name ILIKE ?", "%#{params[:search]}%", "%#{params[:search]}%") if params[:search].present?
+        
+        # NEW: Business filter
+        packages = packages.where(business_id: params[:business_id]) if params[:business_id].present?
         
         case current_user.primary_role
         when 'agent'
@@ -856,8 +886,10 @@ module Api
         base_cost = 150
         
         case package.delivery_type
-        when 'doorstep'
+        when 'doorstep', 'home'
           base_cost += 100
+        when 'office'
+          base_cost += 50
         when 'fragile'
           base_cost += 150
         when 'agent'
@@ -896,7 +928,7 @@ module Api
       end
 
       def should_recalculate_cost?(params)
-        cost_affecting_fields = ['origin_area_id', 'destination_area_id', 'delivery_type']
+        cost_affecting_fields = ['origin_area_id', 'destination_area_id', 'delivery_type', 'package_size']
         params.keys.any? { |key| cost_affecting_fields.include?(key) }
       end
 
@@ -967,11 +999,14 @@ module Api
         end
       end
 
-      # FIXED: Made agent/area fields conditional based on delivery type
+      # UPDATED: Added business fields to permitted parameters
       def package_params
         base_params = [
           :sender_name, :sender_phone, :receiver_name, :receiver_phone,
-          :delivery_type, :pickup_location, :package_description
+          :delivery_type, :pickup_location, :package_description, :package_size,
+          :special_instructions, :delivery_location,
+          # NEW: Business fields
+          :business_id, :business_name, :business_phone
         ]
         
         # Only require agent/area IDs for non-location-based deliveries
@@ -980,7 +1015,7 @@ module Api
           base_params += [:origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         end
         
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
+        optional_fields = [:sender_email, :receiver_email,
                           :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         optional_fields.each do |field|
           base_params << field unless base_params.include?(field)
@@ -989,17 +1024,20 @@ module Api
         params.require(:package).permit(*base_params)
       end
 
-      # FIXED: Updated update parameters with same conditional logic
+      # UPDATED: Added business fields to update parameters
       def package_update_params
         base_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
-                      :delivery_type, :state, :pickup_location, :package_description]
+                      :delivery_type, :state, :pickup_location, :package_description,
+                      :package_size, :special_instructions, :delivery_location,
+                      # NEW: Business fields
+                      :business_id, :business_name, :business_phone]
         
         # Only require agent/area IDs for non-location-based deliveries
         unless ['fragile', 'collection'].include?(@package.delivery_type)
           base_params += [:destination_area_id, :destination_agent_id, :origin_agent_id]
         end
         
-        optional_fields = [:delivery_location, :sender_email, :receiver_email, :business_name,
+        optional_fields = [:sender_email, :receiver_email,
                           :origin_area_id, :destination_area_id, :origin_agent_id, :destination_agent_id]
         optional_fields.each do |field|
           base_params << field unless base_params.include?(field)
@@ -1012,8 +1050,9 @@ module Api
           if ['pending_unpaid', 'pending'].include?(@package.state)
             permitted_params = [:sender_name, :sender_phone, :receiver_name, :receiver_phone, 
                                :destination_area_id, :destination_agent_id, :delivery_location,
-                               :sender_email, :receiver_email, :business_name, :pickup_location, 
-                               :package_description].select do |field|
+                               :sender_email, :receiver_email, :pickup_location, 
+                               :package_description, :package_size, :special_instructions,
+                               :business_id, :business_name, :business_phone].select do |field|
               base_params.include?(field)
             end
           end
@@ -1021,7 +1060,7 @@ module Api
           permitted_params = base_params
         when 'agent', 'rider', 'warehouse'
           permitted_params = [:state, :destination_area_id, :destination_agent_id, :delivery_location,
-                             :pickup_location, :package_description].select do |field|
+                             :pickup_location, :package_description, :package_size, :special_instructions].select do |field|
             base_params.include?(field)
           end
         end
