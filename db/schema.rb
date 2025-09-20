@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_19_132757) do
+ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -345,7 +345,13 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_19_132757) do
     t.datetime "resubmitted_at"
     t.datetime "expiry_deadline"
     t.datetime "final_deadline"
+    t.bigint "business_id"
+    t.string "business_name"
+    t.string "business_phone"
     t.index ["auto_rejected"], name: "index_packages_on_auto_rejected"
+    t.index ["business_id", "created_at"], name: "index_packages_on_business_id_and_created_at", order: { created_at: :desc }
+    t.index ["business_id"], name: "index_packages_on_business_id"
+    t.index ["business_name"], name: "index_packages_on_business_name"
     t.index ["code"], name: "idx_packages_code", unique: true
     t.index ["collection_scheduled_at"], name: "index_packages_on_collection_scheduled_at"
     t.index ["collection_type"], name: "index_packages_on_collection_type"
@@ -499,6 +505,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_19_132757) do
   add_foreign_key "packages", "agents", column: "origin_agent_id"
   add_foreign_key "packages", "areas", column: "destination_area_id"
   add_foreign_key "packages", "areas", column: "origin_area_id"
+  add_foreign_key "packages", "businesses"
   add_foreign_key "packages", "users"
   add_foreign_key "prices", "agents", column: "destination_agent_id"
   add_foreign_key "prices", "agents", column: "origin_agent_id"
