@@ -1,7 +1,8 @@
-# app/models/package.rb - Enhanced with notification system and automatic rejection logic
+# app/models/package.rb - Enhanced with notification system, automatic rejection logic, and business association
 
 class Package < ApplicationRecord
   belongs_to :user
+  belongs_to :business, optional: true  # NEW: Business association
   belongs_to :origin_area, class_name: 'Area', optional: true
   belongs_to :destination_area, class_name: 'Area', optional: true
   belongs_to :origin_agent, class_name: 'Agent', optional: true
@@ -101,11 +102,16 @@ class Package < ApplicationRecord
   scope :standard_packages, -> { where(delivery_type: ['doorstep', 'home', 'office', 'agent']) }
   scope :location_based_packages, -> { where(delivery_type: ['fragile', 'collection']) }
   scope :requiring_special_handling, -> { where(delivery_type: ['fragile', 'collection']).or(where(package_size: 'large')) }
+  
+  # NEW: Business-related scopes
+  scope :for_business, ->(business) { where(business: business) }
+  scope :with_business, -> { where.not(business_id: nil) }
+  scope :without_business, -> { where(business_id: nil) }
 
   # Callbacks
   before_create :generate_package_code_and_sequence, :set_initial_deadlines
-  after_create :generate_qr_code_files, :schedule_initial_expiry_job
-  before_save :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
+  after_create :generate_qr_code_files, :schedule_initial_expiry_job, :create_business_activity
+  before_save :populate_business_fields, :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
 
   # ===========================================
   # RESUBMISSION LOGIC
@@ -369,6 +375,19 @@ class Package < ApplicationRecord
     delivery_type == 'fragile'
   end
 
+  # NEW: Business-related helper methods
+  def has_business?
+    business_id.present?
+  end
+
+  def business_name_display
+    business_name.presence || business&.name || 'No Business'
+  end
+
+  def business_phone_display
+    business_phone.presence || business&.phone_number || 'No Phone'
+  end
+
   # Instance methods
   def intra_area_shipment?
     return false if location_based_delivery?
@@ -475,7 +494,7 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Enhanced JSON serialization with new delivery types and resubmission info
+  # UPDATED: Enhanced JSON serialization with business information
   def as_json(options = {})
     result = super(options).except('route_sequence') # Hide internal sequence from API
     
@@ -494,6 +513,11 @@ class Package < ApplicationRecord
       'priority_level' => priority_level,
       'delivery_type_display' => delivery_type_display,
       'package_size_display' => package_size_display,
+      'has_business' => has_business?,
+      
+      # Business information
+      'business_name_display' => business_name_display,
+      'business_phone_display' => business_phone_display,
       
       # Resubmission and expiry information
       'can_be_resubmitted' => can_be_resubmitted?,
@@ -503,6 +527,18 @@ class Package < ApplicationRecord
       'resubmission_limit_text' => resubmission_deadline_text,
       'final_deadline_passed' => final_deadline_passed?
     )
+    
+    # Include full business object if requested and available
+    if options[:include_business] && business
+      result.merge!(
+        'business' => {
+          'id' => business.id,
+          'name' => business.name,
+          'phone_number' => business.phone_number,
+          'logo_url' => business.logo_url
+        }
+      )
+    end
     
     # Include delivery-specific information
     if fragile_delivery?
@@ -646,10 +682,60 @@ class Package < ApplicationRecord
       instructions << "Special instructions: #{special_instructions}"
     end
     
+    if has_business?
+      instructions << "Business: #{business_name_display}"
+    end
+    
     instructions.join(' ')
   end
 
   private
+
+  # NEW: Auto-populate business fields when business_id is present
+  def populate_business_fields
+    if business_id.present? && business
+      # Only populate if fields are blank to avoid overwriting existing data
+      if business_name.blank?
+        self.business_name = business.name
+        Rails.logger.debug "Auto-populated business_name: #{business.name} for package #{id || 'new'}"
+      end
+      
+      if business_phone.blank?
+        self.business_phone = business.phone_number
+        Rails.logger.debug "Auto-populated business_phone: #{business.phone_number} for package #{id || 'new'}"
+      end
+    elsif business_id.blank?
+      # Clear business fields if business_id is removed
+      self.business_name = nil
+      self.business_phone = nil
+      Rails.logger.debug "Cleared business fields for package #{id || 'new'}"
+    end
+  rescue => e
+    Rails.logger.error "Failed to populate business fields for package #{id || 'new'}: #{e.message}"
+  end
+
+  # NEW: Create business activity after package creation
+  def create_business_activity
+    return unless business_id.present? && business
+
+    begin
+      BusinessActivity.create_package_activity(
+        business: business,
+        user: user,
+        package: self,
+        activity_type: 'package_created',
+        metadata: {
+          package_code: code,
+          delivery_type: delivery_type,
+          cost: cost,
+          destination_area: destination_area&.name
+        }
+      )
+      Rails.logger.info "Created business activity for package #{code} and business #{business.name}"
+    rescue => e
+      Rails.logger.error "Failed to create business activity for package #{code}: #{e.message}"
+    end
+  end
 
   def set_initial_deadlines
     # Set initial expiry deadline based on state
@@ -716,6 +802,7 @@ class Package < ApplicationRecord
     generator_options[:collection] = true if collection_delivery?
     generator_options[:large] = true if large_package?
     generator_options[:office] = true if office_delivery?
+    generator_options[:business] = business if business
     
     self.code = PackageCodeGenerator.new(self, generator_options).generate
     
@@ -735,6 +822,7 @@ class Package < ApplicationRecord
     job_options[:fragile] = true if fragile_delivery?
     job_options[:collection] = true if collection_delivery?
     job_options[:large] = true if large_package?
+    job_options[:business] = business if business
     
     begin
       if defined?(GenerateQrCodeJob)
