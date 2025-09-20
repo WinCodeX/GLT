@@ -56,7 +56,7 @@ class BusinessActivity < ApplicationRecord
     package: package,
     activity_type: activity_type,
     metadata: default_metadata.merge(metadata),
-    target_user: nil  # Remove the receiver_user reference since it doesn't exist
+    target_user: activity_type == 'package_created' ? package&.user : nil
   )
 end
 
