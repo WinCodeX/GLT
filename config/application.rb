@@ -1,4 +1,4 @@
-# config/application.rb - Fixed session configuration
+# config/application.rb - Fixed session configuration with Kenya Timezone
 
 if defined?(Dotenv)
   require 'dotenv/rails-now'
@@ -23,6 +23,16 @@ module GltApi
   class Application < Rails::Application
     config.load_defaults 7.1
     config.autoload_lib(ignore: %w(assets tasks))
+    
+    # ===========================================
+    # 🌍 TIMEZONE CONFIGURATION (KENYA)
+    # ===========================================
+    
+    # Set application timezone to Kenya (East Africa Time - UTC+3)
+    config.time_zone = 'Nairobi'
+    
+    # Keep database storage in UTC (recommended best practice)
+    config.active_record.default_timezone = :utc
     
     # ===========================================
     # 🔧 API-ONLY WITH SESSIONS CONFIGURATION
