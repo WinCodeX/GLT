@@ -226,6 +226,11 @@ Rails.application.routes.draw do
           delete :remove_category
           get :staff
           get :activities
+          get 'staff/:staff_id/activities', to: 'businesses#staff_activities'
+          
+          # NEW: Analytics endpoints
+          get 'analytics/packages-comparison', to: 'businesses#packages_comparison'
+          get 'analytics/best-locations', to: 'businesses#best_locations'
         end
       end
       
