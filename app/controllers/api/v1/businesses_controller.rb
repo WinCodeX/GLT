@@ -593,15 +593,20 @@ module Api
         'Unknown User'
       end
 
+      # FIXED: Timezone-aware time formatting
       def safe_format_time(time)
         return 'Unknown time' unless time
         
-        if time.today?
-          time.strftime('%I:%M %p')
-        elsif time > 1.week.ago
-          time.strftime('%a %I:%M %p')
+        # Convert UTC time to local timezone
+        # Use application timezone or user's timezone if available
+        local_time = time.in_time_zone(Time.zone)
+        
+        if local_time.today?
+          local_time.strftime('%I:%M %p')
+        elsif local_time > 1.week.ago
+          local_time.strftime('%a %I:%M %p')
         else
-          time.strftime('%b %d, %Y')
+          local_time.strftime('%b %d, %Y')
         end
       rescue => e
         Rails.logger.error "Error formatting time: #{e.message}"
