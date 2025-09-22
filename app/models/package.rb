@@ -150,13 +150,17 @@ class Package < ApplicationRecord
       save!
       
       # Create success notification
-      Notification.create_resubmission_success(
-        package: self,
-        new_deadline: new_expiry_time
-      )
+      if defined?(Notification)
+        Notification.create_resubmission_success(
+          package: self,
+          new_deadline: new_expiry_time
+        )
+      end
       
       # FIXED: Schedule new expiry check
-      SchedulePackageExpiryJob.set(wait_until: new_expiry_time - 2.hours).perform_later(self.id)
+      if defined?(SchedulePackageExpiryJob)
+        SchedulePackageExpiryJob.set(wait_until: new_expiry_time - 2.hours).perform_later(self.id)
+      end
       
       Rails.logger.info "Package #{code} resubmitted (#{resubmission_count}/2) - New deadline: #{new_expiry_time}"
       
@@ -186,14 +190,16 @@ class Package < ApplicationRecord
       save!
       
       # Create rejection notification
-      Notification.create_package_rejection(
-        package: self,
-        reason: reason,
-        auto_rejected: auto_rejected
-      )
+      if defined?(Notification)
+        Notification.create_package_rejection(
+          package: self,
+          reason: reason,
+          auto_rejected: auto_rejected
+        )
+      end
       
       # FIXED: Schedule automatic deletion if auto-rejected
-      if auto_rejected
+      if auto_rejected && defined?(DeleteRejectedPackageJob)
         DeleteRejectedPackageJob.set(wait_until: final_deadline).perform_later(self.id)
       end
       
@@ -291,17 +297,19 @@ class Package < ApplicationRecord
       next unless hours_remaining && hours_remaining > 0
       
       # Only send warning once when between 2-6 hours remain
-      last_warning = package.notifications
-        .where(notification_type: 'final_warning')
-        .where('created_at >= ?', 8.hours.ago)
-        .exists?
-      
-      unless last_warning
-        Notification.create_expiry_warning(
-          package: package,
-          hours_remaining: hours_remaining.round(1)
-        )
-        warned_count += 1
+      if defined?(Notification)
+        last_warning = package.notifications
+          .where(notification_type: 'final_warning')
+          .where('created_at >= ?', 8.hours.ago)
+          .exists?
+        
+        unless last_warning
+          Notification.create_expiry_warning(
+            package: package,
+            hours_remaining: hours_remaining.round(1)
+          )
+          warned_count += 1
+        end
       end
     end
     
@@ -494,97 +502,6 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Enhanced JSON serialization with business information
-  def as_json(options = {})
-    result = super(options).except('route_sequence') # Hide internal sequence from API
-    
-    # Always include these computed fields
-    result.merge!(
-      'tracking_code' => code,
-      'route_description' => route_description,
-      'is_intra_area' => intra_area_shipment?,
-      'tracking_url' => tracking_url,
-      'is_fragile' => fragile_delivery?,
-      'is_collection' => collection_delivery?,
-      'is_home_delivery' => home_delivery?,
-      'is_office_delivery' => office_delivery?,
-      'is_location_based' => location_based_delivery?,
-      'requires_special_handling' => requires_special_handling?,
-      'priority_level' => priority_level,
-      'delivery_type_display' => delivery_type_display,
-      'package_size_display' => package_size_display,
-      'has_business' => has_business?,
-      
-      # Business information
-      'business_name_display' => business_name_display,
-      'business_phone_display' => business_phone_display,
-      
-      # Resubmission and expiry information
-      'can_be_resubmitted' => can_be_resubmitted?,
-      'resubmission_count' => resubmission_count,
-      'remaining_resubmissions' => [0, 2 - resubmission_count].max,
-      'hours_until_expiry' => hours_until_expiry,
-      'resubmission_limit_text' => resubmission_deadline_text,
-      'final_deadline_passed' => final_deadline_passed?
-    )
-    
-    # Include full business object if requested and available
-    if options[:include_business] && business
-      result.merge!(
-        'business' => {
-          'id' => business.id,
-          'name' => business.name,
-          'phone_number' => business.phone_number,
-          'logo_url' => business.logo_url
-        }
-      )
-    end
-    
-    # Include delivery-specific information
-    if fragile_delivery?
-      result.merge!(
-        'handling_instructions' => handling_instructions,
-        'fragile_warning' => 'This package requires special handling due to fragile contents'
-      )
-    end
-
-    if collection_delivery?
-      result.merge!(
-        'collection_instructions' => 'Package will be collected from specified pickup location',
-        'collection_type' => 'Location-based collection service'
-      )
-    end
-
-    if large_package?
-      result.merge!(
-        'size_warning' => 'Large package - special handling required',
-        'special_instructions' => special_instructions
-      )
-    end
-
-    # Include rejection information if rejected
-    if rejected?
-      result.merge!(
-        'rejection_info' => {
-          'reason' => rejection_reason,
-          'rejected_at' => rejected_at&.iso8601,
-          'auto_rejected' => auto_rejected?,
-          'original_state' => original_state
-        }
-      )
-    end
-
-    # Include expiry information if applicable
-    if expiry_deadline.present?
-      result.merge!(
-        'expiry_deadline' => expiry_deadline.iso8601,
-        'time_until_expiry_hours' => hours_until_expiry
-      )
-    end
-    
-    result
-  end
-
   # Status helper methods
   def paid?
     !pending_unpaid?
@@ -689,6 +606,97 @@ class Package < ApplicationRecord
     instructions.join(' ')
   end
 
+  # UPDATED: Enhanced JSON serialization with business information
+  def as_json(options = {})
+    result = super(options).except('route_sequence') # Hide internal sequence from API
+    
+    # Always include these computed fields
+    result.merge!(
+      'tracking_code' => code,
+      'route_description' => route_description,
+      'is_intra_area' => intra_area_shipment?,
+      'tracking_url' => tracking_url,
+      'is_fragile' => fragile_delivery?,
+      'is_collection' => collection_delivery?,
+      'is_home_delivery' => home_delivery?,
+      'is_office_delivery' => office_delivery?,
+      'is_location_based' => location_based_delivery?,
+      'requires_special_handling' => requires_special_handling?,
+      'priority_level' => priority_level,
+      'delivery_type_display' => delivery_type_display,
+      'package_size_display' => package_size_display,
+      'has_business' => has_business?,
+      
+      # Business information
+      'business_name_display' => business_name_display,
+      'business_phone_display' => business_phone_display,
+      
+      # Resubmission and expiry information
+      'can_be_resubmitted' => can_be_resubmitted?,
+      'resubmission_count' => resubmission_count,
+      'remaining_resubmissions' => [0, 2 - resubmission_count].max,
+      'hours_until_expiry' => hours_until_expiry,
+      'resubmission_limit_text' => resubmission_deadline_text,
+      'final_deadline_passed' => final_deadline_passed?
+    )
+    
+    # Include full business object if requested and available
+    if options[:include_business] && business
+      result.merge!(
+        'business' => {
+          'id' => business.id,
+          'name' => business.name,
+          'phone_number' => business.phone_number,
+          'logo_url' => business.logo_url
+        }
+      )
+    end
+    
+    # Include delivery-specific information
+    if fragile_delivery?
+      result.merge!(
+        'handling_instructions' => handling_instructions,
+        'fragile_warning' => 'This package requires special handling due to fragile contents'
+      )
+    end
+
+    if collection_delivery?
+      result.merge!(
+        'collection_instructions' => 'Package will be collected from specified pickup location',
+        'collection_type' => 'Location-based collection service'
+      )
+    end
+
+    if large_package?
+      result.merge!(
+        'size_warning' => 'Large package - special handling required',
+        'special_instructions' => special_instructions
+      )
+    end
+
+    # Include rejection information if rejected
+    if rejected?
+      result.merge!(
+        'rejection_info' => {
+          'reason' => rejection_reason,
+          'rejected_at' => rejected_at&.iso8601,
+          'auto_rejected' => auto_rejected?,
+          'original_state' => original_state
+        }
+      )
+    end
+
+    # Include expiry information if applicable
+    if expiry_deadline.present?
+      result.merge!(
+        'expiry_deadline' => expiry_deadline.iso8601,
+        'time_until_expiry_hours' => hours_until_expiry
+      )
+    end
+    
+    result
+  end
+
   private
 
   # NEW: Auto-populate business fields when business_id is present
@@ -719,19 +727,21 @@ class Package < ApplicationRecord
     return unless business_id.present? && business
 
     begin
-      BusinessActivity.create_package_activity(
-        business: business,
-        user: user,
-        package: self,
-        activity_type: 'package_created',
-        metadata: {
-          package_code: code,
-          delivery_type: delivery_type,
-          cost: cost,
-          destination_area: destination_area&.name
-        }
-      )
-      Rails.logger.info "Created business activity for package #{code} and business #{business.name}"
+      if defined?(BusinessActivity)
+        BusinessActivity.create_package_activity(
+          business: business,
+          user: user,
+          package: self,
+          activity_type: 'package_created',
+          metadata: {
+            package_code: code,
+            delivery_type: delivery_type,
+            cost: cost,
+            destination_area: destination_area&.name
+          }
+        )
+        Rails.logger.info "Created business activity for package #{code} and business #{business.name}"
+      end
     rescue => e
       Rails.logger.error "Failed to create business activity for package #{code}: #{e.message}"
     end
@@ -750,9 +760,9 @@ class Package < ApplicationRecord
     
     # Schedule warning check (6 hours before expiry)
     warning_time = expiry_deadline - 6.hours
-    if warning_time > Time.current
+    if warning_time > Time.current && defined?(SchedulePackageExpiryJob)
       SchedulePackageExpiryJob.set(wait_until: warning_time).perform_later(id)
-    else
+    elsif defined?(SchedulePackageExpiryJob)
       # If too close to deadline, schedule final check
       SchedulePackageExpiryJob.set(wait_until: expiry_deadline).perform_later(id)
     end
@@ -804,7 +814,12 @@ class Package < ApplicationRecord
     generator_options[:office] = true if office_delivery?
     generator_options[:business] = business if business
     
-    self.code = PackageCodeGenerator.new(self, generator_options).generate
+    if defined?(PackageCodeGenerator)
+      self.code = PackageCodeGenerator.new(self, generator_options).generate
+    else
+      # Fallback code generation
+      self.code = "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
+    end
     
     # FIXED: Only set route sequence for agent-based deliveries
     unless location_based_delivery?
@@ -830,7 +845,9 @@ class Package < ApplicationRecord
         GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
         
         # Generate thermal QR
-        GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal')) if defined?(GenerateThermalQrCodeJob)
+        if defined?(GenerateThermalQrCodeJob)
+          GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal'))
+        end
       end
     rescue => e
       # Log error but don't fail package creation
