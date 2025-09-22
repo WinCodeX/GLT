@@ -2,8 +2,8 @@ module Api
   module V1
     class BusinessesController < ApplicationController
       before_action :authenticate_user!
-      before_action :set_business, only: [:show, :update, :destroy, :staff, :activities]
-      before_action :authorize_business_access, only: [:show, :staff, :activities]
+      before_action :set_business, only: [:show, :update, :destroy, :staff, :activities, :staff_activities, :packages_comparison, :best_locations]
+      before_action :authorize_business_access, only: [:show, :staff, :activities, :staff_activities, :packages_comparison, :best_locations]
       before_action :authorize_business_owner, only: [:update, :destroy]
 
       def create
@@ -229,6 +229,7 @@ module Api
               id: user.id,
               name: display_name,
               email: user.email,
+              role: 'staff',
               active: user.respond_to?(:online?) ? user.online? : false,
               joined_at: ub.created_at.iso8601
             }
@@ -245,7 +246,9 @@ module Api
               id: owner.id,
               name: display_name,
               email: owner.email,
-              avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil
+              role: 'owner',
+              avatar_url: owner.respond_to?(:avatar_url) ? owner.avatar_url : nil,
+              joined_at: @business.created_at.iso8601
             }
           else
             # Fallback - this shouldn't happen but ensures consistency
@@ -254,7 +257,9 @@ module Api
               id: nil,
               name: "Unknown Owner",
               email: "unknown@example.com",
-              avatar_url: nil
+              role: 'owner',
+              avatar_url: nil,
+              joined_at: @business.created_at.iso8601
             }
           end
 
@@ -266,11 +271,8 @@ module Api
             data: {
               owner: owner_data,
               staff: staff_members,
-              stats: {
-                active_members: active_count + 1, # +1 for owner (assume active)
-                total_members: total_members,
-                staff_count: staff_members.size
-              }
+              total_members: total_members,
+              active_members: active_count + 1 # +1 for owner (assume active)
             }
           }
 
@@ -433,6 +435,194 @@ module Api
         end
       end
 
+      # NEW: Individual staff member activities
+      # GET /api/v1/businesses/:id/staff/:staff_id/activities
+      def staff_activities
+        begin
+          staff_id = params[:staff_id].to_i
+          Rails.logger.info "Fetching activities for staff #{staff_id} in business #{@business.id}"
+          
+          # Verify staff member exists and belongs to business
+          staff_user = find_staff_member(staff_id)
+          unless staff_user
+            return render json: {
+              success: false,
+              message: "Staff member not found or not part of this business"
+            }, status: :not_found
+          end
+
+          # Handle pagination
+          page = [params[:page]&.to_i || 1, 1].max
+          per_page = [[params[:per_page]&.to_i || 20, 1].max, 50].min
+
+          # Check if BusinessActivity exists
+          unless defined?(BusinessActivity)
+            Rails.logger.warn "BusinessActivity model not found, returning empty activities"
+            return render json: {
+              success: true,
+              data: [],
+              pagination: {
+                current_page: page,
+                per_page: per_page,
+                total_count: 0,
+                total_pages: 0,
+                has_next: false,
+                has_prev: false
+              },
+              staff_info: {
+                id: staff_user.id,
+                name: safe_user_name(staff_user),
+                email: staff_user.email,
+                role: staff_user.id == @business.owner_id ? 'owner' : 'staff'
+              }
+            }, status: :ok
+          end
+
+          # Get activities for specific staff member
+          begin
+            activities_query = BusinessActivity.where(business: @business)
+                                             .where("user_id = ? OR target_user_id = ?", staff_id, staff_id)
+            
+            total_count = activities_query.count
+            
+            activities = activities_query.includes(:user, :target_user, :package)
+                                       .order(created_at: :desc)
+                                       .offset((page - 1) * per_page)
+                                       .limit(per_page)
+            
+            # Serialize activities
+            serialized_activities = safe_serialize_activities(activities)
+            
+            render json: {
+              success: true,
+              data: serialized_activities,
+              pagination: {
+                current_page: page,
+                per_page: per_page,
+                total_count: total_count,
+                total_pages: total_count > 0 ? (total_count / per_page.to_f).ceil : 0,
+                has_next: page * per_page < total_count,
+                has_prev: page > 1
+              },
+              staff_info: {
+                id: staff_user.id,
+                name: safe_user_name(staff_user),
+                email: staff_user.email,
+                role: staff_user.id == @business.owner_id ? 'owner' : 'staff'
+              }
+            }, status: :ok
+
+          rescue => query_error
+            Rails.logger.error "Error fetching staff activities: #{query_error.message}"
+            render json: {
+              success: true,
+              data: [],
+              pagination: {
+                current_page: page,
+                per_page: per_page,
+                total_count: 0,
+                total_pages: 0,
+                has_next: false,
+                has_prev: false
+              },
+              staff_info: {
+                id: staff_user.id,
+                name: safe_user_name(staff_user),
+                email: staff_user.email,
+                role: staff_user.id == @business.owner_id ? 'owner' : 'staff'
+              }
+            }, status: :ok
+          end
+
+        rescue StandardError => e
+          Rails.logger.error "Error fetching staff activities: #{e.class} - #{e.message}"
+          render json: {
+            success: false,
+            message: "Failed to fetch staff activities",
+            errors: ["Unable to load staff activity information. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
+
+      # NEW: Two-month package comparison analytics
+      # GET /api/v1/businesses/:id/analytics/packages-comparison
+      def packages_comparison
+        begin
+          Rails.logger.info "Fetching package comparison analytics for business #{@business.id}"
+
+          # Get current and previous month data
+          current_month = Date.current.beginning_of_month
+          previous_month = current_month - 1.month
+
+          # Get package counts for both months
+          current_month_count = get_package_count_for_month(@business, current_month)
+          previous_month_count = get_package_count_for_month(@business, previous_month)
+
+          render json: {
+            success: true,
+            data: {
+              current_month: {
+                month: current_month.strftime('%b %Y'),
+                packages: current_month_count
+              },
+              previous_month: {
+                month: previous_month.strftime('%b %Y'),
+                packages: previous_month_count
+              }
+            },
+            metadata: {
+              comparison: {
+                change: current_month_count - previous_month_count,
+                percentage_change: previous_month_count > 0 ? 
+                  (((current_month_count - previous_month_count).to_f / previous_month_count) * 100).round(1) : 0,
+                trend: current_month_count >= previous_month_count ? 'up' : 'down'
+              }
+            }
+          }, status: :ok
+
+        rescue StandardError => e
+          Rails.logger.error "Error fetching package comparison: #{e.class} - #{e.message}"
+          render json: {
+            success: false,
+            message: "Failed to fetch package comparison data",
+            errors: ["Unable to load analytics. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
+
+      # NEW: Best locations analytics based on delivered and collected packages
+      # GET /api/v1/businesses/:id/analytics/best-locations
+      def best_locations
+        begin
+          Rails.logger.info "Fetching best locations analytics for business #{@business.id}"
+
+          # Get current month date range
+          start_date = Date.current.beginning_of_month
+          end_date = Date.current.end_of_month
+
+          # Get delivered and collected packages for this business in current month
+          locations_data = get_best_locations_data(@business, start_date, end_date)
+
+          render json: {
+            success: true,
+            data: locations_data,
+            metadata: {
+              period: "#{start_date.strftime('%B %Y')}",
+              total_locations: locations_data.size,
+              total_packages: locations_data.sum { |loc| loc[:count] }
+            }
+          }, status: :ok
+
+        rescue StandardError => e
+          Rails.logger.error "Error fetching best locations: #{e.class} - #{e.message}"
+          render json: {
+            success: false,
+            message: "Failed to fetch best locations data",
+            errors: ["Unable to load location analytics. Please try again."]
+          }, status: :internal_server_error
+        end
+      end
+
       private
 
       def set_business
@@ -480,6 +670,92 @@ module Api
             message: "Only business owner can perform this action" 
           }, status: :forbidden
         end
+      end
+
+      # Helper method to find staff member
+      def find_staff_member(staff_id)
+        # Check if it's the owner
+        return @business.owner if @business.owner_id == staff_id
+        
+        # Check if it's a staff member
+        staff_relation = @business.user_businesses.find_by(user_id: staff_id, role: 'staff')
+        staff_relation&.user
+      end
+
+      # Helper method to get package count for a specific month
+      def get_package_count_for_month(business, month_start)
+        month_end = month_start.end_of_month
+        
+        # Count packages for this business in the given month
+        if defined?(Package)
+          Package.where(business: business)
+                 .where(created_at: month_start..month_end)
+                 .count
+        else
+          # Fallback if Package model doesn't exist
+          Rails.logger.warn "Package model not found, returning 0 count"
+          0
+        end
+      rescue => e
+        Rails.logger.error "Error counting packages for month: #{e.message}"
+        0
+      end
+
+      # Helper method to get best locations data
+      def get_best_locations_data(business, start_date, end_date)
+        return [] unless defined?(Package)
+
+        begin
+          # Get delivered and collected packages for this business
+          packages = Package.where(business: business)
+                           .where(state: ['delivered', 'collected'])
+                           .where(updated_at: start_date..end_date)
+                           .includes(destination_area: :location)
+
+          # Group by location and count
+          location_counts = {}
+          total_packages = 0
+
+          packages.each do |package|
+            location_name = get_location_name_from_package(package)
+            location_counts[location_name] = location_counts.fetch(location_name, 0) + 1
+            total_packages += 1
+          end
+
+          # Convert to array and calculate percentages
+          locations_data = location_counts.map do |location, count|
+            percentage = total_packages > 0 ? ((count.to_f / total_packages) * 100).round(1) : 0
+            {
+              location: location,
+              count: count,
+              percentage: percentage
+            }
+          end
+
+          # Sort by count descending and take top 10
+          locations_data.sort_by { |loc| -loc[:count] }.first(10)
+
+        rescue => e
+          Rails.logger.error "Error getting best locations data: #{e.message}"
+          []
+        end
+      end
+
+      # Helper method to extract location name from package
+      def get_location_name_from_package(package)
+        # Try different approaches to get location
+        if package.delivery_location.present?
+          package.delivery_location
+        elsif package.destination_area&.location&.name.present?
+          package.destination_area.location.name
+        elsif package.destination_area&.name.present?
+          package.destination_area.name
+        else
+          'Unknown Location'
+        end
+      rescue => e
+        Rails.logger.error "Error extracting location from package: #{e.message}"
+        'Unknown Location'
       end
 
       # FIXED: Safe activities summary with error handling
