@@ -48,19 +48,31 @@ class BusinessActivity < ApplicationRecord
   before_validation :set_default_metadata
   # Removed problematic before_create callback
 
-  # Class methods - FIXED: Generate description explicitly with proper error handling
+  # ENHANCED: Class methods - Generate detailed activity descriptions with package and recipient info
   def self.create_package_activity(business:, user:, package:, activity_type:, metadata: {})
+    # ENHANCED: Enrich metadata with package and recipient details
+    enriched_metadata = default_metadata.merge(metadata).merge({
+      package_code: package&.code,
+      package_id: package&.id,
+      recipient_name: package&.receiver_name,
+      recipient_phone: package&.receiver_phone,
+      sender_name: package&.sender_name,
+      delivery_location: package&.delivery_location,
+      delivery_type: package&.delivery_type,
+      cost: package&.cost
+    })
+    
     activity = new(
       business: business,
       user: user,
       package: package,
       activity_type: activity_type,
-      metadata: default_metadata.merge(metadata),
+      metadata: enriched_metadata,
       target_user: nil # Simplified - no target_user for package activities
     )
     
-    # Generate description explicitly BEFORE validation
-    activity.description = activity.generate_description_for_activity
+    # Generate detailed description explicitly BEFORE validation
+    activity.description = activity.generate_detailed_description_for_activity
     
     activity.save!
     activity
@@ -78,7 +90,7 @@ class BusinessActivity < ApplicationRecord
       metadata: default_metadata.merge(metadata)
     )
     
-    activity.description = activity.generate_description_for_activity
+    activity.description = activity.generate_detailed_description_for_activity
     activity.save!
     activity
   end
@@ -91,7 +103,7 @@ class BusinessActivity < ApplicationRecord
       metadata: default_metadata.merge(metadata)
     )
     
-    activity.description = activity.generate_description_for_activity
+    activity.description = activity.generate_detailed_description_for_activity
     activity.save!
     activity
   end
@@ -193,44 +205,161 @@ class BusinessActivity < ApplicationRecord
     }
   end
 
-  # FIXED: Robust description generation with fallbacks
-  def generate_description_for_activity
+  # ENHANCED: Generate detailed description with package codes and recipient information
+  def generate_detailed_description_for_activity
     user_name = safe_user_name
     target_user_name = safe_target_user_name
     
     case activity_type
     when 'package_created'
-      if target_user
+      # ENHANCED: Include package code and recipient name for detailed descriptions
+      package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+      recipient_name = metadata&.dig('recipient_name') || 'recipient'
+      
+      base_description = if target_user
         "#{user_name} created a package for #{target_user_name}"
       else
         "#{user_name} created a package"
       end
+      
+      # Add package code
+      detailed_description = "#{user_name} created a package (#{package_code})"
+      
+      # Add recipient name if available and not generic
+      if recipient_name.present? && recipient_name != 'recipient'
+        detailed_description += " for #{recipient_name}"
+      end
+      
+      detailed_description
+      
     when 'package_delivered'
-      "Package #{package&.code || 'unknown'} was delivered"
+      package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+      "Package (#{package_code}) was delivered"
+      
     when 'package_cancelled'
-      "Package #{package&.code || 'unknown'} was cancelled"
+      package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+      "Package (#{package_code}) was cancelled"
+      
     when 'staff_joined'
       "#{target_user_name} joined the business"
+      
     when 'staff_removed'
       "#{target_user_name} was removed from the business"
+      
     when 'invite_sent'
       "#{user_name} sent an invite to join the business"
+      
     when 'invite_accepted'
       "#{target_user_name} accepted the invitation"
+      
     when 'business_updated'
       "#{user_name} updated business information"
+      
     when 'logo_updated'
       "#{user_name} updated the business logo"
+      
     when 'categories_updated'
       "#{user_name} updated business categories"
+      
     when 'business_created'
       "#{user_name} created the business"
+      
     else
       "#{user_name} performed #{activity_type&.humanize&.downcase || 'an action'}"
     end
   rescue => e
-    Rails.logger.error "Failed to generate description: #{e.message}"
+    Rails.logger.error "Failed to generate detailed description: #{e.message}"
     "Activity performed" # Fallback description
+  end
+
+  # NOTE: This method generates the base description stored in the database.
+  # For personalized display (showing "You" instead of username), 
+  # the BusinessesController handles that transformation at display time.
+  def generate_description_for_activity
+    # Delegate to the detailed description method for consistency
+    generate_detailed_description_for_activity
+  end
+
+  # ENHANCED: Method to generate personalized description based on viewer
+  # This is used by the BusinessesController for display customization
+  def personalized_description_for_viewer(viewer_user)
+    begin
+      # Determine if the activity user is the viewer ("you") or someone else
+      actor_name = if user == viewer_user
+        "You"
+      else
+        safe_user_name
+      end
+      
+      target_name = target_user ? safe_target_user_name : nil
+      
+      case activity_type
+      when 'package_created'
+        # ENHANCED: Include package code and recipient name for personalized descriptions
+        package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+        recipient_name = metadata&.dig('recipient_name') || nil
+        
+        base_description = "#{actor_name} created a package (#{package_code})"
+        
+        # Add recipient name if available
+        if recipient_name.present? && recipient_name.strip.downcase != 'recipient'
+          base_description += " for #{recipient_name}"
+        end
+        
+        base_description
+        
+      when 'package_delivered'
+        package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+        "Package (#{package_code}) was delivered"
+        
+      when 'package_cancelled'
+        package_code = package&.code || metadata&.dig('package_code') || 'unknown'
+        "Package (#{package_code}) was cancelled"
+        
+      when 'staff_joined'
+        if target_name
+          "#{target_name} joined the business"
+        else
+          "#{actor_name} joined the business"
+        end
+        
+      when 'staff_removed'
+        if target_name
+          "#{target_name} was removed from the business"
+        else
+          "Staff member was removed"
+        end
+        
+      when 'invite_sent'
+        "#{actor_name} sent an invite to join the business"
+        
+      when 'invite_accepted'
+        if target_name
+          "#{target_name} accepted the invitation"
+        else
+          "#{actor_name} accepted the invitation"
+        end
+        
+      when 'business_updated'
+        "#{actor_name} updated business information"
+        
+      when 'logo_updated'
+        "#{actor_name} updated the business logo"
+        
+      when 'categories_updated'
+        "#{actor_name} updated business categories"
+        
+      when 'business_created'
+        "#{actor_name} created the business"
+        
+      else
+        "#{actor_name} performed #{activity_type&.humanize&.downcase || 'an action'}"
+      end
+      
+    rescue => e
+      Rails.logger.error "Failed to generate personalized description: #{e.message}"
+      description || "Activity performed" # Fallback to stored description or generic
+    end
   end
 
   private
