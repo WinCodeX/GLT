@@ -722,53 +722,42 @@ class Package < ApplicationRecord
     Rails.logger.error "Failed to populate business fields for package #{id || 'new'}: #{e.message}"
   end
 
-  # FIXED: Enhanced business activity creation with detailed package and recipient info
+  # UPDATED: Create enhanced business activity with detailed package information
   def create_business_activity
     return unless business_id.present? && business
 
     begin
       if defined?(BusinessActivity)
-        # Determine the business to create activity for
-        target_business = business
-        activity_user = user
-        
-        # FIXED: If user is staff of business, create activity for the business they belong to
-        if user != business.owner
-          # Check if user is staff of this business
-          staff_relation = business.user_businesses.find_by(user_id: user.id, role: 'staff')
-          if staff_relation
-            # User is staff, activity shows up for business owner
-            target_business = business
-            activity_user = user
-          end
-        end
-
-        # FIXED: Enhanced metadata with recipient and detailed package information
-        enhanced_metadata = {
+        # UPDATED: Include recipient name in metadata for enhanced descriptions
+        activity_metadata = {
           package_code: code,
-          recipient_name: receiver_name || 'Unknown recipient',
-          recipient_phone: receiver_phone || 'No phone',
-          sender_name: sender_name || 'Unknown sender',
           delivery_type: delivery_type,
-          delivery_type_display: delivery_type_display,
           cost: cost,
-          destination_area: destination_area&.name || delivery_location,
-          pickup_location: pickup_location,
-          delivery_location: delivery_location,
+          destination_area: destination_area&.name,
+          recipient_name: receiver_name, # NEW: Include recipient name
           package_size: package_size,
-          business_association: has_business? ? 'direct' : 'staff_created',
-          is_staff_package: user != business.owner
+          created_by_staff: user != business.owner # Track if created by staff vs owner
         }
 
+        # Add pickup location for location-based deliveries
+        if location_based_delivery? && pickup_location.present?
+          activity_metadata[:pickup_location] = pickup_location
+        end
+
+        # Add delivery location if present
+        if delivery_location.present?
+          activity_metadata[:delivery_location] = delivery_location
+        end
+
         BusinessActivity.create_package_activity(
-          business: target_business,
-          user: activity_user,
+          business: business,
+          user: user,
           package: self,
           activity_type: 'package_created',
-          metadata: enhanced_metadata
+          metadata: activity_metadata
         )
         
-        Rails.logger.info "Created enhanced business activity for package #{code} (#{receiver_name}) by #{user.email} for business #{target_business.name}"
+        Rails.logger.info "Created enhanced business activity for package #{code} and business #{business.name} with recipient: #{receiver_name}"
       end
     rescue => e
       Rails.logger.error "Failed to create business activity for package #{code}: #{e.message}"
