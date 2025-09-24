@@ -290,7 +290,7 @@ module Api
         end
       end
 
-      # FIXED: Enhanced activities method with robust error handling
+      # ENHANCED: Activities method with personalized descriptions and staff package visibility
       def activities
         begin
           Rails.logger.info "Fetching activities for business #{@business.id} by user #{current_user.id}"
@@ -353,6 +353,17 @@ module Api
           # Build query for activities with proper error handling
           activities_query = BusinessActivity.where(business: @business)
           
+          # ENHANCED: Include packages created by staff members for business owner
+          if current_user == @business.owner
+            Rails.logger.info "User is business owner - showing all business activities including staff packages"
+            # Owner sees all activities for their business (including packages created by staff)
+            # No additional filtering needed - activities_query already filters by business
+          else
+            Rails.logger.info "User is staff member - showing only their own activities"
+            # Staff members only see their own activities
+            activities_query = activities_query.where(user: current_user)
+          end
+          
           # Apply filters with error handling
           begin
             case filter_type
@@ -394,8 +405,8 @@ module Api
           # Get activities summary with error handling
           summary = safe_activities_summary(@business)
           
-          # Serialize activities with robust error handling
-          serialized_activities = safe_serialize_activities(activities)
+          # ENHANCED: Serialize activities with personalized descriptions
+          serialized_activities = safe_serialize_activities_with_personalization(activities, current_user, @business)
           
           render json: {
             success: true,
@@ -490,8 +501,8 @@ module Api
                                        .offset((page - 1) * per_page)
                                        .limit(per_page)
             
-            # Serialize activities
-            serialized_activities = safe_serialize_activities(activities)
+            # ENHANCED: Serialize activities with personalization for the viewing user
+            serialized_activities = safe_serialize_activities_with_personalization(activities, current_user, @business)
             
             render json: {
               success: true,
@@ -590,39 +601,6 @@ module Api
         end
       end
 
-      # NEW: Best locations analytics based on delivered and collected packages
-      # GET /api/v1/businesses/:id/analytics/best-locations
-      def best_locations
-        begin
-          Rails.logger.info "Fetching best locations analytics for business #{@business.id}"
-
-          # Get current month date range
-          start_date = Date.current.beginning_of_month
-          end_date = Date.current.end_of_month
-
-          # Get delivered and collected packages for this business in current month
-          locations_data = get_best_locations_data(@business, start_date, end_date)
-
-          render json: {
-            success: true,
-            data: locations_data,
-            metadata: {
-              period: "#{start_date.strftime('%B %Y')}",
-              total_locations: locations_data.size,
-              total_packages: locations_data.sum { |loc| loc[:count] }
-            }
-          }, status: :ok
-
-        rescue StandardError => e
-          Rails.logger.error "Error fetching best locations: #{e.class} - #{e.message}"
-          render json: {
-            success: false,
-            message: "Failed to fetch best locations data",
-            errors: ["Unable to load location analytics. Please try again."]
-          }, status: :internal_server_error
-        end
-      end
-
       private
 
       def set_business
@@ -686,7 +664,7 @@ module Api
       def get_package_count_for_month(business, month_start)
         month_end = month_start.end_of_month
         
-        # Count packages for this business in the given month
+        # ENHANCED: Count packages for this business in the given month (including staff-created packages)
         if defined?(Package)
           Package.where(business: business)
                  .where(created_at: month_start..month_end)
@@ -699,63 +677,6 @@ module Api
       rescue => e
         Rails.logger.error "Error counting packages for month: #{e.message}"
         0
-      end
-
-      # Helper method to get best locations data
-      def get_best_locations_data(business, start_date, end_date)
-        return [] unless defined?(Package)
-
-        begin
-          # Get delivered and collected packages for this business
-          packages = Package.where(business: business)
-                           .where(state: ['delivered', 'collected'])
-                           .where(updated_at: start_date..end_date)
-                           .includes(destination_area: :location)
-
-          # Group by location and count
-          location_counts = {}
-          total_packages = 0
-
-          packages.each do |package|
-            location_name = get_location_name_from_package(package)
-            location_counts[location_name] = location_counts.fetch(location_name, 0) + 1
-            total_packages += 1
-          end
-
-          # Convert to array and calculate percentages
-          locations_data = location_counts.map do |location, count|
-            percentage = total_packages > 0 ? ((count.to_f / total_packages) * 100).round(1) : 0
-            {
-              location: location,
-              count: count,
-              percentage: percentage
-            }
-          end
-
-          # Sort by count descending and take top 10
-          locations_data.sort_by { |loc| -loc[:count] }.first(10)
-
-        rescue => e
-          Rails.logger.error "Error getting best locations data: #{e.message}"
-          []
-        end
-      end
-
-      # Helper method to extract location name from package
-      def get_location_name_from_package(package)
-        # Try different approaches to get location
-        if package.delivery_location.present?
-          package.delivery_location
-        elsif package.destination_area&.location&.name.present?
-          package.destination_area.location.name
-        elsif package.destination_area&.name.present?
-          package.destination_area.name
-        else
-          'Unknown Location'
-        end
-      rescue => e
-        Rails.logger.error "Error extracting location from package: #{e.message}"
-        'Unknown Location'
       end
 
       # FIXED: Safe activities summary with error handling
@@ -778,8 +699,8 @@ module Api
         end
       end
 
-      # FIXED: Safe activity serialization with robust error handling
-      def safe_serialize_activities(activities)
+      # ENHANCED: Safe activity serialization with personalized descriptions and enhanced details
+      def safe_serialize_activities_with_personalization(activities, viewer_user, business)
         return [] if activities.blank?
         
         activities.map do |activity|
@@ -788,11 +709,15 @@ module Api
             activity_data = {
               id: activity.id,
               activity_type: activity.activity_type,
-              description: activity.description || 'Activity performed',
               formatted_time: safe_format_time(activity.created_at),
               activity_icon: safe_activity_icon(activity.activity_type),
               activity_color: safe_activity_color(activity.activity_type)
             }
+            
+            # ENHANCED: Generate personalized and detailed description
+            activity_data[:description] = generate_personalized_activity_description(
+              activity, viewer_user, business
+            )
             
             # Safe user serialization
             if activity.user
@@ -819,12 +744,21 @@ module Api
               activity_data[:target_user] = nil
             end
             
-            # Safe package serialization
+            # ENHANCED: Safe package serialization with more details
             if activity.package
-              activity_data[:package] = {
+              package_data = {
                 id: activity.package.id,
                 code: activity.package.code || 'Unknown'
               }
+              
+              # Add recipient name if available in metadata or package
+              if activity.metadata&.dig('recipient_name').present?
+                package_data[:recipient_name] = activity.metadata['recipient_name']
+              elsif activity.package.respond_to?(:receiver_name) && activity.package.receiver_name.present?
+                package_data[:recipient_name] = activity.package.receiver_name
+              end
+              
+              activity_data[:package] = package_data
             else
               activity_data[:package] = nil
             end
@@ -848,6 +782,84 @@ module Api
               metadata: {}
             }
           end
+        end
+      end
+
+      # ENHANCED: Generate personalized and detailed activity descriptions
+      def generate_personalized_activity_description(activity, viewer_user, business)
+        begin
+          # Determine if the activity user is the viewer ("you") or someone else
+          actor_name = if activity.user == viewer_user
+            "You"
+          else
+            safe_user_name(activity.user)
+          end
+          
+          target_name = activity.target_user ? safe_user_name(activity.target_user) : nil
+          
+          case activity.activity_type
+          when 'package_created'
+            # ENHANCED: More detailed package creation description
+            package_code = activity.package&.code || activity.metadata&.dig('package_code') || 'unknown'
+            recipient_name = activity.metadata&.dig('recipient_name') || 'recipient'
+            
+            if recipient_name != 'recipient'
+              "#{actor_name} created a package (#{package_code}) for #{recipient_name}"
+            else
+              "#{actor_name} created a package (#{package_code})"
+            end
+            
+          when 'package_delivered'
+            package_code = activity.package&.code || 'unknown'
+            "Package #{package_code} was delivered"
+            
+          when 'package_cancelled'
+            package_code = activity.package&.code || 'unknown'
+            "Package #{package_code} was cancelled"
+            
+          when 'staff_joined'
+            if target_name
+              "#{target_name} joined the business"
+            else
+              "#{actor_name} joined the business"
+            end
+            
+          when 'staff_removed'
+            if target_name
+              "#{target_name} was removed from the business"
+            else
+              "Staff member was removed"
+            end
+            
+          when 'invite_sent'
+            "#{actor_name} sent an invite to join the business"
+            
+          when 'invite_accepted'
+            if target_name
+              "#{target_name} accepted the invitation"
+            else
+              "#{actor_name} accepted the invitation"
+            end
+            
+          when 'business_updated'
+            "#{actor_name} updated business information"
+            
+          when 'logo_updated'
+            "#{actor_name} updated the business logo"
+            
+          when 'categories_updated'
+            "#{actor_name} updated business categories"
+            
+          when 'business_created'
+            "#{actor_name} created the business"
+            
+          else
+            "#{actor_name} performed #{activity.activity_type&.humanize&.downcase || 'an action'}"
+          end
+          
+        rescue => e
+          Rails.logger.error "Failed to generate personalized description: #{e.message}"
+          "Activity performed" # Fallback description
         end
       end
 
