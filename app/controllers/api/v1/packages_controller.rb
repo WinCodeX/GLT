@@ -9,8 +9,10 @@ module Api
 
       def index
         begin
-          # UPDATED: Include business-related packages for staff members
-          packages = get_accessible_packages_for_user
+          packages = current_user.accessible_packages
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
+                                         { origin_area: :location, destination_area: :location }, :user)
+                                .order(created_at: :desc)
           
           packages = apply_filters(packages)
           
@@ -109,22 +111,6 @@ module Api
         begin
           package = current_user.packages.build(package_params)
           
-          # UPDATED: Support staff creating packages for businesses
-          if package_params[:business_id].present?
-            business = Business.find_by(id: package_params[:business_id])
-            
-            # Check if current user has access to this business (owner or staff)
-            if business && can_create_package_for_business?(business)
-              package.business = business
-              Rails.logger.info "Package being created for business: #{business.name} by user: #{current_user.id}"
-            else
-              return render json: {
-                success: false,
-                message: 'You do not have permission to create packages for this business'
-              }, status: :forbidden
-            end
-          end
-          
           # FIXED: Handle area assignment differently for fragile/collection types
           if ['fragile', 'collection'].include?(package.delivery_type)
             assign_default_areas_for_location_based_delivery(package)
@@ -137,7 +123,10 @@ module Api
           package.cost = calculate_package_cost(package)
 
           if package.save
-            Rails.logger.info "Package created successfully: #{package.code} for business: #{package.business&.name || 'None'} by user: #{current_user.id}"
+            Rails.logger.info "Package created successfully: #{package.code} for business: #{package.business&.name || 'None'}"
+            
+            # ENHANCED: Create detailed business activity for package creation
+            create_enhanced_package_activity(package)
             
             serialized_data = PackageSerializer.new(package, {
               params: { 
@@ -522,12 +511,11 @@ module Api
         end
 
         begin
-          # UPDATED: Use enhanced package access for search
-          packages = get_accessible_packages_for_user
-                      .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
-                               { origin_area: :location, destination_area: :location }, :user)
-                      .where("code ILIKE ? OR business_name ILIKE ?", "%#{query}%", "%#{query}%")
-                      .limit(20)
+          packages = current_user.accessible_packages
+                                .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
+                                         { origin_area: :location, destination_area: :location }, :user)
+                                .where("code ILIKE ? OR business_name ILIKE ?", "%#{query}%", "%#{query}%")
+                                .limit(20)
 
           serialized_data = PackageSerializer.new(packages, {
             params: { 
@@ -690,11 +678,10 @@ module Api
       end
 
       def set_package_for_authenticated_user
-        # UPDATED: Use enhanced package access
-        @package = get_accessible_packages_for_user
-                    .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
-                             { origin_area: :location, destination_area: :location }, :user)
-                    .find_by!(code: params[:id])
+        @package = current_user.accessible_packages
+                               .includes(:origin_area, :destination_area, :origin_agent, :destination_agent, :business,
+                                        { origin_area: :location, destination_area: :location }, :user)
+                               .find_by!(code: params[:id])
         ensure_package_has_code(@package)
       rescue ActiveRecord::RecordNotFound
         render json: { 
@@ -703,49 +690,21 @@ module Api
         }, status: :not_found
       end
 
-      # NEW: Enhanced method to get accessible packages including business-related packages
-      def get_accessible_packages_for_user
-        base_packages = current_user.accessible_packages
-        
-        # If user is part of any businesses as staff, include those business packages
-        if current_user.respond_to?(:user_businesses) && current_user.user_businesses.exists?
-          business_ids = current_user.user_businesses.where(role: 'staff').pluck(:business_id)
-          
-          if business_ids.any?
-            # Include packages from businesses where user is staff
-            business_packages = Package.where(business_id: business_ids)
-            
-            # Combine user's packages with business packages
-            base_packages = base_packages.or(business_packages)
-            
-            Rails.logger.info "User #{current_user.id} has access to business packages from businesses: #{business_ids}"
-          end
-        end
-        
-        base_packages
-      end
-
-      # NEW: Check if user can create packages for a specific business
-      def can_create_package_for_business?(business)
-        return false unless business
-        
-        # Owner can always create packages
-        return true if business.owner == current_user
-        
-        # Staff members can create packages for their business
-        if current_user.respond_to?(:user_businesses)
-          return current_user.user_businesses.exists?(business: business, role: 'staff')
-        end
-        
-        false
-      end
-
       def apply_filters(packages)
         packages = packages.where(state: params[:state]) if params[:state].present?
         packages = packages.where("code ILIKE ? OR business_name ILIKE ?", "%#{params[:search]}%", "%#{params[:search]}%") if params[:search].present?
         
-        # NEW: Business filter
-        packages = packages.where(business_id: params[:business_id]) if params[:business_id].present?
+        # NEW: Business filter - Enhanced to show packages created by staff members to business owner
+        if params[:business_id].present?
+          business = Business.find_by(id: params[:business_id])
+          if business && business.owner == current_user
+            # Show all packages for this business (including those created by staff)
+            packages = packages.where(business_id: params[:business_id])
+          elsif business
+            # Show only user's own packages for this business
+            packages = packages.where(business_id: params[:business_id], user: current_user)
+          end
+        end
         
         case current_user.primary_role
         when 'agent'
@@ -774,6 +733,37 @@ module Api
         end
         
         packages
+      end
+
+      # ENHANCED: Create detailed business activity with package and recipient information
+      def create_enhanced_package_activity(package)
+        return unless package.business_id.present? && package.business
+
+        begin
+          if defined?(BusinessActivity)
+            BusinessActivity.create_package_activity(
+              business: package.business,
+              user: package.user,
+              package: package,
+              activity_type: 'package_created',
+              metadata: {
+                package_code: package.code,
+                package_id: package.id,
+                delivery_type: package.delivery_type,
+                cost: package.cost,
+                destination_area: package.destination_area&.name,
+                recipient_name: package.receiver_name,
+                recipient_phone: package.receiver_phone,
+                sender_name: package.sender_name,
+                delivery_location: package.delivery_location,
+                created_at: package.created_at.iso8601
+              }
+            )
+            Rails.logger.info "Created enhanced business activity for package #{package.code} and business #{package.business.name}"
+          end
+        rescue => e
+          Rails.logger.error "Failed to create enhanced business activity for package #{package.code}: #{e.message}"
+        end
       end
 
       # FIXED: Auto-assign default areas for fragile and collection deliveries
@@ -823,15 +813,7 @@ module Api
       def can_edit_package?(package)
         case current_user.primary_role
         when 'client'
-          # UPDATED: Allow editing if user created the package OR if it's for a business they have access to
-          return true if package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
-          
-          # Check if user can edit business packages
-          if package.business && can_create_package_for_business?(package.business)
-            return ['pending_unpaid', 'pending'].include?(package.state)
-          end
-          
-          false
+          package.user == current_user && ['pending_unpaid', 'pending'].include?(package.state)
         when 'admin'
           true
         when 'agent', 'rider', 'warehouse'
@@ -844,15 +826,7 @@ module Api
       def can_delete_package?(package)
         case current_user.primary_role
         when 'client'
-          # UPDATED: Allow deletion if user created the package OR if it's for a business they own
-          return true if package.user == current_user
-          
-          # Only business owners can delete business packages (not staff)
-          if package.business && package.business.owner == current_user
-            return true
-          end
-          
-          false
+          package.user == current_user
         when 'admin'
           true
         else
