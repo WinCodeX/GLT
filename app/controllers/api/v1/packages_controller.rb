@@ -125,6 +125,9 @@ module Api
           if package.save
             Rails.logger.info "Package created successfully: #{package.code} for business: #{package.business&.name || 'None'}"
             
+            # ENHANCED: Create detailed business activity for package creation
+            create_enhanced_package_activity(package)
+            
             serialized_data = PackageSerializer.new(package, {
               params: { 
                 include_business: true,
@@ -691,8 +694,17 @@ module Api
         packages = packages.where(state: params[:state]) if params[:state].present?
         packages = packages.where("code ILIKE ? OR business_name ILIKE ?", "%#{params[:search]}%", "%#{params[:search]}%") if params[:search].present?
         
-        # NEW: Business filter
-        packages = packages.where(business_id: params[:business_id]) if params[:business_id].present?
+        # NEW: Business filter - Enhanced to show packages created by staff members to business owner
+        if params[:business_id].present?
+          business = Business.find_by(id: params[:business_id])
+          if business && business.owner == current_user
+            # Show all packages for this business (including those created by staff)
+            packages = packages.where(business_id: params[:business_id])
+          elsif business
+            # Show only user's own packages for this business
+            packages = packages.where(business_id: params[:business_id], user: current_user)
+          end
+        end
         
         case current_user.primary_role
         when 'agent'
@@ -721,6 +733,37 @@ module Api
         end
         
         packages
+      end
+
+      # ENHANCED: Create detailed business activity with package and recipient information
+      def create_enhanced_package_activity(package)
+        return unless package.business_id.present? && package.business
+
+        begin
+          if defined?(BusinessActivity)
+            BusinessActivity.create_package_activity(
+              business: package.business,
+              user: package.user,
+              package: package,
+              activity_type: 'package_created',
+              metadata: {
+                package_code: package.code,
+                package_id: package.id,
+                delivery_type: package.delivery_type,
+                cost: package.cost,
+                destination_area: package.destination_area&.name,
+                recipient_name: package.receiver_name,
+                recipient_phone: package.receiver_phone,
+                sender_name: package.sender_name,
+                delivery_location: package.delivery_location,
+                created_at: package.created_at.iso8601
+              }
+            )
+            Rails.logger.info "Created enhanced business activity for package #{package.code} and business #{package.business.name}"
+          end
+        rescue => e
+          Rails.logger.error "Failed to create enhanced business activity for package #{package.code}: #{e.message}"
+        end
       end
 
       # FIXED: Auto-assign default areas for fragile and collection deliveries
