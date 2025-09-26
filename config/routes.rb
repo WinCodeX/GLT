@@ -564,7 +564,7 @@ Rails.application.routes.draw do
       end
 
       # ==========================================
-      # 💬 CONVERSATIONS
+      # 💬 ENHANCED CONVERSATIONS
       # ==========================================
       
       resources :conversations, only: [:index, :show] do
@@ -572,6 +572,8 @@ Rails.application.routes.draw do
           patch :close
           patch :reopen
           patch :assign
+          patch :accept_ticket
+          post :send_message
         end
         
         resources :messages, only: [:index, :create] do
@@ -579,11 +581,13 @@ Rails.application.routes.draw do
             patch :mark_read
           end
         end
+        
+        collection do
+          post :support_ticket
+          get :active_support
+          get :package_support
+        end
       end
-
-      post 'conversations/support_ticket', to: 'conversations#create_support_ticket'
-      get 'conversations/active_support', to: 'conversations#active_support'
-      get 'conversations/package_support', to: 'conversations#package_support'
 
       # ==========================================
       # 📊 ANALYTICS
