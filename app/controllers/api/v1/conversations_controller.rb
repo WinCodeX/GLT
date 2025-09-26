@@ -1,7 +1,7 @@
 # app/controllers/api/v1/conversations_controller.rb
 class Api::V1::ConversationsController < ApplicationController
   before_action :authenticate_user!
-  before_action :set_conversation, only: [:show, :close, :reopen]
+  before_action :set_conversation, only: [:show, :close, :reopen, :accept_ticket]
 
   # GET /api/v1/conversations
   # Returns all conversations for the current user
@@ -59,14 +59,39 @@ class Api::V1::ConversationsController < ApplicationController
   # Creates a new support ticket
   def create_support_ticket
     package = nil
-    if params[:package_id].present?
-      package = Package.find_by(id: params[:package_id])
+    if params[:package_code].present?
+      package = current_user.packages.find_by(code: params[:package_code])
       unless package
         return render json: { 
           success: false, 
           message: 'Package not found' 
         }, status: :not_found
       end
+    elsif params[:package_id].present?
+      package = current_user.packages.find_by(id: params[:package_id])
+      unless package
+        return render json: { 
+          success: false, 
+          message: 'Package not found' 
+        }, status: :not_found
+      end
+    end
+
+    # Check if user already has an active support conversation
+    existing_conversation = current_user.conversations
+                                      .support_tickets
+                                      .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                                      .where('created_at > ?', 24.hours.ago)
+                                      .first
+
+    if existing_conversation
+      return render json: {
+        success: true,
+        conversation: format_conversation_detail(existing_conversation),
+        conversation_id: existing_conversation.id,
+        ticket_id: existing_conversation.ticket_id,
+        message: 'Using existing support ticket'
+      }
     end
 
     @conversation = Conversation.create_support_ticket(
@@ -91,12 +116,62 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
+  # POST /api/v1/conversations/:id/messages
+  # Send a message in the conversation
+  def send_message
+    @conversation = current_user.conversations.find(params[:id])
+    
+    message_params = {
+      content: params[:content],
+      message_type: params[:message_type] || 'text',
+      metadata: params[:metadata] || {}
+    }
+
+    @message = @conversation.messages.build(message_params)
+    @message.user = current_user
+
+    if @message.save
+      # Update conversation last activity
+      @conversation.touch(:last_activity_at)
+      
+      # If this is a support ticket and it's the first user message, set status to pending
+      if @conversation.support_ticket? && @conversation.status == 'created'
+        @conversation.update_support_status('pending')
+        
+        # Add system message about ticket creation
+        @conversation.messages.create!(
+          user: current_user,
+          content: "Support ticket ##{@conversation.ticket_id} has been created and is pending review.",
+          message_type: 'system',
+          is_system: true,
+          metadata: { type: 'ticket_created' }
+        )
+      end
+
+      render json: {
+        success: true,
+        message: format_message(@message),
+        conversation: format_conversation_detail(@conversation)
+      }
+    else
+      render json: {
+        success: false,
+        errors: @message.errors.full_messages
+      }, status: :unprocessable_entity
+    end
+  rescue ActiveRecord::RecordNotFound
+    render json: { 
+      success: false, 
+      message: 'Conversation not found' 
+    }, status: :not_found
+  end
+
   # GET /api/v1/conversations/active_support
   # Returns active support conversation for current user
   def active_support
     @conversation = current_user.conversations
                                .support_tickets
-                               .active_support
+                               .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
                                .order(:created_at)
                                .last
 
@@ -113,6 +188,53 @@ class Api::V1::ConversationsController < ApplicationController
         conversation_id: nil
       }
     end
+  end
+
+  # PATCH /api/v1/conversations/:id/accept_ticket
+  # Accept a support ticket (for support staff)
+  def accept_ticket
+    unless @conversation.support_ticket?
+      return render json: { 
+        success: false, 
+        message: 'Only support tickets can be accepted' 
+      }, status: :unprocessable_entity
+    end
+
+    unless current_user.support_staff? || current_user.admin?
+      return render json: { 
+        success: false, 
+        message: 'Only support staff can accept tickets' 
+      }, status: :forbidden
+    end
+
+    @conversation.update_support_status('in_progress')
+    
+    # Add support agent as participant if not already
+    unless @conversation.conversation_participants.exists?(user: current_user)
+      @conversation.conversation_participants.create!(
+        user: current_user,
+        role: 'agent',
+        joined_at: Time.current
+      )
+    end
+    
+    # Add system message
+    @conversation.messages.create!(
+      user: current_user,
+      content: "Support ticket has been accepted by #{current_user.display_name}.",
+      message_type: 'system',
+      is_system: true,
+      metadata: { 
+        type: 'ticket_accepted',
+        agent_id: current_user.id,
+        agent_name: current_user.display_name
+      }
+    )
+
+    render json: {
+      success: true,
+      message: 'Support ticket accepted successfully'
+    }
   end
 
   # PATCH /api/v1/conversations/:id/close
@@ -132,7 +254,11 @@ class Api::V1::ConversationsController < ApplicationController
       user: current_user,
       content: 'This support ticket has been closed.',
       message_type: 'system',
-      is_system: true
+      is_system: true,
+      metadata: { 
+        type: 'ticket_closed',
+        closed_by: current_user.id
+      }
     )
 
     render json: {
@@ -158,7 +284,11 @@ class Api::V1::ConversationsController < ApplicationController
       user: current_user,
       content: 'This support ticket has been reopened.',
       message_type: 'system',
-      is_system: true
+      is_system: true,
+      metadata: { 
+        type: 'ticket_reopened',
+        reopened_by: current_user.id
+      }
     )
 
     render json: {
@@ -182,12 +312,25 @@ class Api::V1::ConversationsController < ApplicationController
     last_message = conversation.last_message
     other_participant = conversation.other_participant(current_user) if conversation.direct_message?
 
+    # Determine conversation status for display
+    status_display = case conversation.status
+    when 'pending'
+      'Ticket Pending'
+    when 'in_progress'
+      'Online'
+    when 'closed'
+      'Last seen recently'
+    else
+      'Online'
+    end
+
     {
       id: conversation.id,
       conversation_type: conversation.conversation_type,
       title: conversation.title,
       last_activity_at: conversation.last_activity_at,
       unread_count: conversation.unread_count_for(current_user),
+      status_display: status_display,
       
       # Support ticket specific fields
       ticket_id: conversation.ticket_id,
@@ -225,7 +368,18 @@ class Api::V1::ConversationsController < ApplicationController
     format_conversation_summary(conversation).merge({
       metadata: conversation.metadata,
       created_at: conversation.created_at,
-      updated_at: conversation.updated_at
+      updated_at: conversation.updated_at,
+      
+      # Package information if this is a package inquiry
+      package: conversation.package ? {
+        id: conversation.package.id,
+        code: conversation.package.code,
+        state: conversation.package.state,
+        state_display: conversation.package.state_display,
+        receiver_name: conversation.package.receiver_name,
+        route_description: conversation.package.route_description,
+        cost: conversation.package.cost
+      } : nil
     })
   end
 
