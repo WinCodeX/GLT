@@ -583,8 +583,8 @@ Rails.application.routes.draw do
         end
         
         collection do
-          post :support_ticket
-          get :active_support
+          post :support_ticket, to: 'conversations#create_support_ticket'
+          get :active_support, to: 'conversations#active_support'
           get :package_support
         end
       end
