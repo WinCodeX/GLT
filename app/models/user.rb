@@ -40,6 +40,13 @@ class User < ApplicationRecord
   has_many :conversations, through: :conversation_participants
   has_many :messages, dependent: :destroy
 
+# ADD THESE ASSOCIATIONS to your existing User model:
+has_many :conversations, foreign_key: 'customer_id', dependent: :destroy
+has_many :assigned_conversations, class_name: 'Conversation', foreign_key: 'assigned_agent_id'
+
+
+
+
   # Rolify for roles
   rolify
 
@@ -305,6 +312,9 @@ class User < ApplicationRecord
     client?
   end
 
+
+
+
   def primary_role
     return 'admin' if has_role?(:admin)
     return 'warehouse' if has_role?(:warehouse)
@@ -326,6 +336,34 @@ class User < ApplicationRecord
     else primary_role.humanize
     end
   end
+
+
+
+
+def support_staff?
+  has_role?(:support) || has_role?(:admin)
+end
+
+def can_handle_support?
+  support_staff?
+end
+
+# Conversation access methods
+def accessible_conversations
+  if admin? || support_staff?
+    Conversation.all
+  else
+    conversations.where(customer_id: id)
+  end
+end
+
+def support_conversations
+  conversations.where(conversation_type: 'support')
+end
+
+def initiated_conversations
+  conversations
+end
 
   # ===========================================
   # 🏢 BUSINESS METHODS - FIXED
