@@ -1,5 +1,4 @@
-
-# app/services/notification_creator_service.rb
+# app/services/notification_creator_service.rb - Enhanced with support chat notifications
 class NotificationCreatorService
   def self.create_package_notification(package, type, additional_data = {})
     notification_data = {
@@ -18,6 +17,67 @@ class NotificationCreatorService
     DeliverNotificationJob.perform_later(notification)
     
     notification
+  end
+  
+  # NEW: Create support message notifications
+  def self.create_support_message_notification(message, conversation, recipient_user)
+    # Don't notify the sender of their own message
+    return if message.user == recipient_user
+    
+    # Don't notify for system messages
+    return if message.is_system?
+    
+    notification_data = {
+      user: recipient_user,
+      notification_type: 'support_message',
+      channel: 'push',
+      priority: determine_support_priority(conversation),
+      **build_support_message_content(message, conversation, recipient_user)
+    }
+    
+    # Add conversation metadata
+    notification_data[:metadata] = {
+      conversation_id: conversation.id,
+      message_id: message.id,
+      ticket_id: conversation.ticket_id,
+      from_user_id: message.user.id,
+      from_user_name: message.user.display_name
+    }
+    
+    # Create notification and immediately deliver via push
+    notification = Notification.create!(notification_data)
+    
+    # Immediately send push notification
+    DeliverNotificationJob.perform_later(notification)
+    
+    Rails.logger.info "Created support message notification for user #{recipient_user.id} from conversation #{conversation.id}"
+    
+    notification
+  end
+  
+  # NEW: Notify all conversation participants about a new message
+  def self.notify_conversation_participants(message, conversation)
+    return if message.is_system? # Don't notify for system messages
+    
+    # Get all participants except the message sender
+    participants_to_notify = conversation.conversation_participants
+                                       .includes(:user)
+                                       .where.not(user: message.user)
+                                       .map(&:user)
+    
+    # Create notifications for each participant
+    notifications_created = 0
+    participants_to_notify.each do |participant|
+      begin
+        create_support_message_notification(message, conversation, participant)
+        notifications_created += 1
+      rescue => e
+        Rails.logger.error "Failed to create notification for user #{participant.id}: #{e.message}"
+      end
+    end
+    
+    Rails.logger.info "Created #{notifications_created} support message notifications for conversation #{conversation.id}"
+    notifications_created
   end
   
   def self.create_broadcast_notification(title, message, user_scope = User.all, options = {})
@@ -78,6 +138,53 @@ class NotificationCreatorService
     end
   end
   
+  # NEW: Determine priority for support messages
+  def self.determine_support_priority(conversation)
+    case conversation.priority.to_s
+    when 'urgent'
+      'high'
+    when 'high'
+      'normal'
+    else
+      'normal'
+    end
+  end
+  
+  # NEW: Build notification content for support messages
+  def self.build_support_message_content(message, conversation, recipient_user)
+    sender_name = message.user.display_name
+    is_customer = !message.from_support?
+    is_recipient_customer = !recipient_user.support_agent? && !recipient_user.admin?
+    
+    # Determine title and message based on sender and recipient
+    if is_customer && !is_recipient_customer
+      # Customer to Agent
+      title = "New message from #{sender_name}"
+      notification_message = "Ticket ##{conversation.ticket_id}: #{truncate_message(message.content)}"
+      icon = 'message-circle'
+      action_url = "/support/conversations/#{conversation.id}"
+    else
+      # Agent to Customer
+      title = "Customer Support replied"
+      notification_message = "#{truncate_message(message.content)}"
+      icon = 'headphones'
+      action_url = "/support"
+    end
+    
+    # Add package context if available
+    if conversation.metadata&.dig('package_code')
+      package_code = conversation.metadata['package_code']
+      notification_message = "Package #{package_code}: #{notification_message}"
+    end
+    
+    {
+      title: title,
+      message: notification_message,
+      icon: icon,
+      action_url: action_url
+    }
+  end
+  
   def self.build_notification_content(package, type, additional_data)
     base_content = case type
     when 'package_delivered'
@@ -134,5 +241,11 @@ class NotificationCreatorService
     
     # Merge with additional data, allowing overrides
     base_content.merge(additional_data)
+  end
+  
+  # NEW: Helper method to truncate message content for notifications
+  def self.truncate_message(content, limit = 80)
+    return '' unless content
+    content.length > limit ? "#{content[0..limit-1]}..." : content
   end
 end
