@@ -152,10 +152,15 @@ class Api::V1::ConversationsController < ApplicationController
         # Handle support ticket status updates
         update_support_ticket_status if @conversation.support_ticket?
 
+        # FIXED: Send push notifications to other conversation participants
+        begin
+          NotificationCreatorService.notify_conversation_participants(@message, @conversation)
+        rescue => e
+          Rails.logger.error "Failed to send support message notifications: #{e.message}"
+          # Don't fail the message sending if notification fails
+        end
+
         Rails.logger.info "Message saved successfully: #{@message.id} with metadata: #{@message.metadata}"
-        
-        # FIXED: Send push notifications to relevant participants
-        send_message_notifications(@conversation, @message)
         
         render json: {
           success: true,
