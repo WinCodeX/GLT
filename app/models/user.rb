@@ -40,11 +40,6 @@ class User < ApplicationRecord
   has_many :conversations, through: :conversation_participants
   has_many :messages, dependent: :destroy
 
-# ADD THESE ASSOCIATIONS to your existing User model:
-has_many :conversations, foreign_key: 'customer_id', dependent: :destroy
-has_many :assigned_conversations, class_name: 'Conversation', foreign_key: 'assigned_agent_id'
-
-
 
 
   # Rolify for roles
