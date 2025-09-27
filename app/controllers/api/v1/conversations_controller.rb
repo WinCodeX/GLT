@@ -377,7 +377,7 @@ class Api::V1::ConversationsController < ApplicationController
                 .first
   end
 
-  # FIXED: Enhanced metadata parsing to preserve package context
+  # FIXED: Enhanced metadata parsing to preserve package context and upgrade basic inquiries
   def parse_message_metadata(conversation)
     metadata = params[:metadata] || {}
     
@@ -387,6 +387,26 @@ class Api::V1::ConversationsController < ApplicationController
     # Add package code from request params if present
     if params[:package_code].present?
       metadata[:package_code] = params[:package_code]
+      
+      # FIXED: If this is a basic inquiry conversation but user is sending package metadata,
+      # upgrade it to package inquiry and associate the package
+      if conversation.support_ticket? && conversation.category == 'basic_inquiry'
+        begin
+          package = Package.find_by(code: params[:package_code])
+          if package && package.user == current_user
+            # Upgrade conversation to package inquiry
+            conversation.metadata ||= {}
+            conversation.metadata['package_id'] = package.id
+            conversation.metadata['package_code'] = package.code
+            conversation.metadata['category'] = 'package_inquiry'
+            conversation.save!
+            
+            Rails.logger.info "Upgraded basic inquiry to package inquiry for package: #{package.code}"
+          end
+        rescue => e
+          Rails.logger.warn "Failed to upgrade conversation to package inquiry: #{e.message}"
+        end
+      end
     end
     
     # FIXED: If no package_code in request but conversation has package context, inherit it
