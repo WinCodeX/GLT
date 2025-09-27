@@ -363,12 +363,13 @@ class Api::V1::ConversationsController < ApplicationController
   end
 
   def find_existing_active_ticket
-    current_user.conversations
-               .support_tickets
-               .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
-               .where('created_at > ?', 24.hours.ago)
-               .first
-  end
+  Conversation.joins(:conversation_participants)
+              .where(conversation_participants: { user_id: current_user.id })
+              .support_tickets
+              .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+              .where('conversations.created_at > ?', 24.hours.ago)
+              .first
+end
 
   def parse_metadata
     metadata = params[:metadata] || {}
