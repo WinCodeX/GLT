@@ -498,9 +498,8 @@ class Api::V1::ConversationsController < ApplicationController
       notification_message = "Package #{package_code}: #{notification_message}"
     end
     
-    # Create notification with immediate push delivery
-    Notification.create_and_broadcast!(
-      user: recipient,
+    # FIXED: Create notification exactly like admin controller
+    notification = recipient.notifications.create!(
       title: title,
       message: notification_message,
       notification_type: 'support_message',
@@ -512,9 +511,37 @@ class Api::V1::ConversationsController < ApplicationController
         message_id: message.id,
         ticket_id: @conversation.ticket_id,
         package_code: package_code
-      }.compact,
-      instant_push: true  # This ensures immediate push delivery
+      }.compact
     )
+    
+    # FIXED: Send push notification exactly like admin controller
+    if should_send_push_notification?(notification)
+      send_push_notification_like_admin(notification)
+    end
+    
+    notification
+  end
+  
+  # FIXED: Copy the exact method from admin controller
+  def should_send_push_notification?(notification)
+    return false unless notification.user
+    return false unless notification.user.push_tokens.active.any?
+    true
+  end
+  
+  def send_push_notification_like_admin(notification)
+    begin
+      Rails.logger.info "🚀 Sending push notification for notification #{notification.id}"
+      
+      # Use exact same approach as admin controller
+      PushNotificationService.new.send_immediate(notification)
+      
+      Rails.logger.info "✅ Push notification sent for notification #{notification.id}"
+      
+    rescue => e
+      # Don't fail the main request if push notification fails
+      Rails.logger.error "❌ Failed to send push notification for notification #{notification.id}: #{e.message}"
+    end
   end
 
   # FIXED: Properly extract customer information
