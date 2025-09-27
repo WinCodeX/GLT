@@ -1,4 +1,4 @@
-# app/models/message.rb - Fixed with notification callbacks
+# app/models/message.rb - Fixed with proper role detection and notification handling
 class Message < ApplicationRecord
   belongs_to :conversation
   belongs_to :user
@@ -25,7 +25,24 @@ class Message < ApplicationRecord
   after_create_commit :create_support_notifications  # FIXED: Add notification callback
   
   def from_support?
-    user.has_role?(:support) || user.has_role?(:admin)
+    # FIXED: Use Rolify properly with multiple role checking methods
+    return false unless user
+    
+    # Check using Rolify (which you're using based on Conversation model)
+    return true if user.has_role?(:support)
+    return true if user.has_role?(:admin)
+    
+    # Alternative check using email domain (backup method)
+    return true if user.email&.include?('support@') || user.email&.include?('@glt.co.ke')
+    
+    # Check using user type/role field if it exists
+    return true if user.respond_to?(:role) && ['support', 'admin', 'agent'].include?(user.role)
+    return true if user.respond_to?(:user_type) && ['support', 'admin', 'agent'].include?(user.user_type)
+    
+    false
+  rescue => e
+    Rails.logger.error "Error checking support role for user #{user&.id}: #{e.message}"
+    false
   end
   
   def from_customer?
@@ -82,99 +99,141 @@ class Message < ApplicationRecord
     )
   end
   
-  # FIXED: Create push notifications for support messages
+  # FIXED: Create push notifications for support messages with extensive logging
   def create_support_notifications
     # Only create notifications for support conversations
-    return unless conversation.support_ticket?
+    unless conversation.support_ticket?
+      Rails.logger.debug "Skipping notifications - not a support ticket (type: #{conversation.conversation_type})"
+      return
+    end
     
     # Don't notify for system messages
-    return if is_system?
+    if is_system?
+      Rails.logger.debug "Skipping notifications - system message"
+      return
+    end
     
-    # Don't create notifications in test environment to avoid issues
-    return if Rails.env.test?
+    # Don't create notifications in test environment
+    if Rails.env.test?
+      Rails.logger.debug "Skipping notifications - test environment"
+      return
+    end
     
     begin
-      Rails.logger.info "Creating support notifications for message #{id} in conversation #{conversation.id}"
+      Rails.logger.info "🔔 Creating support notifications for message #{id} in conversation #{conversation.id}"
+      Rails.logger.info "📝 Message content: #{content[0..50]}#{'...' if content.length > 50}"
+      Rails.logger.info "👤 Sender: #{user.display_name} (ID: #{user.id}) - Support: #{from_support?}"
       
       # Get all participants except the message sender
       participants_to_notify = conversation.conversation_participants
                                          .includes(:user)
                                          .where.not(user: user)
-                                         .map(&:user)
       
-      Rails.logger.info "Found #{participants_to_notify.size} participants to notify: #{participants_to_notify.map(&:id)}"
+      Rails.logger.info "👥 Found #{participants_to_notify.size} participants to potentially notify"
+      
+      if participants_to_notify.empty?
+        Rails.logger.warn "⚠️ No participants found to notify for conversation #{conversation.id}"
+        return
+      end
       
       # Create notifications for each participant
       notifications_created = 0
       participants_to_notify.each do |participant|
+        participant_user = participant.user
+        
         begin
-          Rails.logger.info "Creating notification for user #{participant.id} (#{participant.display_name})"
+          Rails.logger.info "📮 Creating notification for user #{participant_user.id} (#{participant_user.display_name}) - Role: #{participant.role}"
           
-          notification = create_support_message_notification(participant)
+          # Check if user has push tokens
+          if participant_user.respond_to?(:push_tokens)
+            token_count = participant_user.push_tokens.active.count rescue 0
+            Rails.logger.info "📱 User has #{token_count} active push tokens"
+          end
           
-          if notification
-            Rails.logger.info "Successfully created notification #{notification.id} for user #{participant.id}"
+          notification = create_support_message_notification(participant_user)
+          
+          if notification&.persisted?
+            Rails.logger.info "✅ Successfully created notification #{notification.id} for user #{participant_user.id}"
             notifications_created += 1
           else
-            Rails.logger.warn "Failed to create notification for user #{participant.id} - notification was nil"
+            Rails.logger.error "❌ Failed to create notification for user #{participant_user.id} - notification not persisted"
           end
           
         rescue => e
-          Rails.logger.error "Failed to create notification for user #{participant.id}: #{e.message}"
-          Rails.logger.error "Error backtrace: #{e.backtrace.first(3).join(', ')}"
+          Rails.logger.error "❌ Exception creating notification for user #{participant_user.id}: #{e.message}"
+          Rails.logger.error "🔍 Error backtrace: #{e.backtrace.first(3).join(', ')}"
         end
       end
       
-      Rails.logger.info "Created #{notifications_created} support message notifications for message #{id}"
+      Rails.logger.info "📊 Created #{notifications_created}/#{participants_to_notify.size} support message notifications for message #{id}"
       
     rescue => e
-      Rails.logger.error "Failed to create support notifications for message #{id}: #{e.message}"
-      Rails.logger.error "Error backtrace: #{e.backtrace.first(5).join(', ')}"
+      Rails.logger.error "💥 Failed to create support notifications for message #{id}: #{e.message}"
+      Rails.logger.error "🔍 Error class: #{e.class.name}"
+      Rails.logger.error "🔍 Error backtrace: #{e.backtrace.first(5).join(', ')}"
       # Don't re-raise to avoid breaking message creation
     end
   end
   
-  # FIXED: Create individual notification for a participant
+  # FIXED: Create individual notification with better error handling
   def create_support_message_notification(recipient_user)
-    # Don't notify the sender of their own message
-    return if user == recipient_user
+    # Double-check we're not notifying the sender
+    if user == recipient_user
+      Rails.logger.debug "Skipping notification - recipient is the sender"
+      return nil
+    end
     
     sender_name = user.display_name
-    is_customer_sender = !from_support?
-    is_recipient_customer = !recipient_user.has_role?(:support) && !recipient_user.has_role?(:admin)
+    is_customer_sender = from_customer?
+    
+    # FIXED: Better role detection for recipient
+    is_recipient_support = begin
+      recipient_user.has_role?(:support) || 
+      recipient_user.has_role?(:admin) ||
+      recipient_user.email&.include?('support@') ||
+      recipient_user.email&.include?('@glt.co.ke')
+    rescue
+      false
+    end
+    
+    Rails.logger.info "🎯 Notification target - Customer sender: #{is_customer_sender}, Recipient is support: #{is_recipient_support}"
     
     # Determine title and message based on sender and recipient
-    if is_customer_sender && !is_recipient_customer
+    if is_customer_sender && is_recipient_support
       # Customer to Agent
       title = "New message from #{sender_name}"
       notification_message = "Ticket ##{conversation.ticket_id}: #{truncate_message(content)}"
       icon = 'message-circle'
       action_url = "/admin/support/conversations/#{conversation.id}"
-    else
+    elsif !is_customer_sender && !is_recipient_support
       # Agent to Customer
       title = "Customer Support replied"
       notification_message = truncate_message(content)
       icon = 'headphones'
       action_url = "/support"
+    else
+      # Fallback for unclear roles
+      title = "New support message"
+      notification_message = "#{sender_name}: #{truncate_message(content)}"
+      icon = 'message-circle'
+      action_url = "/support"
     end
     
     # Add package context if available
-    if conversation.metadata&.dig('package_code')
-      package_code = conversation.metadata['package_code']
-      notification_message = "Package #{package_code}: #{notification_message}"
-    elsif metadata&.dig('package_code')
-      package_code = metadata['package_code']
+    package_code = conversation.metadata&.dig('package_code') || 
+                  conversation.metadata&.dig(:package_code) ||
+                  metadata&.dig('package_code') ||
+                  metadata&.dig(:package_code)
+    
+    if package_code
       notification_message = "Package #{package_code}: #{notification_message}"
     end
     
-    # Determine priority based on conversation priority
+    # Determine priority
     priority = case conversation.priority.to_s
-    when 'urgent'
-      'high'
-    when 'high'
-      'normal'
-    else
-      'normal'
+    when 'urgent' then 'high'
+    when 'high' then 'normal'
+    else 'normal'
     end
     
     notification_data = {
@@ -191,29 +250,46 @@ class Message < ApplicationRecord
         message_id: id,
         ticket_id: conversation.ticket_id,
         from_user_id: user.id,
-        from_user_name: user.display_name
-      }
+        from_user_name: user.display_name,
+        package_code: package_code
+      }.compact
     }
     
-    Rails.logger.info "Creating notification with data: #{notification_data.except(:user).inspect}"
+    Rails.logger.info "📋 Creating notification with title: '#{title}' and message: '#{notification_message}'"
     
     # Create notification
     notification = Notification.create!(notification_data)
+    Rails.logger.info "💾 Notification #{notification.id} created successfully"
     
-    # Immediately send push notification
-    Rails.logger.info "Enqueuing push notification job for notification #{notification.id}"
-    DeliverNotificationJob.perform_later(notification)
+    # Immediately send push notification with logging
+    Rails.logger.info "🚀 Enqueuing push notification job for notification #{notification.id}"
+    
+    # Try both async and sync delivery for debugging
+    if Rails.env.development?
+      # In development, also try immediate delivery for testing
+      begin
+        Rails.logger.info "🧪 Attempting immediate push delivery for debugging"
+        DeliverNotificationJob.perform_now(notification)
+      rescue => e
+        Rails.logger.error "🔥 Immediate delivery failed: #{e.message}"
+        # Fall back to async
+        DeliverNotificationJob.perform_later(notification)
+      end
+    else
+      DeliverNotificationJob.perform_later(notification)
+    end
     
     notification
     
   rescue => e
-    Rails.logger.error "Failed to create individual notification: #{e.message}"
-    Rails.logger.error "Error class: #{e.class.name}"
-    Rails.logger.error "Error backtrace: #{e.backtrace.first(5).join(', ')}"
+    Rails.logger.error "💀 Failed to create individual notification for user #{recipient_user&.id}: #{e.message}"
+    Rails.logger.error "🔍 Error class: #{e.class.name}"
+    Rails.logger.error "🔍 Notification data: #{notification_data.inspect}" if defined?(notification_data)
+    Rails.logger.error "🔍 Error backtrace: #{e.backtrace.first(5).join(', ')}"
     nil
   end
   
-  # FIXED: Helper method to truncate message content for notifications
+  # Helper method to truncate message content for notifications
   def truncate_message(content, limit = 80)
     return '' unless content
     content.length > limit ? "#{content[0..limit-1]}..." : content
