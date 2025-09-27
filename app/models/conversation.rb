@@ -57,12 +57,12 @@ class Conversation < ApplicationRecord
       
       Rails.logger.info "👤 Added customer #{customer.id} as participant"
       
-      # Create initial system message
+      # Create initial system message (no notifications)
       create_welcome_message(conversation)
       
-      # Auto-assign agent and create their greeting message
-      # This will trigger notifications to the customer
-      assign_support_agent(conversation)
+      # FIXED: Auto-assign agent but don't create greeting message yet
+      # This prevents immediate notification spam on ticket creation
+      agent = assign_support_agent_silently(conversation)
       
       Rails.logger.info "✅ Support ticket creation completed for conversation #{conversation.id}"
       
@@ -178,6 +178,31 @@ class Conversation < ApplicationRecord
     Rails.logger.info "✅ Updated conversation #{id} status to '#{new_status}'"
   end
   
+  # FIXED: Method to send agent greeting when customer first responds
+  # This is called from the controller when the customer sends their first message
+  def send_agent_greeting_if_needed
+    return unless support_ticket?
+    return if status != 'created' # Only for new tickets
+    return if messages.where(is_system: false).where.not(user: customer).exists? # Agent already responded
+    
+    agent = assigned_agent
+    return unless agent
+    
+    Rails.logger.info "💬 Sending agent greeting message for conversation #{id}"
+    
+    # Create agent greeting message - this WILL trigger notifications to customer
+    agent_message = messages.create!(
+      user: agent,
+      content: "Hi! I'm #{agent.display_name} and I'll be helping you today. How can I assist you?",
+      message_type: 'text',
+      is_system: false  # This is NOT a system message, so it will trigger notifications
+    )
+    
+    Rails.logger.info "✅ Created agent greeting message #{agent_message.id}"
+    
+    agent_message
+  end
+  
   private
   
   def self.generate_ticket_id
@@ -214,16 +239,17 @@ class Conversation < ApplicationRecord
     
     conversation.messages.create!(
       user: system_user,
-      content: "Thank you for contacting support! Your ticket #{conversation.ticket_id} has been created. Connecting you with an agent...",
+      content: "Thank you for contacting support! Your ticket #{conversation.ticket_id} has been created. An agent will be with you shortly...",
       message_type: 'system',
-      is_system: true
+      is_system: true  # System messages don't trigger notifications
     )
   rescue => e
     Rails.logger.error "❌ Failed to create welcome message: #{e.message}"
   end
   
-  # FIXED: Assign agent and create their message (this WILL trigger notifications)
-  def self.assign_support_agent(conversation)
+  # FIXED: Assign agent silently without creating greeting message yet
+  # The greeting will be sent when customer first responds
+  def self.assign_support_agent_silently(conversation)
     agent = find_available_agent
     
     if agent
@@ -237,19 +263,9 @@ class Conversation < ApplicationRecord
       )
       
       # Update status to indicate agent is assigned
-      conversation.update_support_status('in_progress')
+      conversation.update_support_status('pending')
       
-      # Create agent greeting message - this WILL trigger notifications to customer
-      Rails.logger.info "💬 Creating agent greeting message (this will trigger customer notification)"
-      
-      agent_message = conversation.messages.create!(
-        user: agent,
-        content: "Hi! I'm #{agent.display_name} and I'll be helping you today. How can I assist you?",
-        message_type: 'text',
-        is_system: false  # This is NOT a system message, so it will trigger notifications
-      )
-      
-      Rails.logger.info "✅ Created agent message #{agent_message.id} - notifications should be triggered"
+      Rails.logger.info "✅ Agent assigned silently - greeting will be sent when customer responds"
       
     else
       Rails.logger.warn "⚠️ No available support agent found for conversation #{conversation.id}"
