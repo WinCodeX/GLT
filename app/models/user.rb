@@ -348,12 +348,12 @@ def accessible_conversations
   if admin? || support_staff?
     Conversation.all
   else
-    conversations.where(customer_id: id)
+    conversations # This will now work correctly through conversation_participants
   end
 end
 
 def support_conversations
-  conversations.where(conversation_type: 'support')
+  conversations.where(conversation_type: 'support_ticket')
 end
 
 def initiated_conversations
