@@ -1,3 +1,4 @@
+
 # app/helpers/avatar_helper.rb - Fixed for R2 user folders
 module AvatarHelper
   include UrlHostHelper
@@ -77,7 +78,7 @@ module AvatarHelper
     
     response.contents.any?
   rescue => e
-    Rails.logger.error "Error checking R2 avatar existence: #{e.message}"
+    Rails.logger.error "❌ Error checking R2 avatar existence: #{e.message}"
     false
   end
   
@@ -99,7 +100,7 @@ module AvatarHelper
   rescue Aws::S3::Errors::NotFound
     false
   rescue => e
-    Rails.logger.error "Error checking R2 object existence: #{e.message}"
+    Rails.logger.error "❌ Error checking R2 object existence: #{e.message}"
     false
   end
   
