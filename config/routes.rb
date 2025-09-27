@@ -115,6 +115,34 @@ Rails.application.routes.draw do
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
+
+
+
+
+scope :support, controller: :support do
+        # Dashboard and overview
+        get :dashboard, to: 'support#dashboard'
+        get :stats, to: 'support#stats'
+        
+        # Ticket management
+        get :tickets, to: 'support#tickets'
+        get :my_tickets, to: 'support#my_tickets'
+        
+        # Agent management
+        get :agents, to: 'support#agents'
+        
+        # Bulk operations
+        post :bulk_actions, to: 'support#bulk_actions'
+        
+        # Individual ticket actions
+        scope :tickets do
+          post ':id/assign', to: 'support#assign_ticket'
+          post ':id/escalate', to: 'support#escalate_ticket'
+          post ':id/note', to: 'support#add_note'
+          patch ':id/priority', to: 'support#update_priority'
+        end
+      end
+
       # ==========================================
       # 📱 APP UPDATES
       # ==========================================
