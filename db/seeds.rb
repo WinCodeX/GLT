@@ -61,6 +61,16 @@ ActiveRecord::Base.transaction do
       last_name: "System",
       phone_number: "+254700000000"  # Fixed: using phone_number
     )
+
+# Add this after your existing admin users
+create_user_safely(
+  email: "support@glt.co.ke",
+  password: "SupportAgent123!",
+  first_name: "Customer",
+  last_name: "Support",
+  phone_number: "+254712293377",
+  role: :support
+)
     
     # Create main application users
     create_user_safely(
