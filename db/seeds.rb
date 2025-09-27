@@ -10,7 +10,7 @@ ActiveRecord::Base.transaction do
     puts "🔐 Setting up roles system..."
     
     # Define all required roles
-    REQUIRED_ROLES = %w[client agent rider warehouse admin].freeze
+    REQUIRED_ROLES = %w[client agent rider warehouse support admin].freeze
     
     # Create roles with proper error handling
     REQUIRED_ROLES.each do |role_name|
