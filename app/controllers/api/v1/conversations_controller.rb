@@ -154,6 +154,9 @@ class Api::V1::ConversationsController < ApplicationController
 
         Rails.logger.info "Message saved successfully: #{@message.id} with metadata: #{@message.metadata}"
         
+        # FIXED: Send push notifications to relevant participants
+        send_message_notifications(@conversation, @message)
+        
         render json: {
           success: true,
           message: format_message(@message),
