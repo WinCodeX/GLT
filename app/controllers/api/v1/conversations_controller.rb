@@ -1,5 +1,7 @@
 # app/controllers/api/v1/conversations_controller.rb - FIXED VERSION
 class Api::V1::ConversationsController < ApplicationController
+  include AvatarHelper  # FIXED: Include avatar helper for R2 support
+  
   before_action :authenticate_user!
   before_action :set_conversation, only: [:show, :close, :reopen, :accept_ticket, :send_message]
 
@@ -128,12 +130,16 @@ class Api::V1::ConversationsController < ApplicationController
   # POST /api/v1/conversations/:id/send_message
   def send_message
     Rails.logger.info "Sending message to conversation #{params[:id]} with content: #{params[:content]}"
+    Rails.logger.info "Message metadata: #{params[:metadata]}"
     
     begin
+      # FIXED: Enhanced metadata parsing to include conversation package context
+      message_metadata = parse_message_metadata(@conversation)
+      
       message_params = {
         content: params[:content],
         message_type: params[:message_type] || 'text',
-        metadata: parse_metadata
+        metadata: message_metadata
       }
 
       @message = @conversation.messages.build(message_params)
@@ -146,7 +152,7 @@ class Api::V1::ConversationsController < ApplicationController
         # Handle support ticket status updates
         update_support_ticket_status if @conversation.support_ticket?
 
-        Rails.logger.info "Message saved successfully: #{@message.id}"
+        Rails.logger.info "Message saved successfully: #{@message.id} with metadata: #{@message.metadata}"
         
         render json: {
           success: true,
@@ -371,15 +377,25 @@ class Api::V1::ConversationsController < ApplicationController
                 .first
   end
 
-  def parse_metadata
+  # FIXED: Enhanced metadata parsing to preserve package context
+  def parse_message_metadata(conversation)
     metadata = params[:metadata] || {}
     
     # Ensure metadata is a hash
     metadata = {} unless metadata.is_a?(Hash)
     
-    # Add package code if present
+    # Add package code from request params if present
     if params[:package_code].present?
       metadata[:package_code] = params[:package_code]
+    end
+    
+    # FIXED: If no package_code in request but conversation has package context, inherit it
+    if metadata[:package_code].blank?
+      package = find_package_for_conversation(conversation)
+      if package
+        metadata[:package_code] = package.code
+        Rails.logger.info "Inherited package code from conversation context: #{package.code}"
+      end
     end
     
     metadata
@@ -429,7 +445,7 @@ class Api::V1::ConversationsController < ApplicationController
     agent_participant&.user
   end
 
-  # FIXED: Format customer data consistently
+  # FIXED: Format customer data consistently with R2 avatar support
   def format_customer_data(customer)
     return nil unless customer
     
@@ -437,12 +453,11 @@ class Api::V1::ConversationsController < ApplicationController
       id: customer.id,
       name: customer.display_name,
       email: customer.email,
-      avatar_url: customer.avatar.attached? ? 
-                 Rails.application.routes.url_helpers.url_for(customer.avatar) : nil
+      avatar_url: avatar_api_url(customer)  # FIXED: Use avatar helper instead of direct Active Storage
     }
   end
 
-  # FIXED: Format agent data consistently  
+  # FIXED: Format agent data consistently with R2 avatar support
   def format_agent_data(agent)
     return nil unless agent
     
@@ -450,8 +465,7 @@ class Api::V1::ConversationsController < ApplicationController
       id: agent.id,
       name: agent.display_name,
       email: agent.email,
-      avatar_url: agent.avatar.attached? ? 
-                 Rails.application.routes.url_helpers.url_for(agent.avatar) : nil
+      avatar_url: avatar_api_url(agent)  # FIXED: Use avatar helper instead of direct Active Storage
     }
   end
 
@@ -512,8 +526,7 @@ class Api::V1::ConversationsController < ApplicationController
           name: participant.user.display_name,
           role: participant.role,
           joined_at: participant.joined_at,
-          avatar_url: participant.user.avatar.attached? ? 
-                     Rails.application.routes.url_helpers.url_for(participant.user.avatar) : nil
+          avatar_url: avatar_api_url(participant.user)  # FIXED: Use avatar helper
         }
       end
     }
@@ -551,39 +564,7 @@ class Api::V1::ConversationsController < ApplicationController
     }
 
     # FIXED: Try to get package information from multiple sources
-    package = nil
-    
-    # First try from conversation metadata
-    if conversation.metadata&.dig('package_id')
-      begin
-        package = Package.find(conversation.metadata['package_id'])
-      rescue ActiveRecord::RecordNotFound
-        Rails.logger.warn "Package not found for conversation metadata package_id: #{conversation.metadata['package_id']}"
-      end
-    end
-    
-    # Then try from conversation metadata package_code
-    if package.nil? && conversation.metadata&.dig('package_code')
-      begin
-        package = Package.find_by(code: conversation.metadata['package_code'])
-      rescue => e
-        Rails.logger.warn "Error finding package by code #{conversation.metadata['package_code']}: #{e.message}"
-      end
-    end
-    
-    # Finally try from any message metadata in this conversation
-    if package.nil?
-      begin
-        message_with_package = conversation.messages
-                                         .where("metadata->>'package_code' IS NOT NULL")
-                                         .first
-        if message_with_package&.metadata&.dig('package_code')
-          package = Package.find_by(code: message_with_package.metadata['package_code'])
-        end
-      rescue => e
-        Rails.logger.warn "Error finding package from message metadata: #{e.message}"
-      end
-    end
+    package = find_package_for_conversation(conversation)
     
     # Format package data if found
     if package
@@ -623,8 +604,7 @@ class Api::V1::ConversationsController < ApplicationController
         id: message.user.id,
         name: message.user.display_name,
         role: message.from_support? ? 'support' : 'customer',
-        avatar_url: message.user.avatar.attached? ? 
-                   Rails.application.routes.url_helpers.url_for(message.user.avatar) : nil
+        avatar_url: avatar_api_url(message.user)  # FIXED: Use avatar helper
       }
     }
   rescue => e
