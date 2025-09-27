@@ -152,12 +152,18 @@ class Api::V1::ConversationsController < ApplicationController
         # Handle support ticket status updates
         update_support_ticket_status if @conversation.support_ticket?
 
-        # FIXED: Send push notifications to other conversation participants
-        begin
-          NotificationCreatorService.notify_conversation_participants(@message, @conversation)
-        rescue => e
-          Rails.logger.error "Failed to send support message notifications: #{e.message}"
-          # Don't fail the message sending if notification fails
+        # FIXED: Only send notifications for non-system messages and avoid duplicates
+        if !@message.is_system? && @conversation.support_ticket?
+          begin
+            Rails.logger.info "Sending notification for message #{@message.id} in conversation #{@conversation.id}"
+            
+            # Use the direct notification creation instead of service to avoid conflicts
+            create_support_message_notifications(@message, @conversation)
+            
+          rescue => e
+            Rails.logger.error "Failed to send support message notifications: #{e.message}"
+            # Don't fail the message sending if notification fails
+          end
         end
 
         Rails.logger.info "Message saved successfully: #{@message.id} with metadata: #{@message.metadata}"
@@ -443,6 +449,72 @@ class Api::V1::ConversationsController < ApplicationController
         metadata: { type: 'ticket_created' }
       )
     end
+  end
+
+  # FIXED: Direct notification creation to avoid service conflicts
+  def create_support_message_notifications(message, conversation)
+    return unless conversation.support_ticket?
+    return if message.is_system?
+    
+    Rails.logger.info "Creating support notifications for message #{message.id}"
+    
+    # Get participants to notify (exclude message sender)
+    participants_to_notify = conversation.conversation_participants
+                                       .includes(:user)
+                                       .where.not(user: message.user)
+    
+    Rails.logger.info "Found #{participants_to_notify.size} participants to notify"
+    
+    participants_to_notify.each do |participant|
+      begin
+        notification = create_support_notification_for_participant(message, participant.user)
+        Rails.logger.info "Created notification #{notification.id} for user #{participant.user.id}"
+      rescue => e
+        Rails.logger.error "Failed to create notification for user #{participant.user.id}: #{e.message}"
+      end
+    end
+  end
+
+  def create_support_notification_for_participant(message, recipient)
+    sender_name = message.user.display_name
+    is_customer_sender = !message.from_support?
+    
+    # Determine notification content based on sender/recipient
+    if is_customer_sender && recipient.has_role?(:support)
+      # Customer to Support Agent
+      title = "New message from #{sender_name}"
+      notification_message = "Ticket ##{@conversation.ticket_id}: #{truncate_message(message.content)}"
+      action_url = "/admin/support/conversations/#{@conversation.id}"
+    else
+      # Support Agent to Customer
+      title = "Customer Support replied"
+      notification_message = truncate_message(message.content)
+      action_url = "/support"
+    end
+    
+    # Add package context if available
+    package_code = @conversation.metadata&.dig('package_code')
+    if package_code
+      notification_message = "Package #{package_code}: #{notification_message}"
+    end
+    
+    # Create notification with immediate push delivery
+    Notification.create_and_broadcast!(
+      user: recipient,
+      title: title,
+      message: notification_message,
+      notification_type: 'support_message',
+      channel: 'push',
+      priority: 'normal',
+      action_url: action_url,
+      metadata: {
+        conversation_id: @conversation.id,
+        message_id: message.id,
+        ticket_id: @conversation.ticket_id,
+        package_code: package_code
+      }.compact,
+      instant_push: true  # This ensures immediate push delivery
+    )
   end
 
   # FIXED: Properly extract customer information
