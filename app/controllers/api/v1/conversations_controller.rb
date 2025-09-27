@@ -479,8 +479,13 @@ class Api::V1::ConversationsController < ApplicationController
     sender_name = message.user.display_name
     is_customer_sender = !message.from_support?
     
+    # FIXED: Robust role checking with multiple fallbacks
+    recipient_is_support = check_if_user_is_support(recipient)
+    
+    Rails.logger.info "🔍 Role detection - Customer sender: #{is_customer_sender}, Recipient is support: #{recipient_is_support}"
+    
     # Determine notification content based on sender/recipient
-    if is_customer_sender && recipient.has_role?(:support)
+    if is_customer_sender && recipient_is_support
       # Customer to Support Agent
       title = "New message from #{sender_name}"
       notification_message = "Ticket ##{@conversation.ticket_id}: #{truncate_message(message.content)}"
@@ -498,6 +503,8 @@ class Api::V1::ConversationsController < ApplicationController
       notification_message = "Package #{package_code}: #{notification_message}"
     end
     
+    Rails.logger.info "📝 Creating notification - Title: '#{title}', Message: '#{notification_message}'"
+    
     # FIXED: Create notification exactly like admin controller
     notification = recipient.notifications.create!(
       title: title,
@@ -514,12 +521,56 @@ class Api::V1::ConversationsController < ApplicationController
       }.compact
     )
     
+    Rails.logger.info "✅ Notification #{notification.id} created successfully"
+    
     # FIXED: Send push notification exactly like admin controller
     if should_send_push_notification?(notification)
+      Rails.logger.info "📱 Sending push notification for notification #{notification.id}"
       send_push_notification_like_admin(notification)
+    else
+      Rails.logger.warn "⚠️ Push notification not sent - user has no active push tokens"
     end
     
     notification
+  end
+  
+  # FIXED: Robust role checking with only existing database fields
+  def check_if_user_is_support(user)
+    return false unless user
+    
+    Rails.logger.info "🔍 Checking if user #{user.id} (#{user.email}) is support staff"
+    
+    # Method 1: Try Rolify (this is the primary method based on schema)
+    begin
+      if user.has_role?(:support)
+        Rails.logger.info "✅ User #{user.id} has support role via Rolify"
+        return true
+      end
+      if user.has_role?(:admin)
+        Rails.logger.info "✅ User #{user.id} has admin role via Rolify"
+        return true
+      end
+    rescue => e
+      Rails.logger.warn "⚠️ Rolify role check failed: #{e.message}"
+    end
+    
+    # Method 2: Check email patterns (backup method)
+    begin
+      if user.email&.include?('support@')
+        Rails.logger.info "✅ User #{user.id} identified as support via email pattern (support@)"
+        return true
+      end
+      if user.email&.include?('@glt.co.ke')
+        Rails.logger.info "✅ User #{user.id} identified as support via email domain (@glt.co.ke)"
+        return true
+      end
+    rescue => e
+      Rails.logger.warn "⚠️ Email role check failed: #{e.message}"
+    end
+    
+    # No support role found
+    Rails.logger.info "❌ User #{user.id} (#{user.email}) determined to be: customer"
+    false
   end
   
   # FIXED: Copy the exact method from admin controller
