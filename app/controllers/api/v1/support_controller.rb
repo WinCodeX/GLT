@@ -1,5 +1,7 @@
 # app/controllers/api/v1/support_controller.rb
 class Api::V1::SupportController < ApplicationController
+  include AvatarHelper  # FIXED: Include avatar helper for R2 support
+  
   before_action :authenticate_user!
   before_action :ensure_support_access!
   before_action :set_conversation, only: [:assign_ticket, :escalate_ticket, :add_note, :update_priority]
@@ -563,8 +565,7 @@ class Api::V1::SupportController < ApplicationController
         id: conversation.customer.id,
         name: conversation.customer.display_name,
         email: conversation.customer.email,
-        avatar_url: conversation.customer.avatar.attached? ? 
-                   Rails.application.routes.url_helpers.url_for(conversation.customer.avatar) : nil
+        avatar_url: avatar_api_url(conversation.customer)  # FIXED: Use avatar helper instead of direct Active Storage
       } : nil,
       
       assigned_agent: conversation.assigned_agent ? {
@@ -595,8 +596,7 @@ class Api::V1::SupportController < ApplicationController
       name: agent.display_name,
       email: agent.email,
       online: agent.online?,
-      avatar_url: agent.avatar.attached? ? 
-                 Rails.application.routes.url_helpers.url_for(agent.avatar) : nil,
+      avatar_url: avatar_api_url(agent),  # FIXED: Use avatar helper instead of direct Active Storage
       role: agent.primary_role,
       last_seen_at: agent.last_seen_at
     }
