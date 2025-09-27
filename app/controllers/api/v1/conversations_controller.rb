@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb
+# app/controllers/api/v1/conversations_controller.rb - FIXED VERSION
 class Api::V1::ConversationsController < ApplicationController
   before_action :authenticate_user!
   before_action :set_conversation, only: [:show, :close, :reopen, :accept_ticket, :send_message]
@@ -363,13 +363,13 @@ class Api::V1::ConversationsController < ApplicationController
   end
 
   def find_existing_active_ticket
-  Conversation.joins(:conversation_participants)
-              .where(conversation_participants: { user_id: current_user.id })
-              .support_tickets
-              .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
-              .where('conversations.created_at > ?', 24.hours.ago)
-              .first
-end
+    Conversation.joins(:conversation_participants)
+                .where(conversation_participants: { user_id: current_user.id })
+                .support_tickets
+                .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                .where('conversations.created_at > ?', 24.hours.ago)
+                .first
+  end
 
   def parse_metadata
     metadata = params[:metadata] || {}
@@ -401,8 +401,66 @@ end
     end
   end
 
+  # FIXED: Properly extract customer information
+  def get_customer_from_conversation(conversation)
+    # For support tickets, find the customer participant
+    if conversation.support_ticket?
+      customer_participant = conversation.conversation_participants
+                                       .includes(:user)
+                                       .find_by(role: 'customer')
+      return customer_participant&.user
+    end
+    
+    # For direct messages, find the other participant
+    if conversation.direct_message?
+      return conversation.other_participant(current_user)
+    end
+    
+    nil
+  end
+
+  # FIXED: Properly extract assigned agent information
+  def get_assigned_agent_from_conversation(conversation)
+    return nil unless conversation.support_ticket?
+    
+    agent_participant = conversation.conversation_participants
+                                  .includes(:user)
+                                  .find_by(role: 'agent')
+    agent_participant&.user
+  end
+
+  # FIXED: Format customer data consistently
+  def format_customer_data(customer)
+    return nil unless customer
+    
+    {
+      id: customer.id,
+      name: customer.display_name,
+      email: customer.email,
+      avatar_url: customer.avatar.attached? ? 
+                 Rails.application.routes.url_helpers.url_for(customer.avatar) : nil
+    }
+  end
+
+  # FIXED: Format agent data consistently  
+  def format_agent_data(agent)
+    return nil unless agent
+    
+    {
+      id: agent.id,
+      name: agent.display_name,
+      email: agent.email,
+      avatar_url: agent.avatar.attached? ? 
+                 Rails.application.routes.url_helpers.url_for(agent.avatar) : nil
+    }
+  end
+
   def format_conversation_summary(conversation)
     last_message = conversation.last_message
+    
+    # FIXED: Properly get customer and agent data
+    customer = get_customer_from_conversation(conversation)
+    assigned_agent = get_assigned_agent_from_conversation(conversation)
     other_participant = conversation.other_participant(current_user) if conversation.direct_message?
 
     # Determine conversation status for display
@@ -431,12 +489,14 @@ end
       category: conversation.category,
       priority: conversation.priority,
       
+      # FIXED: Proper customer data formatting
+      customer: format_customer_data(customer),
+      
+      # FIXED: Proper assigned agent data formatting
+      assigned_agent: format_agent_data(assigned_agent),
+      
       # Direct message specific fields
-      other_participant: other_participant ? {
-        id: other_participant.id,
-        name: other_participant.display_name,
-        avatar_url: other_participant.avatar.present? ? url_for(other_participant.avatar) : nil
-      } : nil,
+      other_participant: other_participant ? format_customer_data(other_participant) : nil,
       
       # Last message preview
       last_message: last_message ? {
@@ -451,12 +511,15 @@ end
           user_id: participant.user.id,
           name: participant.user.display_name,
           role: participant.role,
-          joined_at: participant.joined_at
+          joined_at: participant.joined_at,
+          avatar_url: participant.user.avatar.attached? ? 
+                     Rails.application.routes.url_helpers.url_for(participant.user.avatar) : nil
         }
       end
     }
   rescue => e
     Rails.logger.error "Error formatting conversation summary: #{e.message}"
+    Rails.logger.error e.backtrace.join("\n")
     {
       id: conversation.id,
       conversation_type: conversation.conversation_type,
@@ -468,44 +531,89 @@ end
   def format_conversation_detail(conversation)
     base_summary = format_conversation_summary(conversation)
     
+    # FIXED: Get customer and agent properly
+    customer = get_customer_from_conversation(conversation)
+    assigned_agent = get_assigned_agent_from_conversation(conversation)
+    
     additional_details = {
       metadata: conversation.metadata || {},
       created_at: conversation.created_at,
       updated_at: conversation.updated_at,
+      escalated: conversation.metadata&.dig('escalated') || false,
+      message_count: conversation.messages.count,
+      
+      # FIXED: Ensure customer data is always included
+      customer: format_customer_data(customer),
+      assigned_agent: format_agent_data(assigned_agent),
       
       # Package information if this is a package inquiry
       package: nil
     }
 
-    # Try to get package information
+    # FIXED: Try to get package information from multiple sources
+    package = nil
+    
+    # First try from conversation metadata
     if conversation.metadata&.dig('package_id')
       begin
         package = Package.find(conversation.metadata['package_id'])
-        additional_details[:package] = {
-          id: package.id,
-          code: package.code,
-          state: package.state,
-          state_display: package.state_display,
-          receiver_name: package.receiver_name,
-          route_description: package.route_description,
-          cost: package.cost
-        }
       rescue ActiveRecord::RecordNotFound
-        Rails.logger.warn "Package not found for conversation metadata: #{conversation.metadata['package_id']}"
+        Rails.logger.warn "Package not found for conversation metadata package_id: #{conversation.metadata['package_id']}"
       end
+    end
+    
+    # Then try from conversation metadata package_code
+    if package.nil? && conversation.metadata&.dig('package_code')
+      begin
+        package = Package.find_by(code: conversation.metadata['package_code'])
+      rescue => e
+        Rails.logger.warn "Error finding package by code #{conversation.metadata['package_code']}: #{e.message}"
+      end
+    end
+    
+    # Finally try from any message metadata in this conversation
+    if package.nil?
+      begin
+        message_with_package = conversation.messages
+                                         .where("metadata->>'package_code' IS NOT NULL")
+                                         .first
+        if message_with_package&.metadata&.dig('package_code')
+          package = Package.find_by(code: message_with_package.metadata['package_code'])
+        end
+      rescue => e
+        Rails.logger.warn "Error finding package from message metadata: #{e.message}"
+      end
+    end
+    
+    # Format package data if found
+    if package
+      additional_details[:package] = {
+        id: package.id,
+        code: package.code,
+        state: package.state,
+        state_display: package.state_display,
+        receiver_name: package.receiver_name,
+        route_description: package.route_description,
+        cost: package.cost,
+        delivery_type: package.delivery_type,
+        created_at: package.created_at
+      }
     end
 
     base_summary.merge(additional_details)
   rescue => e
     Rails.logger.error "Error formatting conversation detail: #{e.message}"
+    Rails.logger.error e.backtrace.join("\n")
     format_conversation_summary(conversation)
   end
 
+  # FIXED: Enhanced message formatting to include package metadata
   def format_message(message)
     {
       id: message.id,
       content: message.content,
       message_type: message.message_type,
+      # FIXED: Ensure metadata is always included and properly formatted
       metadata: message.metadata || {},
       created_at: message.created_at,
       timestamp: message.formatted_timestamp,
@@ -514,7 +622,9 @@ end
       user: {
         id: message.user.id,
         name: message.user.display_name,
-        role: message.from_support? ? 'support' : 'customer'
+        role: message.from_support? ? 'support' : 'customer',
+        avatar_url: message.user.avatar.attached? ? 
+                   Rails.application.routes.url_helpers.url_for(message.user.avatar) : nil
       }
     }
   rescue => e
@@ -522,8 +632,61 @@ end
     {
       id: message.id,
       content: message.content || 'Error loading message',
+      metadata: {},
       error: 'Failed to format message'
     }
+  end
+
+  def find_package_for_conversation(conversation)
+    package = nil
+    
+    # First try from conversation metadata package_id
+    if conversation.metadata&.dig('package_id')
+      begin
+        package = Package.find(conversation.metadata['package_id'])
+        Rails.logger.debug "Found package from conversation metadata package_id: #{package.code}"
+        return package
+      rescue ActiveRecord::RecordNotFound
+        Rails.logger.warn "Package not found for conversation metadata package_id: #{conversation.metadata['package_id']}"
+      end
+    end
+    
+    # Then try from conversation metadata package_code
+    if conversation.metadata&.dig('package_code')
+      begin
+        package = Package.find_by(code: conversation.metadata['package_code'])
+        if package
+          Rails.logger.debug "Found package from conversation metadata package_code: #{package.code}"
+          return package
+        else
+          Rails.logger.warn "Package not found for conversation metadata package_code: #{conversation.metadata['package_code']}"
+        end
+      rescue => e
+        Rails.logger.warn "Error finding package by conversation metadata package_code #{conversation.metadata['package_code']}: #{e.message}"
+      end
+    end
+    
+    # Finally try from any message metadata in this conversation
+    begin
+      message_with_package = conversation.messages
+                                       .where("metadata->>'package_code' IS NOT NULL")
+                                       .first
+      if message_with_package&.metadata&.dig('package_code')
+        package = Package.find_by(code: message_with_package.metadata['package_code'])
+        if package
+          Rails.logger.debug "Found package from message metadata: #{package.code}"
+          return package
+        else
+          Rails.logger.warn "Package not found for message metadata package_code: #{message_with_package.metadata['package_code']}"
+        end
+      end
+    rescue => e
+      Rails.logger.warn "Error finding package from message metadata: #{e.message}"
+    end
+    
+    # No package found
+    Rails.logger.debug "No package found for conversation #{conversation.id}"
+    nil
   end
 
   def truncate_message(content)
