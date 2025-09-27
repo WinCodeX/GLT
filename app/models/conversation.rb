@@ -246,7 +246,7 @@ class Conversation < ApplicationRecord
   end
   
   def update_last_activity
-    self.last_activity_at = Time.current if will_save_change_to_any_column?
-  end
+  self.last_activity_at = Time.current if changed?
+end
 end
 
