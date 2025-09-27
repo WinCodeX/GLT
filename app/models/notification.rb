@@ -16,7 +16,9 @@ class Notification < ApplicationRecord
     # NEW: Add package update types for push notifications
     package_ready: 'package_ready',
     package_update: 'package_update',
-    payment_failed: 'payment_failed'
+    payment_failed: 'payment_failed',
+    # FIX: Add missing support_message type
+    support_message: 'support_message'
   }
 
   enum channel: {
@@ -266,6 +268,20 @@ class Notification < ApplicationRecord
       priority: 'high',
       icon: 'x-circle',
       action_url: "/packages/#{package.id}/payment"
+    )
+  end
+
+  # NEW: SUPPORT MESSAGE NOTIFICATION METHOD
+  def self.create_support_message(user:, title:, message:, options: {})
+    create_with_push(
+      user: user,
+      title: title,
+      message: message,
+      notification_type: 'support_message',
+      priority: options[:priority] || 'normal',
+      icon: options[:icon] || 'message-circle',
+      action_url: options[:action_url],
+      metadata: options[:metadata]
     )
   end
 
