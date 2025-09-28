@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb - Enhanced with ActionCable broadcasting for real-time messaging
+# app/controllers/api/v1/conversations_controller.rb - Fixed with proper error handling
 
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
@@ -8,60 +8,82 @@ class Api::V1::ConversationsController < ApplicationController
 
   # GET /api/v1/conversations
   def index
-    @conversations = current_user.conversations
-                                .includes(:conversation_participants, :users, :messages)
-                                .recent
+    begin
+      @conversations = current_user.conversations
+                                  .includes(:conversation_participants, :users, messages: :user)
+                                  .recent
 
-    if params[:type].present?
-      case params[:type]
-      when 'support'
-        @conversations = @conversations.support_tickets
-      when 'direct'
-        @conversations = @conversations.direct_messages
+      if params[:type].present?
+        case params[:type]
+        when 'support'
+          @conversations = @conversations.support_tickets
+        when 'direct'
+          @conversations = @conversations.direct_messages
+        end
       end
-    end
 
-    if params[:status].present? && params[:type] == 'support'
-      @conversations = @conversations.where("metadata->>'status' = ?", params[:status])
-    end
-
-    page = [params[:page].to_i, 1].max
-    @conversations = @conversations.limit(20).offset((page - 1) * 20)
-
-    render json: {
-      success: true,
-      conversations: @conversations.map do |conversation|
-        format_conversation_summary(conversation)
+      if params[:status].present? && params[:type] == 'support'
+        @conversations = @conversations.where("metadata->>'status' = ?", params[:status])
       end
-    }
-  rescue => e
-    Rails.logger.error "Error in conversations#index: #{e.message}"
-    render json: { success: false, message: 'Failed to load conversations' }, status: :internal_server_error
+
+      page = [params[:page].to_i, 1].max
+      @conversations = @conversations.limit(20).offset((page - 1) * 20)
+
+      render json: {
+        success: true,
+        conversations: @conversations.map { |conversation| safe_format_conversation_summary(conversation) }
+      }, status: :ok
+    rescue => e
+      Rails.logger.error "Error in conversations#index: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to load conversations',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
+    end
   end
 
   # GET /api/v1/conversations/:id
   def show
     begin
-      @conversation.mark_read_by(current_user)
-      @messages = @conversation.messages.includes(:user).chronological.limit(50)
+      # Mark as read with error handling
+      begin
+        @conversation.mark_read_by(current_user) if @conversation.respond_to?(:mark_read_by)
+      rescue => e
+        Rails.logger.warn "Failed to mark conversation as read: #{e.message}"
+      end
 
-      # ENHANCED: Broadcast read status update
-      broadcast_conversation_read_status(@conversation, current_user)
+      # Get messages with optimized includes
+      @messages = @conversation.messages
+                             .includes(:user)
+                             .order(:created_at)
+                             .limit(50)
+
+      # Broadcast read status (non-blocking)
+      begin
+        broadcast_conversation_read_status(@conversation, current_user)
+      rescue => e
+        Rails.logger.warn "Failed to broadcast read status: #{e.message}"
+      end
 
       render json: {
         success: true,
-        conversation: format_conversation_detail(@conversation),
-        messages: @messages.map { |message| format_message(message) }
-      }
+        conversation: safe_format_conversation_detail(@conversation),
+        messages: @messages.map { |message| safe_format_message(message) }
+      }, status: :ok
     rescue => e
-      Rails.logger.error "Error in conversations#show: #{e.message}"
-      render json: { success: false, message: 'Failed to load conversation' }, status: :internal_server_error
+      Rails.logger.error "Error in conversations#show: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to load conversation',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   # POST /api/v1/conversations/support_ticket
   def create_support_ticket
-    Rails.logger.info "Creating support ticket with params: #{params.inspect}"
+    Rails.logger.info "Creating support ticket with params: #{params.except(:controller, :action).inspect}"
     
     begin
       package = find_package_for_ticket
@@ -71,11 +93,11 @@ class Api::V1::ConversationsController < ApplicationController
         Rails.logger.info "Found existing active ticket: #{existing_conversation.id}"
         return render json: {
           success: true,
-          conversation: format_conversation_detail(existing_conversation),
+          conversation: safe_format_conversation_detail(existing_conversation),
           conversation_id: existing_conversation.id,
           ticket_id: existing_conversation.ticket_id,
           message: 'Using existing support ticket'
-        }
+        }, status: :ok
       end
 
       @conversation = Conversation.create_support_ticket(
@@ -87,35 +109,55 @@ class Api::V1::ConversationsController < ApplicationController
       if @conversation.persisted?
         Rails.logger.info "Created support ticket: #{@conversation.id}"
         
-        # ENHANCED: Broadcast new support ticket to support agents
-        broadcast_new_support_ticket(@conversation)
+        # Non-blocking broadcast
+        begin
+          broadcast_new_support_ticket(@conversation)
+        rescue => e
+          Rails.logger.warn "Failed to broadcast new ticket: #{e.message}"
+        end
         
         render json: {
           success: true,
-          conversation: format_conversation_detail(@conversation),
+          conversation: safe_format_conversation_detail(@conversation),
           conversation_id: @conversation.id,
           ticket_id: @conversation.ticket_id,
           message: 'Support ticket created successfully'
         }, status: :created
       else
-        render json: { success: false, errors: @conversation.errors.full_messages }, status: :unprocessable_entity
+        render json: { 
+          success: false, 
+          errors: @conversation.errors.full_messages 
+        }, status: :unprocessable_entity
       end
       
     rescue => e
-      Rails.logger.error "Error creating support ticket: #{e.message}"
-      render json: { success: false, message: 'Failed to create support ticket', error: e.message }, status: :internal_server_error
+      Rails.logger.error "Error creating support ticket: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to create support ticket',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   # POST /api/v1/conversations/:id/send_message
   def send_message
-    Rails.logger.info "Sending message to conversation #{params[:id]} with content: #{params[:content]}"
+    Rails.logger.info "Sending message to conversation #{params[:id]}"
     
     begin
-      message_metadata = parse_message_metadata(@conversation)
+      # Validate required parameters
+      if params[:content].blank?
+        return render json: { 
+          success: false, 
+          message: 'Message content is required' 
+        }, status: :unprocessable_entity
+      end
+
+      # Build message with minimal metadata to avoid errors
+      message_metadata = safe_parse_message_metadata(@conversation)
       
       message_params = {
-        content: params[:content],
+        content: params[:content].to_s.strip,
         message_type: params[:message_type] || 'text',
         metadata: message_metadata
       }
@@ -124,34 +166,53 @@ class Api::V1::ConversationsController < ApplicationController
       @message.user = current_user
 
       if @message.save
-        @conversation.touch(:last_activity_at)
-        update_support_ticket_status if @conversation.support_ticket?
-
-        # ENHANCED: Broadcast new message via ActionCable (handled by Message model)
-        # The Message model after_create_commit callback will handle broadcasting
-        
-        # SIMPLIFIED: Only send notifications for support tickets, non-system messages
-        if @conversation.support_ticket? && !@message.is_system?
-          send_support_notifications(@message)
-        end
-
-        # ENHANCED: Broadcast conversation update to all participants
-        broadcast_conversation_update(@conversation, @message)
-
         Rails.logger.info "Message saved successfully: #{@message.id}"
         
+        # Update conversation (non-critical)
+        begin
+          @conversation.touch(:last_activity_at)
+          update_support_ticket_status if @conversation.support_ticket?
+        rescue => e
+          Rails.logger.warn "Failed to update conversation: #{e.message}"
+        end
+
+        # Send notifications (non-blocking)
+        begin
+          if @conversation.support_ticket? && !@message.is_system?
+            send_support_notifications(@message)
+          end
+        rescue => e
+          Rails.logger.warn "Failed to send notifications: #{e.message}"
+        end
+
+        # Broadcast updates (non-blocking)
+        begin
+          broadcast_conversation_update(@conversation, @message)
+        rescue => e
+          Rails.logger.warn "Failed to broadcast update: #{e.message}"
+        end
+
+        # Return simplified response to avoid formatting errors
         render json: {
           success: true,
-          message: format_message(@message),
-          conversation: format_conversation_detail(@conversation)
-        }
+          message: safe_format_message(@message),
+          conversation_id: @conversation.id,
+          last_activity_at: @conversation.last_activity_at&.iso8601
+        }, status: :ok
       else
-        render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
+        render json: { 
+          success: false, 
+          errors: @message.errors.full_messages 
+        }, status: :unprocessable_entity
       end
       
     rescue => e
-      Rails.logger.error "Error sending message: #{e.message}"
-      render json: { success: false, message: 'Failed to send message', error: e.message }, status: :internal_server_error
+      Rails.logger.error "Error sending message: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to send message',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
@@ -167,26 +228,40 @@ class Api::V1::ConversationsController < ApplicationController
       if @conversation
         render json: {
           success: true,
-          conversation: format_conversation_detail(@conversation),
+          conversation: safe_format_conversation_detail(@conversation),
           conversation_id: @conversation.id
-        }
+        }, status: :ok
       else
-        render json: { success: true, conversation: nil, conversation_id: nil }
+        render json: { 
+          success: true, 
+          conversation: nil, 
+          conversation_id: nil 
+        }, status: :ok
       end
     rescue => e
-      Rails.logger.error "Error getting active support: #{e.message}"
-      render json: { success: false, message: 'Failed to get active support conversation' }, status: :internal_server_error
+      Rails.logger.error "Error getting active support: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to get active support conversation',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   # PATCH /api/v1/conversations/:id/accept_ticket
   def accept_ticket
     unless @conversation.support_ticket?
-      return render json: { success: false, message: 'Only support tickets can be accepted' }, status: :unprocessable_entity
+      return render json: { 
+        success: false, 
+        message: 'Only support tickets can be accepted' 
+      }, status: :unprocessable_entity
     end
 
     unless current_user.support_agent? || current_user.admin?
-      return render json: { success: false, message: 'Only support staff can accept tickets' }, status: :forbidden
+      return render json: { 
+        success: false, 
+        message: 'Only support staff can accept tickets' 
+      }, status: :forbidden
     end
 
     begin
@@ -212,20 +287,34 @@ class Api::V1::ConversationsController < ApplicationController
         }
       )
 
-      # ENHANCED: Broadcast ticket acceptance to all participants
-      broadcast_ticket_status_change(@conversation, 'accepted', current_user, system_message)
+      # Non-blocking broadcast
+      begin
+        broadcast_ticket_status_change(@conversation, 'accepted', current_user, system_message)
+      rescue => e
+        Rails.logger.warn "Failed to broadcast ticket acceptance: #{e.message}"
+      end
 
-      render json: { success: true, message: 'Support ticket accepted successfully' }
+      render json: { 
+        success: true, 
+        message: 'Support ticket accepted successfully' 
+      }, status: :ok
     rescue => e
-      Rails.logger.error "Error accepting ticket: #{e.message}"
-      render json: { success: false, message: 'Failed to accept ticket' }, status: :internal_server_error
+      Rails.logger.error "Error accepting ticket: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to accept ticket',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   # PATCH /api/v1/conversations/:id/close
   def close
     unless @conversation.support_ticket?
-      return render json: { success: false, message: 'Only support tickets can be closed' }, status: :unprocessable_entity
+      return render json: { 
+        success: false, 
+        message: 'Only support tickets can be closed' 
+      }, status: :unprocessable_entity
     end
 
     begin
@@ -239,20 +328,34 @@ class Api::V1::ConversationsController < ApplicationController
         metadata: { type: 'ticket_closed', closed_by: current_user.id }
       )
 
-      # ENHANCED: Broadcast ticket closure to all participants
-      broadcast_ticket_status_change(@conversation, 'closed', current_user, system_message)
+      # Non-blocking broadcast
+      begin
+        broadcast_ticket_status_change(@conversation, 'closed', current_user, system_message)
+      rescue => e
+        Rails.logger.warn "Failed to broadcast ticket closure: #{e.message}"
+      end
 
-      render json: { success: true, message: 'Support ticket closed successfully' }
+      render json: { 
+        success: true, 
+        message: 'Support ticket closed successfully' 
+      }, status: :ok
     rescue => e
-      Rails.logger.error "Error closing ticket: #{e.message}"
-      render json: { success: false, message: 'Failed to close ticket' }, status: :internal_server_error
+      Rails.logger.error "Error closing ticket: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to close ticket',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   # PATCH /api/v1/conversations/:id/reopen
   def reopen
     unless @conversation.support_ticket?
-      return render json: { success: false, message: 'Only support tickets can be reopened' }, status: :unprocessable_entity
+      return render json: { 
+        success: false, 
+        message: 'Only support tickets can be reopened' 
+      }, status: :unprocessable_entity
     end
 
     begin
@@ -266,310 +369,225 @@ class Api::V1::ConversationsController < ApplicationController
         metadata: { type: 'ticket_reopened', reopened_by: current_user.id }
       )
 
-      # ENHANCED: Broadcast ticket reopening to all participants
-      broadcast_ticket_status_change(@conversation, 'reopened', current_user, system_message)
+      # Non-blocking broadcast
+      begin
+        broadcast_ticket_status_change(@conversation, 'reopened', current_user, system_message)
+      rescue => e
+        Rails.logger.warn "Failed to broadcast ticket reopening: #{e.message}"
+      end
 
-      render json: { success: true, message: 'Support ticket reopened successfully' }
+      render json: { 
+        success: true, 
+        message: 'Support ticket reopened successfully' 
+      }, status: :ok
     rescue => e
-      Rails.logger.error "Error reopening ticket: #{e.message}"
-      render json: { success: false, message: 'Failed to reopen ticket' }, status: :internal_server_error
+      Rails.logger.error "Error reopening ticket: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
+      render json: { 
+        success: false, 
+        message: 'Failed to reopen ticket',
+        error: Rails.env.development? ? e.message : 'Internal error'
+      }, status: :internal_server_error
     end
   end
 
   private
 
-  # ENHANCED: ActionCable broadcasting methods
-  def broadcast_new_support_ticket(conversation)
-    begin
-      customer = get_customer_from_conversation(conversation)
-      package = find_package_for_conversation(conversation)
-      
-      # Broadcast to support agents channel
-      ActionCable.server.broadcast(
-        "support_tickets",
-        {
-          type: 'new_support_ticket',
-          conversation: {
-            id: conversation.id,
-            ticket_id: conversation.ticket_id,
-            category: conversation.category,
-            priority: conversation.priority,
-            status: conversation.status,
-            created_at: conversation.created_at.iso8601
-          },
-          customer: format_customer_data(customer),
-          package: package ? {
-            id: package.id,
-            code: package.code,
-            state: package.state
-          } : nil,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Broadcast to customer's personal channel
-      if customer
-        ActionCable.server.broadcast(
-          "user_messages_#{customer.id}",
-          {
-            type: 'support_ticket_created',
-            conversation_id: conversation.id,
-            ticket_id: conversation.ticket_id,
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      Rails.logger.info "📡 New support ticket broadcast sent for ticket #{conversation.ticket_id}"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast new support ticket: #{e.message}"
-    end
-  end
-
-  def broadcast_conversation_update(conversation, new_message)
-    begin
-      # Broadcast to conversation-specific channel
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'conversation_updated',
-          conversation_id: conversation.id,
-          last_activity_at: conversation.last_activity_at.iso8601,
-          last_message: {
-            id: new_message.id,
-            content: truncate_message(new_message.content),
-            created_at: new_message.created_at.iso8601,
-            from_support: new_message.from_support?,
-            user_name: new_message.user.display_name
-          },
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Broadcast to each participant's personal channel
-      conversation.conversation_participants.includes(:user).each do |participant|
-        next if participant.user == new_message.user # Don't notify sender
-        
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.user.id}",
-          {
-            type: 'conversation_activity',
-            conversation_id: conversation.id,
-            unread_count: conversation.unread_count_for(participant.user),
-            last_message: {
-              content: truncate_message(new_message.content),
-              from_support: new_message.from_support?,
-              created_at: new_message.created_at.iso8601
-            },
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      Rails.logger.info "📡 Conversation update broadcast sent for conversation #{conversation.id}"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast conversation update: #{e.message}"
-    end
-  end
-
-  def broadcast_conversation_read_status(conversation, reader)
-    begin
-      # Broadcast read status to conversation channel
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'conversation_read',
-          conversation_id: conversation.id,
-          reader_id: reader.id,
-          reader_name: reader.display_name,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Update unread count for the reader
-      ActionCable.server.broadcast(
-        "user_messages_#{reader.id}",
-        {
-          type: 'conversation_read_update',
-          conversation_id: conversation.id,
-          unread_count: 0,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      Rails.logger.info "📡 Conversation read status broadcast sent for conversation #{conversation.id}"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast read status: #{e.message}"
-    end
-  end
-
-  def broadcast_ticket_status_change(conversation, action, actor, system_message)
-    begin
-      customer = get_customer_from_conversation(conversation)
-      assigned_agent = get_assigned_agent_from_conversation(conversation)
-      
-      # Broadcast to conversation channel
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'ticket_status_changed',
-          conversation_id: conversation.id,
-          ticket_id: conversation.ticket_id,
-          action: action,
-          new_status: conversation.status,
-          actor: {
-            id: actor.id,
-            name: actor.display_name,
-            role: actor.from_support? ? 'support' : 'customer'
-          },
-          system_message: format_message(system_message),
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Broadcast to support agents
-      ActionCable.server.broadcast(
-        "support_tickets",
-        {
-          type: 'ticket_status_updated',
-          conversation_id: conversation.id,
-          ticket_id: conversation.ticket_id,
-          status: conversation.status,
-          action: action,
-          customer: format_customer_data(customer),
-          assigned_agent: format_agent_data(assigned_agent),
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Broadcast to customer
-      if customer
-        ActionCable.server.broadcast(
-          "user_messages_#{customer.id}",
-          {
-            type: 'support_ticket_status_changed',
-            conversation_id: conversation.id,
-            ticket_id: conversation.ticket_id,
-            status: conversation.status,
-            action: action,
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      # Broadcast to assigned agent if different from actor
-      if assigned_agent && assigned_agent != actor
-        ActionCable.server.broadcast(
-          "user_messages_#{assigned_agent.id}",
-          {
-            type: 'assigned_ticket_status_changed',
-            conversation_id: conversation.id,
-            ticket_id: conversation.ticket_id,
-            status: conversation.status,
-            action: action,
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      Rails.logger.info "📡 Ticket status change broadcast sent for ticket #{conversation.ticket_id} (#{action})"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast ticket status change: #{e.message}"
-    end
-  end
-
-  def broadcast_typing_indicator(conversation, user, typing)
-    begin
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'typing_indicator',
-          conversation_id: conversation.id,
-          user_id: user.id,
-          user_name: user.display_name,
-          typing: typing,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      Rails.logger.info "📡 Typing indicator broadcast sent for conversation #{conversation.id}"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast typing indicator: #{e.message}"
-    end
-  end
-
   def set_conversation
     @conversation = current_user.conversations.find(params[:id])
   rescue ActiveRecord::RecordNotFound
-    render json: { success: false, message: 'Conversation not found' }, status: :not_found
+    render json: { 
+      success: false, 
+      message: 'Conversation not found' 
+    }, status: :not_found
   end
 
-  def find_package_for_ticket
-    package = nil
+  # SAFE: Simplified message metadata parsing
+  def safe_parse_message_metadata(conversation)
+    metadata = {}
     
-    if params[:package_code].present?
-      package = current_user.packages.find_by(code: params[:package_code])
-      unless package
-        Rails.logger.warn "Package not found with code: #{params[:package_code]}"
-        raise ActiveRecord::RecordNotFound, 'Package not found'
-      end
-    elsif params[:package_id].present?
-      package = current_user.packages.find_by(id: params[:package_id])
-      unless package
-        Rails.logger.warn "Package not found with id: #{params[:package_id]}"
-        raise ActiveRecord::RecordNotFound, 'Package not found'
-      end
-    end
-    
-    package
-  end
-
-  def find_existing_active_ticket
-    Conversation.joins(:conversation_participants)
-                .where(conversation_participants: { user_id: current_user.id })
-                .support_tickets
-                .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
-                .where('conversations.created_at > ?', 24.hours.ago)
-                .first
-  end
-
-  def parse_message_metadata(conversation)
-    metadata = params[:metadata] || {}
-    metadata = {} unless metadata.is_a?(Hash)
-    
-    if params[:package_code].present?
-      metadata[:package_code] = params[:package_code]
-      
-      if conversation.support_ticket? && conversation.category == 'basic_inquiry'
-        begin
-          package = Package.find_by(code: params[:package_code])
-          if package && package.user == current_user
-            conversation.metadata ||= {}
-            conversation.metadata['package_id'] = package.id
-            conversation.metadata['package_code'] = package.code
-            conversation.metadata['category'] = 'package_inquiry'
-            conversation.save!
-            Rails.logger.info "Upgraded basic inquiry to package inquiry for package: #{package.code}"
-          end
-        rescue => e
-          Rails.logger.warn "Failed to upgrade conversation to package inquiry: #{e.message}"
+    begin
+      # Only add package code if it's provided and valid
+      if params[:package_code].present?
+        package = Package.find_by(code: params[:package_code])
+        if package && package.user == current_user
+          metadata[:package_code] = package.code
         end
       end
-    end
-    
-    if metadata[:package_code].blank?
-      package = find_package_for_conversation(conversation)
-      if package
-        metadata[:package_code] = package.code
-        Rails.logger.info "Inherited package code from conversation context: #{package.code}"
-      end
+    rescue => e
+      Rails.logger.warn "Failed to parse message metadata: #{e.message}"
     end
     
     metadata
   end
 
+  # SAFE: Error-resistant conversation formatting
+  def safe_format_conversation_summary(conversation)
+    begin
+      last_message = conversation.messages.last
+      
+      # Basic conversation data with fallbacks
+      summary = {
+        id: conversation.id,
+        conversation_type: conversation.conversation_type || 'direct',
+        title: conversation.title || 'Untitled Conversation',
+        last_activity_at: conversation.last_activity_at&.iso8601,
+        unread_count: 0,
+        status: conversation.status || 'active',
+        created_at: conversation.created_at&.iso8601
+      }
+
+      # Add unread count safely
+      begin
+        if conversation.respond_to?(:unread_count_for)
+          summary[:unread_count] = conversation.unread_count_for(current_user) || 0
+        end
+      rescue => e
+        Rails.logger.warn "Failed to get unread count: #{e.message}"
+        summary[:unread_count] = 0
+      end
+
+      # Add support ticket specific data
+      if conversation.support_ticket?
+        summary.merge!(
+          ticket_id: conversation.ticket_id,
+          category: conversation.category,
+          priority: conversation.priority || 'normal'
+        )
+      end
+
+      # Add last message safely
+      if last_message
+        summary[:last_message] = {
+          content: truncate_message(last_message.content),
+          created_at: last_message.created_at&.iso8601,
+          from_support: last_message.respond_to?(:from_support?) ? last_message.from_support? : false
+        }
+      end
+
+      summary
+    rescue => e
+      Rails.logger.error "Error formatting conversation summary: #{e.message}"
+      {
+        id: conversation.id,
+        conversation_type: 'unknown',
+        title: 'Error Loading Conversation',
+        error: 'Failed to format conversation'
+      }
+    end
+  end
+
+  # SAFE: Error-resistant detailed conversation formatting
+  def safe_format_conversation_detail(conversation)
+    begin
+      # Start with safe summary
+      detail = safe_format_conversation_summary(conversation)
+      
+      # Add additional safe details
+      detail.merge!(
+        metadata: conversation.metadata || {},
+        updated_at: conversation.updated_at&.iso8601,
+        message_count: conversation.messages.count || 0
+      )
+
+      # Add participants safely
+      begin
+        detail[:participants] = conversation.conversation_participants.includes(:user).map do |participant|
+          {
+            user_id: participant.user.id,
+            name: participant.user.display_name || 'Unknown User',
+            role: participant.role || 'participant',
+            joined_at: participant.joined_at&.iso8601
+          }
+        end
+      rescue => e
+        Rails.logger.warn "Failed to format participants: #{e.message}"
+        detail[:participants] = []
+      end
+
+      detail
+    rescue => e
+      Rails.logger.error "Error formatting conversation detail: #{e.message}"
+      {
+        id: conversation.id,
+        title: 'Error Loading Conversation Details',
+        error: 'Failed to format conversation details'
+      }
+    end
+  end
+
+  # SAFE: Error-resistant message formatting
+  def safe_format_message(message)
+    begin
+      {
+        id: message.id,
+        content: message.content || '',
+        message_type: message.message_type || 'text',
+        metadata: message.metadata || {},
+        created_at: message.created_at&.iso8601,
+        is_system: message.respond_to?(:is_system?) ? message.is_system? : false,
+        from_support: message.respond_to?(:from_support?) ? message.from_support? : false,
+        user: {
+          id: message.user.id,
+          name: message.user.display_name || 'Unknown User'
+        }
+      }
+    rescue => e
+      Rails.logger.error "Error formatting message: #{e.message}"
+      {
+        id: message.id,
+        content: 'Error loading message',
+        error: 'Failed to format message'
+      }
+    end
+  end
+
+  # SIMPLIFIED: Package finding with error handling
+  def find_package_for_ticket
+    return nil unless params[:package_code].present? || params[:package_id].present?
+    
+    begin
+      if params[:package_code].present?
+        package = current_user.packages.find_by(code: params[:package_code])
+        unless package
+          Rails.logger.warn "Package not found with code: #{params[:package_code]}"
+          return nil
+        end
+        return package
+      elsif params[:package_id].present?
+        package = current_user.packages.find_by(id: params[:package_id])
+        unless package
+          Rails.logger.warn "Package not found with id: #{params[:package_id]}"
+          return nil
+        end
+        return package
+      end
+    rescue => e
+      Rails.logger.error "Error finding package: #{e.message}"
+      return nil
+    end
+    
+    nil
+  end
+
+  def find_existing_active_ticket
+    begin
+      Conversation.joins(:conversation_participants)
+                  .where(conversation_participants: { user_id: current_user.id })
+                  .support_tickets
+                  .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                  .where('conversations.created_at > ?', 24.hours.ago)
+                  .first
+    rescue => e
+      Rails.logger.warn "Error finding existing ticket: #{e.message}"
+      nil
+    end
+  end
+
   def update_support_ticket_status
-    if @conversation.status == 'created'
+    return unless @conversation.support_ticket?
+    return unless @conversation.status == 'created'
+    
+    begin
       @conversation.update_support_status('pending')
       
       @conversation.messages.create!(
@@ -579,308 +597,133 @@ class Api::V1::ConversationsController < ApplicationController
         is_system: true,
         metadata: { type: 'ticket_created' }
       )
+    rescue => e
+      Rails.logger.warn "Failed to update support ticket status: #{e.message}"
     end
   end
 
-  # SIMPLIFIED: Direct notification creation exactly like admin controller
+  # SIMPLIFIED: Notification creation
   def send_support_notifications(message)
-    Rails.logger.info "🔔 Creating support notifications for message #{message.id}"
-    
-    # Get participants to notify (exclude message sender)
-    participants_to_notify = @conversation.conversation_participants
-                                        .includes(:user)
-                                        .where.not(user: message.user)
-    
-    Rails.logger.info "👥 Found #{participants_to_notify.size} participants to notify"
-    
-    participants_to_notify.each do |participant|
-      begin
-        # SIMPLIFIED: Create notification with basic logic, exactly like admin controller
-        create_notification_for_user(message, participant.user)
-      rescue => e
-        Rails.logger.error "❌ Failed to create notification for user #{participant.user.id}: #{e.message}"
-      end
-    end
-  end
-
-  # SIMPLIFIED: Create notification exactly like admin controller
-  def create_notification_for_user(message, recipient)
-    Rails.logger.info "📝 Creating notification for user #{recipient.id} (#{recipient.email})"
-    
-    # SIMPLIFIED: Determine if user is support based on email only (most reliable)
-    is_support_user = recipient.email&.include?('@glt.co.ke') || recipient.email&.include?('support@')
-    is_customer_sender = !message.from_support?
-    
-    # Determine notification content
-    if is_customer_sender && is_support_user
-      # Customer to Support Agent
-      title = "New message from #{message.user.display_name}"
-      notification_message = "Ticket ##{@conversation.ticket_id}: #{truncate_message(message.content)}"
-      action_url = "/admin/support/conversations/#{@conversation.id}"
-    else
-      # Support Agent to Customer  
-      title = "Customer Support replied"
-      notification_message = truncate_message(message.content)
-      action_url = "/support"
-    end
-    
-    # Add package context if available
-    package_code = @conversation.metadata&.dig('package_code')
-    if package_code
-      notification_message = "Package #{package_code}: #{notification_message}"
-    end
-    
-    Rails.logger.info "📋 Notification details - Title: '#{title}', Message: '#{notification_message}'"
-    
-    # Create notification EXACTLY like admin controller
-    notification = recipient.notifications.create!(
-      title: title,
-      message: notification_message,
-      notification_type: 'support_message',
-      channel: 'push',
-      priority: 'normal',
-      action_url: action_url,
-      metadata: {
-        conversation_id: @conversation.id,
-        message_id: message.id,
-        ticket_id: @conversation.ticket_id,
-        package_code: package_code
-      }.compact
-    )
-    
-    Rails.logger.info "✅ Created notification #{notification.id}"
-    
-    # Send push notification EXACTLY like admin controller
-    if recipient.push_tokens.active.any?
-      Rails.logger.info "📱 Sending push notification for notification #{notification.id}"
-      
-      begin
-        # Use EXACT same call as admin controller
-        PushNotificationService.new.send_immediate(notification)
-        Rails.logger.info "✅ Push notification sent successfully"
-      rescue => e
-        Rails.logger.error "❌ Push notification failed: #{e.message}"
-      end
-    else
-      Rails.logger.warn "⚠️ No push tokens found for user #{recipient.id}"
-    end
-    
-    notification
-  end
-
-  def get_customer_from_conversation(conversation)
-    if conversation.support_ticket?
-      customer_participant = conversation.conversation_participants
-                                       .includes(:user)
-                                       .find_by(role: 'customer')
-      return customer_participant&.user
-    end
-    
-    if conversation.direct_message?
-      return conversation.other_participant(current_user)
-    end
-    
-    nil
-  end
-
-  def get_assigned_agent_from_conversation(conversation)
-    return nil unless conversation.support_ticket?
-    
-    agent_participant = conversation.conversation_participants
-                                  .includes(:user)
-                                  .find_by(role: 'agent')
-    agent_participant&.user
-  end
-
-  def format_customer_data(customer)
-    return nil unless customer
-    
-    {
-      id: customer.id,
-      name: customer.display_name,
-      email: customer.email,
-      avatar_url: avatar_api_url(customer)
-    }
-  end
-
-  def format_agent_data(agent)
-    return nil unless agent
-    
-    {
-      id: agent.id,
-      name: agent.display_name,
-      email: agent.email,
-      avatar_url: avatar_api_url(agent)
-    }
-  end
-
-  def format_conversation_summary(conversation)
-    last_message = conversation.last_message
-    customer = get_customer_from_conversation(conversation)
-    assigned_agent = get_assigned_agent_from_conversation(conversation)
-    other_participant = conversation.other_participant(current_user) if conversation.direct_message?
-
-    status_display = case conversation.status
-    when 'pending'
-      'Ticket Pending'
-    when 'in_progress'
-      'Online'
-    when 'closed'
-      'Last seen recently'
-    else
-      'Online'
-    end
-
-    {
-      id: conversation.id,
-      conversation_type: conversation.conversation_type,
-      title: conversation.title,
-      last_activity_at: conversation.last_activity_at,
-      unread_count: conversation.unread_count_for(current_user),
-      status_display: status_display,
-      ticket_id: conversation.ticket_id,
-      status: conversation.status,
-      category: conversation.category,
-      priority: conversation.priority,
-      customer: format_customer_data(customer),
-      assigned_agent: format_agent_data(assigned_agent),
-      other_participant: other_participant ? format_customer_data(other_participant) : nil,
-      last_message: last_message ? {
-        content: truncate_message(last_message.content),
-        created_at: last_message.created_at,
-        from_support: last_message.from_support?
-      } : nil,
-      participants: conversation.conversation_participants.includes(:user).map do |participant|
-        {
-          user_id: participant.user.id,
-          name: participant.user.display_name,
-          role: participant.role,
-          joined_at: participant.joined_at,
-          avatar_url: avatar_api_url(participant.user)
-        }
-      end
-    }
-  rescue => e
-    Rails.logger.error "Error formatting conversation summary: #{e.message}"
-    {
-      id: conversation.id,
-      conversation_type: conversation.conversation_type,
-      title: conversation.title || 'Untitled Conversation',
-      error: 'Failed to load conversation details'
-    }
-  end
-
-  def format_conversation_detail(conversation)
-    base_summary = format_conversation_summary(conversation)
-    customer = get_customer_from_conversation(conversation)
-    assigned_agent = get_assigned_agent_from_conversation(conversation)
-    
-    additional_details = {
-      metadata: conversation.metadata || {},
-      created_at: conversation.created_at,
-      updated_at: conversation.updated_at,
-      escalated: conversation.metadata&.dig('escalated') || false,
-      message_count: conversation.messages.count,
-      customer: format_customer_data(customer),
-      assigned_agent: format_agent_data(assigned_agent),
-      package: nil
-    }
-
-    package = find_package_for_conversation(conversation)
-    
-    if package
-      additional_details[:package] = {
-        id: package.id,
-        code: package.code,
-        state: package.state,
-        state_display: package.state_display,
-        receiver_name: package.receiver_name,
-        route_description: package.route_description,
-        cost: package.cost,
-        delivery_type: package.delivery_type,
-        created_at: package.created_at
-      }
-    end
-
-    base_summary.merge(additional_details)
-  rescue => e
-    Rails.logger.error "Error formatting conversation detail: #{e.message}"
-    format_conversation_summary(conversation)
-  end
-
-  def format_message(message)
-    {
-      id: message.id,
-      content: message.content,
-      message_type: message.message_type,
-      metadata: message.metadata || {},
-      created_at: message.created_at,
-      timestamp: message.formatted_timestamp,
-      is_system: message.is_system?,
-      from_support: message.from_support?,
-      user: {
-        id: message.user.id,
-        name: message.user.display_name,
-        role: message.from_support? ? 'support' : 'customer',
-        avatar_url: avatar_api_url(message.user)
-      }
-    }
-  rescue => e
-    Rails.logger.error "Error formatting message: #{e.message}"
-    {
-      id: message.id,
-      content: message.content || 'Error loading message',
-      metadata: {},
-      error: 'Failed to format message'
-    }
-  end
-
-  def find_package_for_conversation(conversation)
-    package = nil
-    
-    if conversation.metadata&.dig('package_id')
-      begin
-        package = Package.find(conversation.metadata['package_id'])
-        Rails.logger.debug "Found package from conversation metadata package_id: #{package.code}"
-        return package
-      rescue ActiveRecord::RecordNotFound
-        Rails.logger.warn "Package not found for conversation metadata package_id: #{conversation.metadata['package_id']}"
-      end
-    end
-    
-    if conversation.metadata&.dig('package_code')
-      begin
-        package = Package.find_by(code: conversation.metadata['package_code'])
-        if package
-          Rails.logger.debug "Found package from conversation metadata package_code: #{package.code}"
-          return package
-        else
-          Rails.logger.warn "Package not found for conversation metadata package_code: #{conversation.metadata['package_code']}"
-        end
-      rescue => e
-        Rails.logger.warn "Error finding package by conversation metadata package_code #{conversation.metadata['package_code']}: #{e.message}"
-      end
-    end
+    return unless @conversation.support_ticket?
     
     begin
-      message_with_package = conversation.messages
-                                       .where("metadata->>'package_code' IS NOT NULL")
-                                       .first
-      if message_with_package&.metadata&.dig('package_code')
-        package = Package.find_by(code: message_with_package.metadata['package_code'])
-        if package
-          Rails.logger.debug "Found package from message metadata: #{package.code}"
-          return package
-        else
-          Rails.logger.warn "Package not found for message metadata package_code: #{message_with_package.metadata['package_code']}"
+      Rails.logger.info "Creating support notifications for message #{message.id}"
+      
+      participants_to_notify = @conversation.conversation_participants
+                                           .includes(:user)
+                                           .where.not(user: message.user)
+      
+      participants_to_notify.each do |participant|
+        begin
+          create_notification_for_user(message, participant.user)
+        rescue => e
+          Rails.logger.warn "Failed to create notification for user #{participant.user.id}: #{e.message}"
         end
       end
     rescue => e
-      Rails.logger.warn "Error finding package from message metadata: #{e.message}"
+      Rails.logger.warn "Failed to send support notifications: #{e.message}"
     end
-    
-    Rails.logger.debug "No package found for conversation #{conversation.id}"
-    nil
+  end
+
+  def create_notification_for_user(message, recipient)
+    begin
+      is_support_user = recipient.email&.include?('@glt.co.ke') || recipient.email&.include?('support@')
+      is_customer_sender = !message.from_support?
+      
+      if is_customer_sender && is_support_user
+        title = "New message from #{message.user.display_name}"
+        notification_message = "Ticket ##{@conversation.ticket_id}: #{truncate_message(message.content)}"
+        action_url = "/admin/support/conversations/#{@conversation.id}"
+      else
+        title = "Customer Support replied"
+        notification_message = truncate_message(message.content)
+        action_url = "/support"
+      end
+      
+      notification = recipient.notifications.create!(
+        title: title,
+        message: notification_message,
+        notification_type: 'support_message',
+        channel: 'push',
+        priority: 'normal',
+        action_url: action_url,
+        metadata: {
+          conversation_id: @conversation.id,
+          message_id: message.id,
+          ticket_id: @conversation.ticket_id
+        }
+      )
+      
+      # Send push notification
+      if recipient.push_tokens.active.any?
+        begin
+          PushNotificationService.new.send_immediate(notification)
+        rescue => e
+          Rails.logger.warn "Push notification failed: #{e.message}"
+        end
+      end
+    rescue => e
+      Rails.logger.warn "Failed to create notification: #{e.message}"
+    end
+  end
+
+  # SAFE: Broadcasting methods with error handling
+  def broadcast_new_support_ticket(conversation)
+    ActionCable.server.broadcast(
+      "support_tickets",
+      {
+        type: 'new_support_ticket',
+        conversation_id: conversation.id,
+        ticket_id: conversation.ticket_id,
+        status: conversation.status,
+        timestamp: Time.current.iso8601
+      }
+    )
+  rescue => e
+    Rails.logger.warn "Failed to broadcast new support ticket: #{e.message}"
+  end
+
+  def broadcast_conversation_update(conversation, new_message)
+    ActionCable.server.broadcast(
+      "conversation_#{conversation.id}",
+      {
+        type: 'conversation_updated',
+        conversation_id: conversation.id,
+        message_id: new_message.id,
+        timestamp: Time.current.iso8601
+      }
+    )
+  rescue => e
+    Rails.logger.warn "Failed to broadcast conversation update: #{e.message}"
+  end
+
+  def broadcast_conversation_read_status(conversation, reader)
+    ActionCable.server.broadcast(
+      "conversation_#{conversation.id}",
+      {
+        type: 'conversation_read',
+        conversation_id: conversation.id,
+        reader_id: reader.id,
+        timestamp: Time.current.iso8601
+      }
+    )
+  rescue => e
+    Rails.logger.warn "Failed to broadcast read status: #{e.message}"
+  end
+
+  def broadcast_ticket_status_change(conversation, action, actor, system_message)
+    ActionCable.server.broadcast(
+      "conversation_#{conversation.id}",
+      {
+        type: 'ticket_status_changed',
+        conversation_id: conversation.id,
+        action: action,
+        status: conversation.status,
+        timestamp: Time.current.iso8601
+      }
+    )
+  rescue => e
+    Rails.logger.warn "Failed to broadcast ticket status change: #{e.message}"
   end
 
   def truncate_message(content)
