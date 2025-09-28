@@ -1,8 +1,8 @@
-# app/models/package.rb - Enhanced with notification system, automatic rejection logic, and business association
+# app/models/package.rb - Enhanced with automatic background job triggering
 
 class Package < ApplicationRecord
   belongs_to :user
-  belongs_to :business, optional: true  # NEW: Business association
+  belongs_to :business, optional: true
   belongs_to :origin_area, class_name: 'Area', optional: true
   belongs_to :destination_area, class_name: 'Area', optional: true
   belongs_to :origin_agent, class_name: 'Agent', optional: true
@@ -15,12 +15,12 @@ class Package < ApplicationRecord
 
   # UPDATED: Enhanced delivery types to include home and office variants
   enum delivery_type: { 
-    doorstep: 'doorstep',        # Legacy - maps to home delivery
-    home: 'home',                # NEW: Direct home delivery
-    office: 'office',            # NEW: Deliver to office for collection
-    agent: 'agent',              # Agent-to-agent delivery
-    fragile: 'fragile',          # Fragile items with special handling
-    collection: 'collection'     # Collection service
+    doorstep: 'doorstep',
+    home: 'home',
+    office: 'office',
+    agent: 'agent',
+    fragile: 'fragile',
+    collection: 'collection'
   }
   
   enum state: {
@@ -43,17 +43,11 @@ class Package < ApplicationRecord
   validates :delivery_type, :state, :cost, presence: true
   validates :code, presence: true, uniqueness: true
   validates :resubmission_count, presence: true, inclusion: { in: 0..2 }
-  
-  # FIXED: Conditional validation - only for agent-based deliveries
   validates :route_sequence, presence: true, uniqueness: { 
     scope: [:origin_area_id, :destination_area_id],
     message: "Package sequence must be unique for this route"
   }, unless: :location_based_delivery?
-
-  # FIXED: Conditional area validation - only for agent-based deliveries  
   validates :origin_area_id, :destination_area_id, presence: true, unless: :location_based_delivery?
-
-  # UPDATED: Package size validation for home/office deliveries
   validates :special_instructions, presence: true, if: :requires_special_instructions?
 
   # Additional validation for fragile packages
@@ -102,16 +96,91 @@ class Package < ApplicationRecord
   scope :standard_packages, -> { where(delivery_type: ['doorstep', 'home', 'office', 'agent']) }
   scope :location_based_packages, -> { where(delivery_type: ['fragile', 'collection']) }
   scope :requiring_special_handling, -> { where(delivery_type: ['fragile', 'collection']).or(where(package_size: 'large')) }
-  
-  # NEW: Business-related scopes
   scope :for_business, ->(business) { where(business: business) }
   scope :with_business, -> { where.not(business_id: nil) }
   scope :without_business, -> { where(business_id: nil) }
 
   # Callbacks
   before_create :generate_package_code_and_sequence, :set_initial_deadlines
-  after_create :generate_qr_code_files, :schedule_initial_expiry_job, :create_business_activity
+  after_create :generate_qr_code_files, :schedule_expiry_management, :create_business_activity
   before_save :populate_business_fields, :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
+
+  # ===========================================
+  # FIXED: BACKGROUND JOB MANAGEMENT
+  # ===========================================
+
+  # FIXED: Ensure the recurring expiry management job is running
+  def self.ensure_expiry_management_running!
+    Rails.logger.info "🔄 Ensuring package expiry management job is running..."
+    
+    begin
+      # Check if there are any packages that need processing
+      packages_needing_attention = overdue.count + approaching_deadline.count + rejected_for_deletion.count
+      
+      if packages_needing_attention > 0
+        Rails.logger.info "📦 Found #{packages_needing_attention} packages needing attention - starting expiry management job"
+        
+        # Start the recurring job immediately
+        PackageExpiryManagementJob.perform_later
+        
+        Rails.logger.info "✅ Package expiry management job started"
+      else
+        Rails.logger.info "✅ No packages need immediate attention, but job is scheduled for monitoring"
+        # Still start the job for future monitoring
+        PackageExpiryManagementJob.perform_later
+      end
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to start expiry management job: #{e.message}"
+      Rails.logger.error "🔍 Error details: #{e.class.name} - #{e.backtrace.first(3).join(', ')}"
+    end
+  end
+
+  # FIXED: Process any immediately overdue packages
+  def self.process_immediate_overdue_packages!
+    Rails.logger.info "🚨 Processing immediately overdue packages..."
+    
+    begin
+      rejected_count = 0
+      deleted_count = 0
+      
+      # Process overdue packages
+      overdue.where(state: ['pending_unpaid', 'pending']).find_each do |package|
+        reason = case package.state
+                when 'pending_unpaid'
+                  "Payment not received within deadline"
+                when 'pending'
+                  "Package not submitted for delivery within deadline"
+                else
+                  "Package expired"
+                end
+        
+        if package.reject_package!(reason: reason, auto_rejected: true)
+          Rails.logger.info "⚠️ Auto-rejected overdue package: #{package.code}"
+          rejected_count += 1
+        end
+      end
+      
+      # Process packages ready for deletion
+      rejected_for_deletion.find_each do |package|
+        begin
+          Rails.logger.info "🗑️ Deleting permanently rejected package: #{package.code}"
+          package.destroy!
+          deleted_count += 1
+        rescue => e
+          Rails.logger.error "❌ Failed to delete package #{package.code}: #{e.message}"
+        end
+      end
+      
+      Rails.logger.info "✅ Immediate processing complete: #{rejected_count} rejected, #{deleted_count} deleted"
+      
+      { rejected: rejected_count, deleted: deleted_count }
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to process immediate overdue packages: #{e.message}"
+      { rejected: 0, deleted: 0, error: e.message }
+    end
+  end
 
   # ===========================================
   # RESUBMISSION LOGIC
@@ -125,31 +194,22 @@ class Package < ApplicationRecord
     return false unless can_be_resubmitted?
 
     transaction do
-      # Store previous state if not already stored
       self.original_state ||= 'pending' if state == 'rejected'
-      
-      # Increment resubmission count
       self.resubmission_count += 1
       self.resubmitted_at = Time.current
       
-      # Calculate new deadline based on resubmission count
       new_expiry_time = calculate_resubmission_deadline
       self.expiry_deadline = new_expiry_time
       
-      # Restore to original state
       target_state = original_state || 'pending'
       self.state = target_state
       
-      # Clear rejection data but keep history
       self.rejected_at = nil
       self.auto_rejected = false
       
-      # Update metadata
       update_resubmission_metadata(reason)
-      
       save!
       
-      # Create success notification
       if defined?(Notification)
         Notification.create_resubmission_success(
           package: self,
@@ -157,10 +217,8 @@ class Package < ApplicationRecord
         )
       end
       
-      # FIXED: Schedule new expiry check
-      if defined?(SchedulePackageExpiryJob)
-        SchedulePackageExpiryJob.set(wait_until: new_expiry_time - 2.hours).perform_later(self.id)
-      end
+      # FIXED: Schedule individual expiry check for this package
+      schedule_individual_expiry_check
       
       Rails.logger.info "Package #{code} resubmitted (#{resubmission_count}/2) - New deadline: #{new_expiry_time}"
       
@@ -175,21 +233,15 @@ class Package < ApplicationRecord
     return false if rejected?
 
     transaction do
-      # Store original state for potential resubmission
       self.original_state = state unless rejected?
-      
-      # Update rejection fields
       self.state = 'rejected'
       self.rejection_reason = reason
       self.rejected_at = Time.current
       self.auto_rejected = auto_rejected
-      
-      # Set final deadline for automatic deletion (1 week for manual review)
       self.final_deadline = 1.week.from_now
       
       save!
       
-      # Create rejection notification
       if defined?(Notification)
         Notification.create_package_rejection(
           package: self,
@@ -198,7 +250,7 @@ class Package < ApplicationRecord
         )
       end
       
-      # FIXED: Schedule automatic deletion if auto-rejected
+      # FIXED: Schedule deletion job for auto-rejected packages
       if auto_rejected && defined?(DeleteRejectedPackageJob)
         DeleteRejectedPackageJob.set(wait_until: final_deadline).perform_later(self.id)
       end
@@ -248,7 +300,6 @@ class Package < ApplicationRecord
   def self.auto_reject_expired_packages!
     rejected_count = 0
     
-    # Process pending_unpaid packages
     pending_unpaid_expired.find_each do |package|
       if package.reject_package!(
         reason: "Payment not received within 7 days",
@@ -258,7 +309,6 @@ class Package < ApplicationRecord
       end
     end
     
-    # Process pending packages
     pending_expired.find_each do |package|
       if package.reject_package!(
         reason: "Package not submitted for delivery within 7 days",
@@ -296,7 +346,6 @@ class Package < ApplicationRecord
       hours_remaining = package.hours_until_expiry
       next unless hours_remaining && hours_remaining > 0
       
-      # Only send warning once when between 2-6 hours remain
       if defined?(Notification)
         last_warning = package.notifications
           .where(notification_type: 'final_warning')
@@ -320,13 +369,8 @@ class Package < ApplicationRecord
   # Class methods
   def self.find_by_code_or_id(identifier)
     identifier = identifier.to_s.strip
-    
-    # Try by code first (customer-facing)
     package = find_by(code: identifier)
-    
-    # Fallback to ID if numeric (internal use)
     package ||= find_by(id: identifier) if identifier.match?(/^\d+$/)
-    
     package
   end
 
@@ -347,22 +391,18 @@ class Package < ApplicationRecord
     ['fragile', 'collection'].include?(delivery_type)
   end
 
-  # UPDATED: Check if package requires package size
   def requires_package_size?
     ['home', 'office', 'doorstep'].include?(delivery_type)
   end
 
-  # UPDATED: Check if special instructions are required
   def requires_special_instructions?
     package_size_large? && ['home', 'office', 'doorstep'].include?(delivery_type)
   end
 
-  # UPDATED: Check if this is a large package
   def large_package?
     package_size_large?
   end
 
-  # UPDATED: Enhanced delivery type checking
   def home_delivery?
     ['home', 'doorstep'].include?(delivery_type)
   end
@@ -383,7 +423,6 @@ class Package < ApplicationRecord
     delivery_type == 'fragile'
   end
 
-  # NEW: Business-related helper methods
   def has_business?
     business_id.present?
   end
@@ -396,14 +435,12 @@ class Package < ApplicationRecord
     business_phone.presence || business&.phone_number || 'No Phone'
   end
 
-  # Instance methods
   def intra_area_shipment?
     return false if location_based_delivery?
     origin_area_id == destination_area_id
   end
 
   def route_description
-    # UPDATED: Handle route description for all delivery types
     if location_based_delivery?
       pickup = pickup_location.presence || 'Pickup Location'
       delivery = delivery_location.presence || 'Delivery Location'
@@ -431,7 +468,6 @@ class Package < ApplicationRecord
     "/track/#{code}"
   end
 
-  # UPDATED: Enhanced QR options based on delivery type and package size
   def organic_qr_options
     base_options = {
       module_size: 12,
@@ -446,7 +482,7 @@ class Package < ApplicationRecord
       base_options.merge({
         fragile_indicator: true,
         priority_handling: true,
-        module_size: 14, # Larger for fragile visibility
+        module_size: 14,
         border_size: 28,
         corner_radius: 6
       })
@@ -481,9 +517,9 @@ class Package < ApplicationRecord
       base_options.merge({
         fragile_indicator: true,
         priority_handling: true,
-        module_size: 7, # Slightly larger for fragile visibility
+        module_size: 7,
         border_size: 14,
-        corner_radius: 4 # More organic rounding even for thermal
+        corner_radius: 4
       })
     elsif collection_delivery?
       base_options.merge({
@@ -524,7 +560,7 @@ class Package < ApplicationRecord
   end
 
   def needs_priority_handling?
-    fragile_delivery? || large_package? || (cost > 1000) # High value, fragile, or large packages get priority
+    fragile_delivery? || large_package? || (cost > 1000)
   end
 
   def requires_special_handling?
@@ -542,7 +578,6 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Enhanced delivery type display
   def delivery_type_display
     case delivery_type
     when 'doorstep', 'home'
@@ -560,7 +595,6 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Package size display
   def package_size_display
     case package_size
     when 'small'
@@ -574,7 +608,6 @@ class Package < ApplicationRecord
     end
   end
 
-  # UPDATED: Enhanced handling instructions
   def handling_instructions
     instructions = []
     
@@ -606,11 +639,9 @@ class Package < ApplicationRecord
     instructions.join(' ')
   end
 
-  # UPDATED: Enhanced JSON serialization with business information
   def as_json(options = {})
-    result = super(options).except('route_sequence') # Hide internal sequence from API
+    result = super(options).except('route_sequence')
     
-    # Always include these computed fields
     result.merge!(
       'tracking_code' => code,
       'route_description' => route_description,
@@ -626,12 +657,8 @@ class Package < ApplicationRecord
       'delivery_type_display' => delivery_type_display,
       'package_size_display' => package_size_display,
       'has_business' => has_business?,
-      
-      # Business information
       'business_name_display' => business_name_display,
       'business_phone_display' => business_phone_display,
-      
-      # Resubmission and expiry information
       'can_be_resubmitted' => can_be_resubmitted?,
       'resubmission_count' => resubmission_count,
       'remaining_resubmissions' => [0, 2 - resubmission_count].max,
@@ -640,7 +667,6 @@ class Package < ApplicationRecord
       'final_deadline_passed' => final_deadline_passed?
     )
     
-    # Include full business object if requested and available
     if options[:include_business] && business
       result.merge!(
         'business' => {
@@ -652,7 +678,6 @@ class Package < ApplicationRecord
       )
     end
     
-    # Include delivery-specific information
     if fragile_delivery?
       result.merge!(
         'handling_instructions' => handling_instructions,
@@ -674,7 +699,6 @@ class Package < ApplicationRecord
       )
     end
 
-    # Include rejection information if rejected
     if rejected?
       result.merge!(
         'rejection_info' => {
@@ -686,7 +710,6 @@ class Package < ApplicationRecord
       )
     end
 
-    # Include expiry information if applicable
     if expiry_deadline.present?
       result.merge!(
         'expiry_deadline' => expiry_deadline.iso8601,
@@ -699,10 +722,8 @@ class Package < ApplicationRecord
 
   private
 
-  # NEW: Auto-populate business fields when business_id is present
   def populate_business_fields
     if business_id.present? && business
-      # Only populate if fields are blank to avoid overwriting existing data
       if business_name.blank?
         self.business_name = business.name
         Rails.logger.debug "Auto-populated business_name: #{business.name} for package #{id || 'new'}"
@@ -713,7 +734,6 @@ class Package < ApplicationRecord
         Rails.logger.debug "Auto-populated business_phone: #{business.phone_number} for package #{id || 'new'}"
       end
     elsif business_id.blank?
-      # Clear business fields if business_id is removed
       self.business_name = nil
       self.business_phone = nil
       Rails.logger.debug "Cleared business fields for package #{id || 'new'}"
@@ -722,29 +742,25 @@ class Package < ApplicationRecord
     Rails.logger.error "Failed to populate business fields for package #{id || 'new'}: #{e.message}"
   end
 
-  # UPDATED: Create enhanced business activity with detailed package information
   def create_business_activity
     return unless business_id.present? && business
 
     begin
       if defined?(BusinessActivity)
-        # UPDATED: Include recipient name in metadata for enhanced descriptions
         activity_metadata = {
           package_code: code,
           delivery_type: delivery_type,
           cost: cost,
           destination_area: destination_area&.name,
-          recipient_name: receiver_name, # NEW: Include recipient name
+          recipient_name: receiver_name,
           package_size: package_size,
-          created_by_staff: user != business.owner # Track if created by staff vs owner
+          created_by_staff: user != business.owner
         }
 
-        # Add pickup location for location-based deliveries
         if location_based_delivery? && pickup_location.present?
           activity_metadata[:pickup_location] = pickup_location
         end
 
-        # Add delivery location if present
         if delivery_location.present?
           activity_metadata[:delivery_location] = delivery_location
         end
@@ -765,29 +781,58 @@ class Package < ApplicationRecord
   end
 
   def set_initial_deadlines
-    # Set initial expiry deadline based on state
     case state
     when 'pending_unpaid', 'pending'
       self.expiry_deadline ||= 7.days.from_now
     end
   end
 
-  def schedule_initial_expiry_job
+  # FIXED: Enhanced expiry management scheduling
+  def schedule_expiry_management
+    begin
+      # Always ensure the recurring management job is running
+      Rails.logger.info "📅 Scheduling expiry management for new package #{code}"
+      
+      # Check if we need to process any overdue packages immediately
+      Package.delay(run_at: 1.minute.from_now).process_immediate_overdue_packages!
+      
+      # Ensure the recurring job is running
+      Package.delay(run_at: 2.minutes.from_now).ensure_expiry_management_running!
+      
+      # Schedule individual package check if this package has a deadline
+      schedule_individual_expiry_check
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to schedule expiry management for package #{code}: #{e.message}"
+    end
+  end
+
+  # FIXED: Individual package expiry checking
+  def schedule_individual_expiry_check
     return unless expiry_deadline.present?
     
-    # Schedule warning check (6 hours before expiry)
-    warning_time = expiry_deadline - 6.hours
-    if warning_time > Time.current && defined?(SchedulePackageExpiryJob)
-      SchedulePackageExpiryJob.set(wait_until: warning_time).perform_later(id)
-    elsif defined?(SchedulePackageExpiryJob)
-      # If too close to deadline, schedule final check
-      SchedulePackageExpiryJob.set(wait_until: expiry_deadline).perform_later(id)
+    begin
+      # Schedule warning check (6 hours before expiry)
+      warning_time = expiry_deadline - 6.hours
+      
+      if warning_time > Time.current && defined?(SchedulePackageExpiryJob)
+        SchedulePackageExpiryJob.set(wait_until: warning_time).perform_later(id)
+        Rails.logger.info "📅 Scheduled warning check for package #{code} at #{warning_time}"
+      end
+      
+      # Schedule final check at expiry time
+      if expiry_deadline > Time.current && defined?(SchedulePackageExpiryJob)
+        SchedulePackageExpiryJob.set(wait_until: expiry_deadline).perform_later(id)
+        Rails.logger.info "📅 Scheduled final check for package #{code} at #{expiry_deadline}"
+      end
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to schedule individual expiry check for package #{code}: #{e.message}"
     end
   end
 
   def update_deadlines_on_state_change
     if state_changed? && !rejected?
-      # Clear expiry deadline for final states
       if state.in?(['delivered', 'collected'])
         self.expiry_deadline = nil
         self.final_deadline = nil
@@ -798,16 +843,15 @@ class Package < ApplicationRecord
   def calculate_resubmission_deadline
     case resubmission_count
     when 1
-      3.5.days.from_now  # 7 days / 2
+      3.5.days.from_now
     when 2
-      1.day.from_now     # Final attempt
+      1.day.from_now
     else
-      7.days.from_now    # Should not happen, but fallback
+      7.days.from_now
     end
   end
 
   def update_resubmission_metadata(reason)
-    # Add to metadata for tracking
     self.metadata ||= {}
     self.metadata['resubmission_history'] ||= []
     self.metadata['resubmission_history'] << {
@@ -819,11 +863,9 @@ class Package < ApplicationRecord
     }
   end
 
-  # UPDATED: Enhanced code and sequence generation
   def generate_package_code_and_sequence
     return if code.present?
     
-    # Generate code using the PackageCodeGenerator service
     generator_options = {}
     generator_options[:fragile] = true if fragile_delivery?
     generator_options[:collection] = true if collection_delivery?
@@ -834,21 +876,17 @@ class Package < ApplicationRecord
     if defined?(PackageCodeGenerator)
       self.code = PackageCodeGenerator.new(self, generator_options).generate
     else
-      # Fallback code generation
       self.code = "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
     end
     
-    # FIXED: Only set route sequence for agent-based deliveries
     unless location_based_delivery?
       self.route_sequence = self.class.next_sequence_for_route(origin_area_id, destination_area_id)
     else
-      # For location-based deliveries, use a simple incrementing sequence
       self.route_sequence = self.class.where(delivery_type: delivery_type).maximum(:route_sequence).to_i + 1
     end
   end
 
   def generate_qr_code_files
-    # Generate both QR code types asynchronously (optional)
     job_options = {}
     job_options[:priority] = 'high' if fragile_delivery? || large_package?
     job_options[:fragile] = true if fragile_delivery?
@@ -858,29 +896,25 @@ class Package < ApplicationRecord
     
     begin
       if defined?(GenerateQrCodeJob)
-        # Generate organic QR
         GenerateQrCodeJob.perform_later(self, job_options.merge(qr_type: 'organic'))
         
-        # Generate thermal QR
         if defined?(GenerateThermalQrCodeJob)
           GenerateThermalQrCodeJob.perform_later(self, job_options.merge(qr_type: 'thermal'))
         end
       end
     rescue => e
-      # Log error but don't fail package creation
       Rails.logger.error "Failed to generate QR codes for package #{id}: #{e.message}"
     end
   end
 
-  # UPDATED: Enhanced cost calculation with all delivery types
   def calculate_default_cost
     case delivery_type
     when 'fragile'
       base = intra_area_shipment? ? 300 : 500
-      base + (large_package? ? 100 : 0) # Additional for large fragile items
+      base + (large_package? ? 100 : 0)
     when 'collection'
       base = 350
-      base + (large_package? ? 75 : 0) # Additional for large collections
+      base + (large_package? ? 75 : 0)
     when 'home', 'doorstep'
       base = intra_area_shipment? ? 250 : 380
       base * package_size_multiplier
@@ -900,7 +934,7 @@ class Package < ApplicationRecord
       0.8
     when 'large'
       1.4
-    else # medium
+    else
       1.0
     end
   end
@@ -926,7 +960,6 @@ class Package < ApplicationRecord
   def fragile_package_requirements
     return unless fragile_delivery?
     
-    # Add specific validations for fragile packages
     if cost && cost < 100
       errors.add(:cost, 'cannot be less than 100 KES for fragile packages due to special handling requirements')
     end
@@ -939,7 +972,6 @@ class Package < ApplicationRecord
   def large_package_requirements
     return unless large_package?
     
-    # Validate large package requirements
     if home_delivery? && special_instructions.blank?
       errors.add(:special_instructions, 'are required for large packages')
     end
