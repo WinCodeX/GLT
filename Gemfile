@@ -94,3 +94,5 @@ gem 'httparty', '~> 0.21'  #
 gem 'json', '~> 2.6'
 gem "sidekiq", "~> 8.0"
 gem 'googleauth', '~> 1.8'
+
+gem 'actioncable', '~> 7.1.0'
