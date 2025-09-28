@@ -1,3 +1,5 @@
+# app/controllers/api/v1/businesses_controller.rb - Enhanced with ActionCable broadcasting for real-time business updates
+
 module Api
   module V1
     class BusinessesController < ApplicationController
@@ -54,10 +56,15 @@ module Api
           if @business.save!
             Rails.logger.info "Business created successfully: #{@business.id}"
             
+            business_data = business_json(@business)
+            
+            # ENHANCED: Broadcast business creation to user's channels
+            broadcast_business_created(business_data)
+            
             render json: { 
               success: true, 
               message: "Business created successfully",
-              data: { business: business_json(@business) }
+              data: { business: business_data }
             }, status: :created
           end
 
@@ -86,6 +93,7 @@ module Api
           
           # Extract update parameters excluding category_ids
           update_params = business_params.except(:category_ids)
+          old_business_data = business_json(@business)
           
           # Update business attributes without validation to skip description validation
           if update_params.present?
@@ -117,10 +125,16 @@ module Api
             end
           end
 
+          @business.reload
+          new_business_data = business_json(@business)
+          
+          # ENHANCED: Broadcast business update to all relevant channels
+          broadcast_business_updated(new_business_data, old_business_data)
+
           render json: { 
             success: true, 
             message: "Business updated successfully",
-            data: { business: business_json(@business) }
+            data: { business: new_business_data }
           }, status: :ok
 
         rescue ActiveRecord::RecordInvalid => e
@@ -187,8 +201,14 @@ module Api
 
       def destroy
         begin
+          business_data = business_json(@business)
+          
           if @business.destroy
             Rails.logger.info "Business #{@business.id} deleted successfully"
+            
+            # ENHANCED: Broadcast business deletion to all relevant channels
+            broadcast_business_deleted(business_data)
+            
             render json: {
               success: true,
               message: "Business deleted successfully"
@@ -231,7 +251,8 @@ module Api
               email: user.email,
               role: 'staff',
               active: user.respond_to?(:online?) ? user.online? : false,
-              joined_at: ub.created_at.iso8601
+              joined_at: ub.created_at.iso8601,
+              avatar_url: user.respond_to?(:avatar_url) ? user.avatar_url : nil
             }
           end
 
@@ -290,7 +311,7 @@ module Api
         end
       end
 
-      # ENHANCED: Activities method with personalized descriptions and staff package visibility
+      # ENHANCED: Activities method with real-time broadcasting capabilities
       def activities
         begin
           Rails.logger.info "Fetching activities for business #{@business.id} by user #{current_user.id}"
@@ -408,7 +429,7 @@ module Api
           # ENHANCED: Serialize activities with personalized descriptions
           serialized_activities = safe_serialize_activities_with_personalization(activities, current_user, @business)
           
-          render json: {
+          response_data = {
             success: true,
             data: {
               activities: serialized_activities,
@@ -433,7 +454,12 @@ module Api
                 { key: 'month', label: 'This Month' }
               ]
             }
-          }, status: :ok
+          }
+          
+          # ENHANCED: Broadcast activity data update to business channel
+          broadcast_business_activities_updated(@business.id, summary)
+          
+          render json: response_data, status: :ok
           
         rescue StandardError => e
           Rails.logger.error "Error fetching activities for business #{@business&.id}: #{e.class} - #{e.message}"
@@ -569,7 +595,7 @@ module Api
           current_month_count = get_package_count_for_month(@business, current_month)
           previous_month_count = get_package_count_for_month(@business, previous_month)
 
-          render json: {
+          analytics_data = {
             success: true,
             data: {
               current_month: {
@@ -589,7 +615,12 @@ module Api
                 trend: current_month_count >= previous_month_count ? 'up' : 'down'
               }
             }
-          }, status: :ok
+          }
+          
+          # ENHANCED: Broadcast analytics update to business channel
+          broadcast_business_analytics_updated(@business.id, analytics_data[:data])
+          
+          render json: analytics_data, status: :ok
 
         rescue StandardError => e
           Rails.logger.error "Error fetching package comparison: #{e.class} - #{e.message}"
@@ -602,6 +633,186 @@ module Api
       end
 
       private
+
+      # ENHANCED: ActionCable broadcasting methods
+      def broadcast_business_created(business_data)
+        begin
+          # Broadcast to user's personal business updates channel
+          ActionCable.server.broadcast(
+            "user_businesses_#{current_user.id}",
+            {
+              type: 'business_created',
+              business: business_data,
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to specific business channel for future updates
+          ActionCable.server.broadcast(
+            "business_#{business_data[:id]}_updates",
+            {
+              type: 'business_created',
+              business: business_data,
+              created_by: {
+                id: current_user.id,
+                name: current_user.full_name.presence || current_user.email
+              },
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          Rails.logger.info "📡 Business creation broadcast sent for business #{business_data[:id]}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast business creation: #{e.message}"
+        end
+      end
+
+      def broadcast_business_updated(new_business_data, old_business_data)
+        begin
+          # Broadcast to business-specific channel
+          ActionCable.server.broadcast(
+            "business_#{@business.id}_updates",
+            {
+              type: 'business_updated',
+              business: new_business_data,
+              changes: calculate_business_changes(old_business_data, new_business_data),
+              updated_by: {
+                id: current_user.id,
+                name: current_user.full_name.presence || current_user.email
+              },
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to all business members
+          broadcast_to_business_members(@business, 'business_info_updated', {
+            business: new_business_data,
+            updated_by: current_user.full_name.presence || current_user.email
+          })
+          
+          Rails.logger.info "📡 Business update broadcast sent for business #{@business.id}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast business update: #{e.message}"
+        end
+      end
+
+      def broadcast_business_deleted(business_data)
+        begin
+          # Broadcast to business-specific channel
+          ActionCable.server.broadcast(
+            "business_#{business_data[:id]}_updates",
+            {
+              type: 'business_deleted',
+              business_id: business_data[:id],
+              business_name: business_data[:name],
+              deleted_by: {
+                id: current_user.id,
+                name: current_user.full_name.presence || current_user.email
+              },
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to owner's personal channel
+          ActionCable.server.broadcast(
+            "user_businesses_#{current_user.id}",
+            {
+              type: 'business_deleted',
+              business_id: business_data[:id],
+              business_name: business_data[:name],
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          Rails.logger.info "📡 Business deletion broadcast sent for business #{business_data[:id]}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast business deletion: #{e.message}"
+        end
+      end
+
+      def broadcast_business_activities_updated(business_id, summary)
+        begin
+          ActionCable.server.broadcast(
+            "business_#{business_id}_updates",
+            {
+              type: 'activities_updated',
+              summary: summary,
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          Rails.logger.info "📡 Business activities update broadcast sent for business #{business_id}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast activities update: #{e.message}"
+        end
+      end
+
+      def broadcast_business_analytics_updated(business_id, analytics_data)
+        begin
+          ActionCable.server.broadcast(
+            "business_#{business_id}_updates",
+            {
+              type: 'analytics_updated',
+              analytics: analytics_data,
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          Rails.logger.info "📡 Business analytics update broadcast sent for business #{business_id}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast analytics update: #{e.message}"
+        end
+      end
+
+      def broadcast_to_business_members(business, message_type, data)
+        begin
+          # Get all business members (owner + staff)
+          member_ids = [business.owner_id]
+          member_ids += business.user_businesses.where(role: 'staff').pluck(:user_id)
+          
+          member_ids.uniq.each do |member_id|
+            ActionCable.server.broadcast(
+              "user_businesses_#{member_id}",
+              {
+                type: message_type,
+                business_id: business.id,
+                **data,
+                timestamp: Time.current.iso8601
+              }
+            )
+          end
+          
+          Rails.logger.info "📡 Broadcast sent to #{member_ids.count} business members"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast to business members: #{e.message}"
+        end
+      end
+
+      def calculate_business_changes(old_data, new_data)
+        changes = {}
+        
+        ['name', 'phone_number', 'logo_url'].each do |field|
+          if old_data[field.to_sym] != new_data[field.to_sym]
+            changes[field] = {
+              from: old_data[field.to_sym],
+              to: new_data[field.to_sym]
+            }
+          end
+        end
+        
+        # Check category changes
+        old_category_ids = old_data[:categories]&.map { |c| c[:id] } || []
+        new_category_ids = new_data[:categories]&.map { |c| c[:id] } || []
+        
+        if old_category_ids.sort != new_category_ids.sort
+          changes['categories'] = {
+            from: old_data[:categories],
+            to: new_data[:categories]
+          }
+        end
+        
+        changes
+      end
 
       def set_business
         # Preload all necessary associations for authorization and data access
