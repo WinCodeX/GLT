@@ -128,7 +128,10 @@ Rails.application.configure do
   # 🔌 ACTIONCABLE CONFIGURATION - CRITICAL FIX
   # ==========================================
   
-  # ActionCable server URL
+  # CRITICAL: Set ActionCable adapter explicitly
+  config.action_cable.adapter = :redis
+  
+  # ActionCable Redis URL
   config.action_cable.url = 'wss://glt-53x8.onrender.com/cable'
   
   # Allowed origins for ActionCable
@@ -147,6 +150,9 @@ Rails.application.configure do
   
   # ActionCable worker pool size
   config.action_cable.worker_pool_size = 4
+  
+  # ActionCable disable request forgery protection (needed for mobile apps)
+  config.action_cable.disable_request_forgery_protection = true
 
   # ==========================================
   # 🔧 ADDITIONAL PERFORMANCE OPTIMIZATIONS
