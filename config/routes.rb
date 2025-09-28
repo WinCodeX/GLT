@@ -1,7 +1,11 @@
-# config/routes.rb
 require 'sidekiq/web'
 
 Rails.application.routes.draw do
+
+  # ==========================================
+  # 🔌 ACTIONCABLE MOUNT - CRITICAL FIX
+  # ==========================================
+  mount ActionCable.server => '/cable'
 
   # ==========================================
   # 💼 SIDEKIQ WEB INTERFACE
@@ -115,11 +119,7 @@ Rails.application.routes.draw do
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
-
-
-
-
-scope :support, controller: :support do
+      scope :support, controller: :support do
         # Dashboard and overview
         get :dashboard, to: 'support#dashboard'
         get :stats, to: 'support#stats'
