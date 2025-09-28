@@ -1,4 +1,5 @@
-# app/controllers/api/v1/conversations_controller.rb - SIMPLIFIED VERSION MATCHING ADMIN CONTROLLER
+# app/controllers/api/v1/conversations_controller.rb - Enhanced with ActionCable broadcasting for real-time messaging
+
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
   
@@ -44,6 +45,9 @@ class Api::V1::ConversationsController < ApplicationController
       @conversation.mark_read_by(current_user)
       @messages = @conversation.messages.includes(:user).chronological.limit(50)
 
+      # ENHANCED: Broadcast read status update
+      broadcast_conversation_read_status(@conversation, current_user)
+
       render json: {
         success: true,
         conversation: format_conversation_detail(@conversation),
@@ -82,6 +86,10 @@ class Api::V1::ConversationsController < ApplicationController
 
       if @conversation.persisted?
         Rails.logger.info "Created support ticket: #{@conversation.id}"
+        
+        # ENHANCED: Broadcast new support ticket to support agents
+        broadcast_new_support_ticket(@conversation)
+        
         render json: {
           success: true,
           conversation: format_conversation_detail(@conversation),
@@ -119,10 +127,16 @@ class Api::V1::ConversationsController < ApplicationController
         @conversation.touch(:last_activity_at)
         update_support_ticket_status if @conversation.support_ticket?
 
+        # ENHANCED: Broadcast new message via ActionCable (handled by Message model)
+        # The Message model after_create_commit callback will handle broadcasting
+        
         # SIMPLIFIED: Only send notifications for support tickets, non-system messages
         if @conversation.support_ticket? && !@message.is_system?
           send_support_notifications(@message)
         end
+
+        # ENHANCED: Broadcast conversation update to all participants
+        broadcast_conversation_update(@conversation, @message)
 
         Rails.logger.info "Message saved successfully: #{@message.id}"
         
@@ -186,7 +200,7 @@ class Api::V1::ConversationsController < ApplicationController
         )
       end
       
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: "Support ticket has been accepted by #{current_user.display_name}.",
         message_type: 'system',
@@ -197,6 +211,9 @@ class Api::V1::ConversationsController < ApplicationController
           agent_name: current_user.display_name
         }
       )
+
+      # ENHANCED: Broadcast ticket acceptance to all participants
+      broadcast_ticket_status_change(@conversation, 'accepted', current_user, system_message)
 
       render json: { success: true, message: 'Support ticket accepted successfully' }
     rescue => e
@@ -214,13 +231,16 @@ class Api::V1::ConversationsController < ApplicationController
     begin
       @conversation.update_support_status('closed')
       
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: 'This support ticket has been closed.',
         message_type: 'system',
         is_system: true,
         metadata: { type: 'ticket_closed', closed_by: current_user.id }
       )
+
+      # ENHANCED: Broadcast ticket closure to all participants
+      broadcast_ticket_status_change(@conversation, 'closed', current_user, system_message)
 
       render json: { success: true, message: 'Support ticket closed successfully' }
     rescue => e
@@ -238,13 +258,16 @@ class Api::V1::ConversationsController < ApplicationController
     begin
       @conversation.update_support_status('in_progress')
       
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: 'This support ticket has been reopened.',
         message_type: 'system',
         is_system: true,
         metadata: { type: 'ticket_reopened', reopened_by: current_user.id }
       )
+
+      # ENHANCED: Broadcast ticket reopening to all participants
+      broadcast_ticket_status_change(@conversation, 'reopened', current_user, system_message)
 
       render json: { success: true, message: 'Support ticket reopened successfully' }
     rescue => e
@@ -254,6 +277,226 @@ class Api::V1::ConversationsController < ApplicationController
   end
 
   private
+
+  # ENHANCED: ActionCable broadcasting methods
+  def broadcast_new_support_ticket(conversation)
+    begin
+      customer = get_customer_from_conversation(conversation)
+      package = find_package_for_conversation(conversation)
+      
+      # Broadcast to support agents channel
+      ActionCable.server.broadcast(
+        "support_tickets",
+        {
+          type: 'new_support_ticket',
+          conversation: {
+            id: conversation.id,
+            ticket_id: conversation.ticket_id,
+            category: conversation.category,
+            priority: conversation.priority,
+            status: conversation.status,
+            created_at: conversation.created_at.iso8601
+          },
+          customer: format_customer_data(customer),
+          package: package ? {
+            id: package.id,
+            code: package.code,
+            state: package.state
+          } : nil,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Broadcast to customer's personal channel
+      if customer
+        ActionCable.server.broadcast(
+          "user_messages_#{customer.id}",
+          {
+            type: 'support_ticket_created',
+            conversation_id: conversation.id,
+            ticket_id: conversation.ticket_id,
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      Rails.logger.info "📡 New support ticket broadcast sent for ticket #{conversation.ticket_id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast new support ticket: #{e.message}"
+    end
+  end
+
+  def broadcast_conversation_update(conversation, new_message)
+    begin
+      # Broadcast to conversation-specific channel
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        {
+          type: 'conversation_updated',
+          conversation_id: conversation.id,
+          last_activity_at: conversation.last_activity_at.iso8601,
+          last_message: {
+            id: new_message.id,
+            content: truncate_message(new_message.content),
+            created_at: new_message.created_at.iso8601,
+            from_support: new_message.from_support?,
+            user_name: new_message.user.display_name
+          },
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Broadcast to each participant's personal channel
+      conversation.conversation_participants.includes(:user).each do |participant|
+        next if participant.user == new_message.user # Don't notify sender
+        
+        ActionCable.server.broadcast(
+          "user_messages_#{participant.user.id}",
+          {
+            type: 'conversation_activity',
+            conversation_id: conversation.id,
+            unread_count: conversation.unread_count_for(participant.user),
+            last_message: {
+              content: truncate_message(new_message.content),
+              from_support: new_message.from_support?,
+              created_at: new_message.created_at.iso8601
+            },
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      Rails.logger.info "📡 Conversation update broadcast sent for conversation #{conversation.id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast conversation update: #{e.message}"
+    end
+  end
+
+  def broadcast_conversation_read_status(conversation, reader)
+    begin
+      # Broadcast read status to conversation channel
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        {
+          type: 'conversation_read',
+          conversation_id: conversation.id,
+          reader_id: reader.id,
+          reader_name: reader.display_name,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Update unread count for the reader
+      ActionCable.server.broadcast(
+        "user_messages_#{reader.id}",
+        {
+          type: 'conversation_read_update',
+          conversation_id: conversation.id,
+          unread_count: 0,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 Conversation read status broadcast sent for conversation #{conversation.id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast read status: #{e.message}"
+    end
+  end
+
+  def broadcast_ticket_status_change(conversation, action, actor, system_message)
+    begin
+      customer = get_customer_from_conversation(conversation)
+      assigned_agent = get_assigned_agent_from_conversation(conversation)
+      
+      # Broadcast to conversation channel
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        {
+          type: 'ticket_status_changed',
+          conversation_id: conversation.id,
+          ticket_id: conversation.ticket_id,
+          action: action,
+          new_status: conversation.status,
+          actor: {
+            id: actor.id,
+            name: actor.display_name,
+            role: actor.from_support? ? 'support' : 'customer'
+          },
+          system_message: format_message(system_message),
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Broadcast to support agents
+      ActionCable.server.broadcast(
+        "support_tickets",
+        {
+          type: 'ticket_status_updated',
+          conversation_id: conversation.id,
+          ticket_id: conversation.ticket_id,
+          status: conversation.status,
+          action: action,
+          customer: format_customer_data(customer),
+          assigned_agent: format_agent_data(assigned_agent),
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Broadcast to customer
+      if customer
+        ActionCable.server.broadcast(
+          "user_messages_#{customer.id}",
+          {
+            type: 'support_ticket_status_changed',
+            conversation_id: conversation.id,
+            ticket_id: conversation.ticket_id,
+            status: conversation.status,
+            action: action,
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      # Broadcast to assigned agent if different from actor
+      if assigned_agent && assigned_agent != actor
+        ActionCable.server.broadcast(
+          "user_messages_#{assigned_agent.id}",
+          {
+            type: 'assigned_ticket_status_changed',
+            conversation_id: conversation.id,
+            ticket_id: conversation.ticket_id,
+            status: conversation.status,
+            action: action,
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      Rails.logger.info "📡 Ticket status change broadcast sent for ticket #{conversation.ticket_id} (#{action})"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast ticket status change: #{e.message}"
+    end
+  end
+
+  def broadcast_typing_indicator(conversation, user, typing)
+    begin
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        {
+          type: 'typing_indicator',
+          conversation_id: conversation.id,
+          user_id: user.id,
+          user_name: user.display_name,
+          typing: typing,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 Typing indicator broadcast sent for conversation #{conversation.id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast typing indicator: #{e.message}"
+    end
+  end
 
   def set_conversation
     @conversation = current_user.conversations.find(params[:id])
