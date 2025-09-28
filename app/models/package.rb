@@ -1,4 +1,4 @@
-# app/models/package.rb - Enhanced with automatic background job triggering
+# app/models/package.rb - Enhanced with ActionCable broadcasting and automatic background job triggering
 
 class Package < ApplicationRecord
   belongs_to :user
@@ -104,6 +104,71 @@ class Package < ApplicationRecord
   before_create :generate_package_code_and_sequence, :set_initial_deadlines
   after_create :generate_qr_code_files, :schedule_expiry_management, :create_business_activity
   before_save :populate_business_fields, :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
+
+  # ENHANCED: ActionCable broadcasting callbacks for real-time updates
+  after_update_commit :broadcast_cart_count_update, if: :saved_change_to_state?
+  after_create_commit :broadcast_cart_count_update
+  after_destroy_commit :broadcast_cart_count_update
+  after_update_commit :broadcast_package_status_update, if: :should_broadcast_package_update?
+
+  # ===========================================
+  # ACTIONCABLE BROADCASTING METHODS
+  # ===========================================
+
+  # NEW: Broadcast cart count changes to user in real-time
+  def broadcast_cart_count_update
+    return unless user_id.present?
+    
+    begin
+      # Calculate new cart count (pending_unpaid packages)
+      cart_count = Package.where(user_id: user_id, state: 'pending_unpaid').count
+      
+      # Broadcast to user's cart channel
+      ActionCable.server.broadcast(
+        "user_cart_#{user_id}",
+        {
+          type: 'cart_count_update',
+          cart_count: cart_count,
+          package_id: id,
+          package_code: code,
+          state_change: saved_change_to_state || [nil, state],
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 Cart count update broadcast to user #{user_id}: #{cart_count} items (Package: #{code})"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast cart count update for package #{code}: #{e.message}"
+    end
+  end
+
+  # NEW: Broadcast package status updates for real-time tracking
+  def broadcast_package_status_update
+    return unless user_id.present?
+    
+    begin
+      ActionCable.server.broadcast(
+        "user_packages_#{user_id}",
+        {
+          type: 'package_status_update',
+          package: {
+            id: id,
+            code: code,
+            state: state,
+            state_display: state_display,
+            current_location: current_location,
+            estimated_delivery: estimated_delivery&.iso8601,
+            last_updated: updated_at.iso8601
+          },
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 Package status update broadcast to user #{user_id} for package #{code}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast package update for package #{code}: #{e.message}"
+    end
+  end
 
   # ===========================================
   # FIXED: BACKGROUND JOB MANAGEMENT
@@ -721,6 +786,13 @@ class Package < ApplicationRecord
   end
 
   private
+
+  # NEW: Helper method to determine if package update should be broadcast
+  def should_broadcast_package_update?
+    saved_change_to_state? || 
+    saved_change_to_current_location? || 
+    saved_change_to_estimated_delivery?
+  end
 
   def populate_business_fields
     if business_id.present? && business
