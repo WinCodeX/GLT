@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb - Optimized with Proper Pagination and Timeout Handling
+# app/controllers/api/v1/conversations_controller.rb - Fixed with Push Notifications
 
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
@@ -158,7 +158,7 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # POST /api/v1/conversations/:id/send_message - OPTIMIZED
+  # POST /api/v1/conversations/:id/send_message - FIXED with notifications
   def send_message
     Rails.logger.info "Sending message to conversation #{params[:id]}"
     
@@ -182,7 +182,12 @@ class Api::V1::ConversationsController < ApplicationController
         @conversation.touch(:last_activity_at)
         update_support_ticket_status_if_needed
         
-        # ASYNC: Broadcast and notifications in background
+        # FIXED: Restore immediate notification sending for real-time experience
+        if @conversation.support_ticket? && !@message.is_system?
+          send_support_notifications_immediate(@message)
+        end
+        
+        # ASYNC: Broadcast message updates (but not notifications, those are immediate)
         broadcast_message_updates_async(@conversation, @message)
         
         render json: {
@@ -259,6 +264,11 @@ class Api::V1::ConversationsController < ApplicationController
         { type: 'ticket_accepted', agent_id: current_user.id, agent_name: current_user.display_name }
       )
 
+      # Send notifications for ticket acceptance
+      if system_message
+        send_support_notifications_immediate(system_message)
+      end
+
       safely_broadcast_ticket_status_change(@conversation, 'accepted', current_user, system_message)
 
       render json: { success: true, message: 'Support ticket accepted successfully' }
@@ -282,6 +292,11 @@ class Api::V1::ConversationsController < ApplicationController
         { type: 'ticket_closed', closed_by: current_user.id }
       )
 
+      # Send notifications for ticket closure
+      if system_message
+        send_support_notifications_immediate(system_message)
+      end
+
       safely_broadcast_ticket_status_change(@conversation, 'closed', current_user, system_message)
 
       render json: { success: true, message: 'Support ticket closed successfully' }
@@ -304,6 +319,11 @@ class Api::V1::ConversationsController < ApplicationController
         'This support ticket has been reopened.',
         { type: 'ticket_reopened', reopened_by: current_user.id }
       )
+
+      # Send notifications for ticket reopening
+      if system_message
+        send_support_notifications_immediate(system_message)
+      end
 
       safely_broadcast_ticket_status_change(@conversation, 'reopened', current_user, system_message)
 
@@ -420,13 +440,98 @@ class Api::V1::ConversationsController < ApplicationController
     Rails.logger.error "Error updating support ticket status: #{e.message}"
   end
 
-  # ASYNC: Background job for heavy operations
+  # FIXED: Immediate notification sending (restored from old controller)
+  def send_support_notifications_immediate(message)
+    Rails.logger.info "🔔 Creating immediate support notifications for message #{message.id}"
+    
+    # Get participants to notify (exclude message sender)
+    participants_to_notify = @conversation.conversation_participants
+                                        .includes(:user)
+                                        .where.not(user: message.user)
+    
+    Rails.logger.info "👥 Found #{participants_to_notify.size} participants to notify"
+    
+    participants_to_notify.each do |participant|
+      begin
+        # Create notification immediately (not in background)
+        create_notification_for_user_immediate(message, participant.user)
+      rescue => e
+        Rails.logger.error "❌ Failed to create immediate notification for user #{participant.user.id}: #{e.message}"
+      end
+    end
+  end
+
+  # FIXED: Create notification immediately (restored from old controller)
+  def create_notification_for_user_immediate(message, recipient)
+    Rails.logger.info "📝 Creating immediate notification for user #{recipient.id} (#{recipient.email})"
+    
+    # Determine if user is support based on email only (most reliable)
+    is_support_user = recipient.email&.include?('@glt.co.ke') || recipient.email&.include?('support@')
+    is_customer_sender = !message.from_support?
+    
+    # Determine notification content
+    if is_customer_sender && is_support_user
+      # Customer to Support Agent
+      title = "New message from #{message.user.display_name}"
+      notification_message = "Ticket ##{@conversation.ticket_id}: #{truncate_message(message.content)}"
+      action_url = "/admin/support/conversations/#{@conversation.id}"
+    else
+      # Support Agent to Customer  
+      title = "Customer Support replied"
+      notification_message = truncate_message(message.content)
+      action_url = "/support"
+    end
+    
+    # Add package context if available
+    package_code = @conversation.metadata&.dig('package_code')
+    if package_code
+      notification_message = "Package #{package_code}: #{notification_message}"
+    end
+    
+    Rails.logger.info "📋 Notification details - Title: '#{title}', Message: '#{notification_message}'"
+    
+    # Create notification immediately
+    notification = recipient.notifications.create!(
+      title: title,
+      message: notification_message,
+      notification_type: 'support_message',
+      channel: 'push',
+      priority: 'normal',
+      action_url: action_url,
+      metadata: {
+        conversation_id: @conversation.id,
+        message_id: message.id,
+        ticket_id: @conversation.ticket_id,
+        package_code: package_code
+      }.compact
+    )
+    
+    Rails.logger.info "✅ Created notification #{notification.id}"
+    
+    # Send push notification immediately (critical for real-time experience)
+    if recipient.push_tokens.active.any?
+      Rails.logger.info "📱 Sending immediate push notification for notification #{notification.id}"
+      
+      begin
+        # Send push notification immediately - this is what was missing!
+        PushNotificationService.new.send_immediate(notification)
+        Rails.logger.info "✅ Push notification sent successfully"
+      rescue => e
+        Rails.logger.error "❌ Push notification failed: #{e.message}"
+      end
+    else
+      Rails.logger.warn "⚠️ No push tokens found for user #{recipient.id}"
+    end
+    
+    notification
+  end
+
+  # ASYNC: Background job for heavy operations (but not notifications)
   def broadcast_message_updates_async(conversation, message)
-    # Use background job for broadcasting and notifications
-    # This prevents blocking the response
-    ConversationUpdateJob.perform_later(conversation.id, message.id)
+    # Use background job for broadcasting only, notifications are immediate
+    ConversationBroadcastJob.perform_later(conversation.id, message.id)
   rescue => e
-    Rails.logger.error "Error queuing background job: #{e.message}"
+    Rails.logger.error "Error queuing broadcast job: #{e.message}"
   end
 
   # OPTIMIZED: Efficient conversation summary formatting
