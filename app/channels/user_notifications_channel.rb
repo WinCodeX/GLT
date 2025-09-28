@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - Fixed with proper message broadcasting integration
+# app/channels/user_notifications_channel.rb - Enhanced with Telegram-like presence tracking
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -20,18 +20,69 @@ class UserNotificationsChannel < ApplicationCable::Channel
     
     Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates"
     
+    # ENHANCED: Update user's online presence immediately
+    update_user_presence_status('online')
+    
     # Send initial state immediately upon connection
     send_initial_state
     
-    # Update user's online status
-    update_user_presence(true)
+    # ENHANCED: Broadcast user came online to relevant channels
+    broadcast_presence_to_relevant_channels('online')
   end
 
   def unsubscribed
     Rails.logger.info "User #{current_user.id} unsubscribed from real-time updates"
     
-    # Update user's offline status
-    update_user_presence(false)
+    # ENHANCED: Update user's offline presence
+    update_user_presence_status('offline')
+    
+    # ENHANCED: Broadcast user went offline to relevant channels
+    broadcast_presence_to_relevant_channels('offline')
+  end
+
+  # ENHANCED: Handle presence updates from client
+  def update_presence(data)
+    begin
+      status = data['status'] || 'online'
+      device_info = data['device_info'] || {}
+      app_state = data['app_state'] || 'active'
+      
+      Rails.logger.info "User #{current_user.id} presence update: #{status} (app_state: #{app_state})"
+      
+      # Determine effective status based on app state
+      effective_status = case app_state
+      when 'background', 'inactive'
+        'away'
+      when 'active'
+        status == 'offline' ? 'away' : status
+      else
+        status
+      end
+      
+      # Update user's presence in database
+      update_user_presence_status(effective_status, device_info)
+      
+      # Broadcast presence change to relevant channels
+      broadcast_presence_to_relevant_channels(effective_status)
+      
+      # Send confirmation back to client
+      transmit({
+        type: 'presence_updated',
+        status: effective_status,
+        user_id: current_user.id,
+        timestamp: Time.current.iso8601
+      })
+      
+      Rails.logger.debug "Presence updated for user #{current_user.id}: #{effective_status}"
+      
+    rescue => e
+      Rails.logger.error "Failed to update presence: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to update presence',
+        error_code: 'PRESENCE_UPDATE_FAILED'
+      })
+    end
   end
 
   # Client can request fresh counts manually
@@ -42,6 +93,40 @@ class UserNotificationsChannel < ApplicationCable::Channel
   # ENHANCED: Request full initial state
   def request_initial_state
     send_initial_state
+  end
+
+  # ENHANCED: Get presence information for specific users
+  def get_user_presence(data)
+    begin
+      user_ids = data['user_ids'] || []
+      
+      if user_ids.empty?
+        transmit({
+          type: 'error',
+          message: 'No user IDs provided',
+          error_code: 'INVALID_REQUEST'
+        })
+        return
+      end
+      
+      # Get presence for requested users (limit to prevent abuse)
+      user_ids = user_ids.first(50)
+      presence_data = get_users_presence_data(user_ids)
+      
+      transmit({
+        type: 'users_presence_data',
+        presence_data: presence_data,
+        timestamp: Time.current.iso8601
+      })
+      
+    rescue => e
+      Rails.logger.error "Failed to get user presence: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to get user presence',
+        error_code: 'GET_PRESENCE_FAILED'
+      })
+    end
   end
 
   # FIXED: Enhanced message read status updates with proper broadcasting
@@ -181,7 +266,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced conversation joining with proper channel management
+  # FIXED: Enhanced conversation joining with proper channel management and presence
   def join_conversation(data)
     begin
       conversation_id = data['conversation_id']
@@ -190,23 +275,30 @@ class UserNotificationsChannel < ApplicationCable::Channel
       # Subscribe to conversation-specific channel
       stream_from "conversation_#{conversation_id}"
       
-      # FIXED: Broadcast user joined to other participants with enhanced data
+      # ENHANCED: Get current user's presence for the broadcast
+      user_presence = get_user_presence_data(current_user.id)
+      
+      # FIXED: Broadcast user joined to other participants with enhanced data including presence
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
           type: 'user_joined_conversation',
           user_id: current_user.id,
           user_name: current_user.display_name || current_user.email || 'Unknown User',
+          user_presence: user_presence,
           conversation_id: conversation_id,
           timestamp: Time.current.iso8601
         }
       )
       
-      # Send success confirmation
+      # Send success confirmation with conversation participants' presence
+      participants_presence = get_conversation_participants_presence(conversation)
+      
       transmit({
         type: 'conversation_joined',
         conversation_id: conversation_id,
         user_id: current_user.id,
+        participants_presence: participants_presence,
         timestamp: Time.current.iso8601
       })
       
@@ -311,40 +403,177 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced presence updates with better broadcasting
-  def update_presence(data)
+  private
+
+  # ENHANCED: Presence management methods
+  def update_user_presence_status(status, device_info = {})
     begin
-      status = data['status'] || 'online'
+      # Update user's presence in Redis for real-time access
+      presence_key = "user_presence:#{current_user.id}"
+      presence_data = {
+        status: status,
+        last_seen_at: Time.current.to_i,
+        device_info: device_info,
+        updated_at: Time.current.to_i
+      }
       
-      # Update user's last seen timestamp
-      if current_user.respond_to?(:last_seen_at)
+      # Store in Redis with 5 minute expiry (will be refreshed by heartbeat)
+      if defined?(Redis) && Rails.application.config.respond_to?(:redis)
+        begin
+          redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
+          redis.setex(presence_key, 300, presence_data.to_json) # 5 minutes
+        rescue => redis_error
+          Rails.logger.error "Redis presence update failed: #{redis_error.message}"
+        end
+      end
+      
+      # Also update user's last_seen_at in database if user model supports it
+      if current_user.respond_to?(:update_presence_status)
+        current_user.update_presence_status(status)
+      elsif current_user.respond_to?(:last_seen_at=)
         current_user.update_column(:last_seen_at, Time.current)
       end
       
-      # Broadcast presence to relevant channels
-      broadcast_presence_update(status)
-      
-      # Send confirmation
-      transmit({
-        type: 'presence_updated',
-        status: status,
-        user_id: current_user.id,
-        timestamp: Time.current.iso8601
-      })
-      
-      Rails.logger.info "User #{current_user.id} presence updated to: #{status}"
+      Rails.logger.debug "Presence updated for user #{current_user.id}: #{status}"
       
     rescue => e
-      Rails.logger.error "Failed to update presence: #{e.message}"
-      transmit({
-        type: 'error',
-        message: 'Failed to update presence',
-        error_code: 'PRESENCE_UPDATE_FAILED'
-      })
+      Rails.logger.error "Failed to update user presence status: #{e.message}"
     end
   end
 
-  private
+  def get_user_presence_data(user_id)
+    begin
+      presence_key = "user_presence:#{user_id}"
+      
+      # Try to get from Redis first
+      if defined?(Redis)
+        begin
+          redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
+          presence_json = redis.get(presence_key)
+          
+          if presence_json
+            presence_data = JSON.parse(presence_json)
+            return {
+              user_id: user_id,
+              status: presence_data['status'],
+              last_seen_at: Time.at(presence_data['last_seen_at']).iso8601,
+              is_online: presence_data['status'] == 'online',
+              updated_at: Time.at(presence_data['updated_at']).iso8601
+            }
+          end
+        rescue => redis_error
+          Rails.logger.error "Redis presence fetch failed: #{redis_error.message}"
+        end
+      end
+      
+      # Fallback to database
+      user = User.find_by(id: user_id)
+      if user
+        last_seen = user.respond_to?(:last_seen_at) ? user.last_seen_at : user.updated_at
+        time_since_last_seen = Time.current - (last_seen || 1.hour.ago)
+        
+        status = if time_since_last_seen < 5.minutes
+                  'online'
+                elsif time_since_last_seen < 30.minutes
+                  'away'
+                else
+                  'offline'
+                end
+        
+        return {
+          user_id: user_id,
+          status: status,
+          last_seen_at: (last_seen || 1.hour.ago).iso8601,
+          is_online: status == 'online',
+          updated_at: Time.current.iso8601
+        }
+      end
+      
+      # Default fallback
+      {
+        user_id: user_id,
+        status: 'offline',
+        last_seen_at: 1.hour.ago.iso8601,
+        is_online: false,
+        updated_at: Time.current.iso8601
+      }
+      
+    rescue => e
+      Rails.logger.error "Failed to get user presence data: #{e.message}"
+      {
+        user_id: user_id,
+        status: 'offline',
+        last_seen_at: 1.hour.ago.iso8601,
+        is_online: false,
+        updated_at: Time.current.iso8601
+      }
+    end
+  end
+
+  def get_users_presence_data(user_ids)
+    user_ids.map { |user_id| get_user_presence_data(user_id) }
+  end
+
+  def get_conversation_participants_presence(conversation)
+    begin
+      # Get all participants except current user
+      participant_ids = conversation.conversation_participants
+                                  .where.not(user_id: current_user.id)
+                                  .pluck(:user_id)
+      
+      get_users_presence_data(participant_ids)
+    rescue => e
+      Rails.logger.error "Failed to get conversation participants presence: #{e.message}"
+      []
+    end
+  end
+
+  def broadcast_presence_to_relevant_channels(status)
+    begin
+      user_presence_data = {
+        user_id: current_user.id,
+        user_name: current_user.display_name || current_user.email || 'Unknown User',
+        status: status,
+        last_seen_at: Time.current.iso8601,
+        is_online: status == 'online',
+        timestamp: Time.current.iso8601
+      }
+      
+      # Broadcast to businesses where user is involved
+      business_ids = get_user_business_ids
+      business_ids.each do |business_id|
+        ActionCable.server.broadcast(
+          "business_#{business_id}_updates",
+          {
+            type: 'member_presence_updated',
+            **user_presence_data
+          }
+        )
+      end
+      
+      # Broadcast to active conversations
+      if current_user.respond_to?(:conversations)
+        active_conversation_ids = current_user.conversations
+                                             .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                                             .pluck(:id)
+        
+        active_conversation_ids.each do |conversation_id|
+          ActionCable.server.broadcast(
+            "conversation_#{conversation_id}",
+            {
+              type: 'user_presence_updated',
+              **user_presence_data
+            }
+          )
+        end
+      end
+      
+      Rails.logger.debug "Broadcasted presence update for user #{current_user.id}: #{status}"
+      
+    rescue => e
+      Rails.logger.error "Failed to broadcast presence update: #{e.message}"
+    end
+  end
 
   # FIXED: Enhanced initial state with better error handling and formatting
   def send_initial_state
@@ -360,6 +589,9 @@ class UserNotificationsChannel < ApplicationCable::Channel
       # Get business information
       business_info = get_user_businesses_info
       
+      # ENHANCED: Get user's current presence
+      user_presence = get_user_presence_data(current_user.id)
+      
       # FIXED: Send comprehensive initial state with proper formatting
       transmit({
         type: 'initial_state',
@@ -373,7 +605,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
           name: current_user.display_name || current_user.email || 'Unknown User',
           email: current_user.email,
           avatar_url: get_avatar_url_safely(current_user),
-          online: true
+          presence: user_presence
         },
         recent_conversations: recent_conversations,
         businesses: business_info,
@@ -393,7 +625,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced initial counts with better error handling
+  # Existing methods remain the same...
   def send_initial_counts
     begin
       notification_count = safe_count { current_user.notifications.unread.count }
@@ -424,25 +656,20 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   def subscribe_to_business_channels
     begin
-      # Subscribe to all businesses where user is owner or staff
       business_ids = []
       
-      # Add owned businesses
       if current_user.respond_to?(:owned_businesses)
         business_ids += current_user.owned_businesses.pluck(:id)
       end
       
-      # Add businesses where user is staff
       if current_user.respond_to?(:user_businesses)
         business_ids += current_user.user_businesses.pluck(:business_id)
       end
       
-      # Subscribe to each business channel
       business_ids.uniq.each do |business_id|
         stream_from "business_#{business_id}_updates"
       end
       
-      # Also subscribe to personal business updates
       stream_from "user_businesses_#{current_user.id}"
       
       Rails.logger.info "User #{current_user.id} subscribed to #{business_ids.count} business channels"
@@ -454,13 +681,11 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   def subscribe_to_support_channels
     begin
-      # Subscribe to support tickets if user is support staff
       if is_support_user?
         stream_from "support_tickets"
         Rails.logger.info "User #{current_user.id} subscribed to support tickets channel"
       end
       
-      # FIXED: Subscribe to user's active conversations with better error handling
       if current_user.respond_to?(:conversations)
         active_conversation_ids = current_user.conversations
                                              .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
@@ -478,7 +703,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced notification count broadcasting
   def broadcast_notification_counts
     begin
       notification_count = safe_count { current_user.notifications.unread.count }
@@ -500,7 +724,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced message count broadcasting
   def broadcast_message_counts
     begin
       unread_messages_count = calculate_unread_messages_count
@@ -522,88 +745,18 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  def broadcast_cart_counts
-    begin
-      cart_count = calculate_cart_count
-      
-      ActionCable.server.broadcast(
-        "user_cart_#{current_user.id}",
-        {
-          type: 'cart_count_update',
-          cart_count: cart_count,
-          user_id: current_user.id,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      Rails.logger.debug "Broadcasted cart count update: #{cart_count}"
-      
-    rescue => e
-      Rails.logger.error "Failed to broadcast cart counts: #{e.message}"
-    end
-  end
-
-  # FIXED: Enhanced presence broadcasting with better error handling
-  def broadcast_presence_update(status)
-    begin
-      # Broadcast to businesses where user is involved
-      business_ids = get_user_business_ids
-      
-      business_ids.each do |business_id|
-        ActionCable.server.broadcast(
-          "business_#{business_id}_updates",
-          {
-            type: 'member_presence_updated',
-            user_id: current_user.id,
-            user_name: current_user.display_name || current_user.email || 'Unknown User',
-            status: status,
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      # Broadcast to active conversations
-      if current_user.respond_to?(:conversations)
-        active_conversation_ids = current_user.conversations.where(
-          "metadata->>'status' IN (?)", ['pending', 'in_progress']
-        ).pluck(:id)
-        
-        active_conversation_ids.each do |conversation_id|
-          ActionCable.server.broadcast(
-            "conversation_#{conversation_id}",
-            {
-              type: 'user_presence_updated',
-              user_id: current_user.id,
-              user_name: current_user.display_name || current_user.email || 'Unknown User',
-              status: status,
-              timestamp: Time.current.iso8601
-            }
-          )
-        end
-      end
-      
-    rescue => e
-      Rails.logger.error "Failed to broadcast presence update: #{e.message}"
-    end
-  end
-
-  # FIXED: Enhanced cart count calculation with better error handling
   def calculate_cart_count
     return 0 unless current_user.respond_to?(:packages)
-    
     safe_count { current_user.packages.where(state: 'pending_unpaid').count }
   rescue => e
     Rails.logger.error "Failed to calculate cart count: #{e.message}"
     0
   end
 
-  # FIXED: Enhanced unread messages calculation with better performance
   def calculate_unread_messages_count
     return 0 unless current_user.respond_to?(:conversations)
     
     unread_count = 0
-    
-    # More efficient calculation using joins
     current_user.conversations.includes(:messages, :conversation_participants).each do |conversation|
       begin
         last_read_at = conversation.last_read_at_for(current_user)
@@ -624,7 +777,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     0
   end
 
-  # FIXED: Enhanced recent conversations with better formatting
   def get_recent_conversations
     return [] unless current_user.respond_to?(:conversations)
     
@@ -660,7 +812,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     businesses = []
     
     begin
-      # Add owned businesses
       if current_user.respond_to?(:owned_businesses)
         owned = current_user.owned_businesses.limit(10).map do |business|
           {
@@ -672,7 +823,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         businesses += owned
       end
       
-      # Add businesses where user is staff
       if current_user.respond_to?(:user_businesses)
         staff = current_user.user_businesses.includes(:business).limit(10).map do |ub|
           {
@@ -691,13 +841,11 @@ class UserNotificationsChannel < ApplicationCable::Channel
   end
 
   def get_user_business(business_id)
-    # Check if user owns the business
     if current_user.respond_to?(:owned_businesses)
       business = current_user.owned_businesses.find_by(id: business_id)
       return business if business
     end
     
-    # Check if user is staff
     if current_user.respond_to?(:user_businesses)
       user_business = current_user.user_businesses.find_by(business_id: business_id)
       return user_business&.business
@@ -725,7 +873,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
   end
 
   def is_support_user?
-    # Check multiple methods to determine if user is support staff
     return true if current_user.respond_to?(:support_agent?) && current_user.support_agent?
     return true if current_user.respond_to?(:admin?) && current_user.admin?
     return true if current_user.email&.include?('@glt.co.ke')
@@ -737,19 +884,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     false
   end
 
-  def update_user_presence(online)
-    begin
-      if current_user.respond_to?(:update_presence)
-        current_user.update_presence(online)
-      elsif current_user.respond_to?(:last_seen_at)
-        current_user.update_column(:last_seen_at, Time.current) if online
-      end
-    rescue => e
-      Rails.logger.error "Failed to update user presence: #{e.message}"
-    end
-  end
-
-  # FIXED: Add helper methods for safer operations
   def safe_count(&block)
     block.call
   rescue => e
