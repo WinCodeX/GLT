@@ -12,8 +12,6 @@ Rails.application.configure do
   # Rake tasks automatically ignore this option for performance.
   config.eager_load = true
 
-
-
   # Full error reports are disabled and caching is turned on.
   config.consider_all_requests_local = false
 
@@ -125,6 +123,38 @@ Rails.application.configure do
         credentials: false
     end
   end
+
+  # ==========================================
+  # 🔌 ACTIONCABLE CONFIGURATION - CRITICAL FIX
+  # ==========================================
+  
+  # ActionCable server URL
+  config.action_cable.url = 'wss://glt-53x8.onrender.com/cable'
+  
+  # Allowed origins for ActionCable
+  config.action_cable.allowed_request_origins = [
+    'https://glt-53x8.onrender.com',
+    'http://localhost:8081',
+    'exp://192.168.100.73:8081',
+    /^https:\/\/.*\.expo\.dev$/,
+    /^https:\/\/.*\.exp\.direct$/,
+    /^exp:\/\/.*$/,
+    /^http:\/\/localhost:*/
+  ]
+  
+  # Use Redis adapter for ActionCable if available
+  if ENV['REDIS_URL'].present?
+    config.action_cable.adapter = :redis
+  else
+    # Fallback to async adapter (not recommended for production scaling)
+    config.action_cable.adapter = :async
+  end
+  
+  # ActionCable mount path
+  config.action_cable.mount_path = '/cable'
+  
+  # ActionCable worker pool size
+  config.action_cable.worker_pool_size = 4
 
   # ==========================================
   # 🔧 ADDITIONAL PERFORMANCE OPTIMIZATIONS
