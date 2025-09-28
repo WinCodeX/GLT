@@ -1,4 +1,4 @@
-# config/application.rb - Fixed session configuration with Kenya Timezone
+# config/application.rb - Fixed ActionCable configuration with Kenya Timezone
 
 if defined?(Dotenv)
   require 'dotenv/rails-now'
@@ -35,11 +35,29 @@ module GltApi
     config.active_record.default_timezone = :utc
     
     # ===========================================
-    # 🔧 API-ONLY WITH SESSIONS CONFIGURATION
+    # 🔧 API-ONLY WITH ACTIONCABLE CONFIGURATION (FIXED)
     # ===========================================
     
-    # Keep API-only mode but add back necessary middleware for OAuth
+    # Keep API-only mode but add back necessary middleware for ActionCable
     config.api_only = true
+    
+    # CRITICAL: Add back middleware needed for ActionCable in API mode
+    config.middleware.use ActionDispatch::Cookies
+    config.middleware.use ActionDispatch::Session::CookieStore
+    config.middleware.use ActionDispatch::Flash
+    
+    # ===========================================
+    # 🔌 ACTIONCABLE CONFIGURATION (CRITICAL FIX)
+    # ===========================================
+    
+    # Disable request forgery protection for ActionCable (required for API mode)
+    config.action_cable.disable_request_forgery_protection = true
+    
+    # Allow ActionCable connections from any origin in development/testing
+    config.action_cable.allow_same_origin_as_host = true
+    
+    # Ensure ActionCable is properly mounted
+    config.action_cable.mount_path = '/cable'
     
     # ===========================================
     # 📁 LARGE FILE UPLOAD CONFIGURATION (FIXED)
@@ -60,15 +78,8 @@ module GltApi
       same_site: :lax
       # REMOVED: expire_after: 1.hour  # This was causing JWT auth conflicts
     
-    # Add middleware in correct order
-    config.middleware.use ActionDispatch::Cookies
-    config.middleware.use ActionDispatch::Session::CookieStore, config.session_options
-    
-    # Flash middleware (sometimes needed for session functionality)
-    config.middleware.use ActionDispatch::Flash
-    
     # ===========================================
-    # 🌐 CORS CONFIGURATION
+    # 🌐 CORS CONFIGURATION (FIXED FOR ACTIONCABLE)
     # ===========================================
     
     config.middleware.insert_before 0, Rack::Cors do
@@ -77,6 +88,12 @@ module GltApi
         resource '*', 
           headers: :any,
           methods: [:get, :post, :put, :patch, :delete, :options, :head],
+          credentials: false
+        
+        # CRITICAL: Specific configuration for ActionCable WebSocket connections
+        resource '/cable',
+          headers: :any,
+          methods: [:get, :post],
           credentials: false
       end
     end
@@ -98,6 +115,20 @@ module GltApi
       g.skip_helper true
       g.skip_views true
       g.skip_assets true
+    end
+    
+    # ===========================================
+    # 🔧 ADDITIONAL ACTIONCABLE INITIALIZATION
+    # ===========================================
+    
+    # Ensure ActionCable server is properly initialized
+    config.after_initialize do
+      # Force ActionCable server initialization
+      ActionCable.server.config.logger = Rails.logger
+      
+      # Log ActionCable configuration for debugging
+      Rails.logger.info "ActionCable Server initialized: #{ActionCable.server.inspect}"
+      Rails.logger.info "ActionCable mount path: #{config.action_cable.mount_path}"
     end
   end
 end
