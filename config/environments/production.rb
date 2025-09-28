@@ -142,14 +142,6 @@ Rails.application.configure do
     /^http:\/\/localhost:*/
   ]
   
-  # Use Redis adapter for ActionCable if available
-  if ENV['REDIS_URL'].present?
-    config.action_cable.adapter = :redis
-  else
-    # Fallback to async adapter (not recommended for production scaling)
-    config.action_cable.adapter = :async
-  end
-  
   # ActionCable mount path
   config.action_cable.mount_path = '/cable'
   
