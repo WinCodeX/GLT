@@ -1,4 +1,5 @@
-# app/controllers/api/v1/me_controller.rb - Fixed for R2 user folders
+# app/controllers/api/v1/me_controller.rb - Enhanced with ActionCable broadcasting for real-time profile updates
+
 module Api
   module V1
     class MeController < ApplicationController
@@ -38,6 +39,9 @@ module Api
           
           user_data = serializer.as_json
           user_data[:avatar_url] = avatar_api_url(current_user)
+          
+          # ENHANCED: Broadcast profile updates to all connected clients
+          broadcast_profile_update(user_data)
           
           render json: {
             status: 'success',
@@ -83,6 +87,9 @@ module Api
           Rails.logger.info "📁 File: #{avatar_file.original_filename} (#{avatar_file.size} bytes)"
           Rails.logger.info "🔧 Content-Type: #{avatar_file.content_type}"
           
+          # Store old avatar URL for broadcasting
+          old_avatar_url = avatar_api_url(current_user)
+          
           if Rails.env.production?
             # Production: Upload directly to R2 with user ID folder structure
             new_avatar_url = upload_avatar_to_r2(current_user, avatar_file)
@@ -110,6 +117,9 @@ module Api
           
           user_data = serializer.as_json
           user_data[:avatar_url] = new_avatar_url
+          
+          # ENHANCED: Broadcast avatar change to all connected clients
+          broadcast_avatar_change(new_avatar_url, old_avatar_url)
           
           render json: {
             success: true,
@@ -144,6 +154,9 @@ module Api
       end
 
       def destroy_avatar
+        # Store old avatar URL for broadcasting
+        old_avatar_url = avatar_api_url(current_user)
+        
         if Rails.env.production?
           # Production: Delete from R2
           delete_avatar_from_r2(current_user)
@@ -163,6 +176,9 @@ module Api
         user_data = serializer.as_json
         user_data[:avatar_url] = avatar_api_url(current_user) # This will now return nil
         
+        # ENHANCED: Broadcast avatar deletion to all connected clients
+        broadcast_avatar_change(user_data[:avatar_url], old_avatar_url)
+        
         render json: { 
           success: true, 
           message: 'Avatar deleted',
@@ -172,6 +188,111 @@ module Api
       end
 
       private
+
+      # ENHANCED: Broadcast profile updates via ActionCable
+      def broadcast_profile_update(user_data)
+        begin
+          # Broadcast to user's personal channel
+          ActionCable.server.broadcast(
+            "user_notifications_#{current_user.id}",
+            {
+              type: 'profile_updated',
+              user_id: current_user.id,
+              user_data: user_data.except(:sensitive_fields),
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to global user updates channel for other users who might display this user
+          ActionCable.server.broadcast(
+            "user_profile_updates",
+            {
+              type: 'user_profile_changed',
+              user_id: current_user.id,
+              name: user_data[:full_name] || user_data[:name],
+              email: user_data[:email],
+              avatar_url: user_data[:avatar_url],
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          Rails.logger.info "📡 Profile update broadcast sent for user #{current_user.id}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast profile update: #{e.message}"
+        end
+      end
+
+      # ENHANCED: Broadcast avatar changes via ActionCable
+      def broadcast_avatar_change(new_avatar_url, old_avatar_url)
+        begin
+          # Broadcast to user's personal channel
+          ActionCable.server.broadcast(
+            "user_notifications_#{current_user.id}",
+            {
+              type: 'avatar_updated',
+              user_id: current_user.id,
+              avatar_url: new_avatar_url,
+              previous_avatar_url: old_avatar_url,
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to global avatar updates channel for immediate UI updates
+          ActionCable.server.broadcast(
+            "user_avatar_updates",
+            {
+              type: 'avatar_changed',
+              user_id: current_user.id,
+              avatar_url: new_avatar_url,
+              user_name: current_user.full_name.presence || current_user.email,
+              timestamp: Time.current.iso8601
+            }
+          )
+          
+          # Broadcast to any businesses where this user is involved
+          broadcast_avatar_to_businesses(new_avatar_url)
+          
+          Rails.logger.info "📡 Avatar change broadcast sent for user #{current_user.id}"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast avatar change: #{e.message}"
+        end
+      end
+
+      # ENHANCED: Broadcast avatar changes to business channels
+      def broadcast_avatar_to_businesses(new_avatar_url)
+        begin
+          # Find businesses where user is owner or staff
+          business_ids = []
+          
+          # Add owned businesses
+          if current_user.respond_to?(:owned_businesses)
+            business_ids += current_user.owned_businesses.pluck(:id)
+          end
+          
+          # Add businesses where user is staff
+          if current_user.respond_to?(:user_businesses)
+            business_ids += current_user.user_businesses.pluck(:business_id)
+          end
+          
+          # Broadcast to each business channel
+          business_ids.uniq.each do |business_id|
+            ActionCable.server.broadcast(
+              "business_#{business_id}_updates",
+              {
+                type: 'member_avatar_changed',
+                user_id: current_user.id,
+                avatar_url: new_avatar_url,
+                user_name: current_user.full_name.presence || current_user.email,
+                timestamp: Time.current.iso8601
+              }
+            )
+          end
+          
+          Rails.logger.info "📡 Avatar change broadcast sent to #{business_ids.count} business channels"
+        rescue => e
+          Rails.logger.error "❌ Failed to broadcast avatar to businesses: #{e.message}"
+        end
+      end
 
       def upload_avatar_to_r2(user, avatar_file)
         require 'aws-sdk-s3'
