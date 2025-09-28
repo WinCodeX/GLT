@@ -1,4 +1,4 @@
-# app/models/message.rb - Enhanced with ActionCable broadcasting and proper role detection
+# app/models/message.rb - Fixed with simplified ActionCable broadcasting
 
 class Message < ApplicationRecord
   belongs_to :conversation
@@ -18,15 +18,12 @@ class Message < ApplicationRecord
   
   scope :chronological, -> { order(:created_at) }
   scope :recent, -> { order(created_at: :desc) }
-  scope :user_messages, -> { where(is_system: false) }
-  scope :system_messages, -> { where(is_system: true) }
+  scope :user_messages, -> { where.not(message_type: 'system') }
+  scope :system_messages, -> { where(message_type: 'system') }
   
-  # ENHANCED: ActionCable broadcasting callbacks for real-time messaging
+  # FIXED: Simplified callbacks - let ConversationBroadcastJob handle complex broadcasting
   after_create :update_conversation_activity
-  after_create_commit :broadcast_new_message
-  after_update_commit :broadcast_message_update, if: :should_broadcast_update?
-  
-  # FIXED: Removed duplicate notification creation - handle this in controllers instead
+  after_create_commit :enqueue_broadcast_job
   
   def from_support?
     # ENHANCED: Comprehensive support role detection with multiple fallback methods
@@ -34,10 +31,12 @@ class Message < ApplicationRecord
     
     begin
       # Method 1: Check using Rolify (primary method)
-      return true if user.has_role?(:support)
-      return true if user.has_role?(:admin)
-      return true if user.has_role?(:agent)
-      return true if user.has_role?(:super_admin)
+      if user.respond_to?(:has_role?)
+        return true if user.has_role?(:support)
+        return true if user.has_role?(:admin)
+        return true if user.has_role?(:agent)
+        return true if user.has_role?(:super_admin)
+      end
       
       # Method 2: Check using email domain patterns
       if user.email.present?
@@ -54,9 +53,15 @@ class Message < ApplicationRecord
         return true if ['support', 'admin', 'agent', 'super_admin', 'staff'].include?(user.user_type.downcase)
       end
       
-      # Method 4: Check using name patterns (last resort)
-      if user.name.present?
-        support_patterns = ['support', 'admin', 'agent', 'glt support']
+      # Method 4: Check using display name patterns (last resort)
+      if user.respond_to?(:display_name) && user.display_name.present?
+        support_patterns = ['support', 'admin', 'agent', 'glt support', 'customer support']
+        return true if support_patterns.any? { |pattern| user.display_name.downcase.include?(pattern) }
+      end
+      
+      # Method 5: Check using name patterns (last resort)
+      if user.respond_to?(:name) && user.name.present?
+        support_patterns = ['support', 'admin', 'agent', 'glt support', 'customer support']
         return true if support_patterns.any? { |pattern| user.name.downcase.include?(pattern) }
       end
       
@@ -64,7 +69,7 @@ class Message < ApplicationRecord
       
     rescue => e
       Rails.logger.error "Error checking support role for user #{user&.id}: #{e.message}"
-      Rails.logger.error "User attributes: #{user&.attributes&.except('password_digest', 'encrypted_password')}"
+      Rails.logger.error "User attributes available: #{user&.attributes&.keys&.reject { |k| k.include?('password') }}"
       false
     end
   end
@@ -73,160 +78,108 @@ class Message < ApplicationRecord
     !from_support?
   end
   
+  def is_system?
+    message_type == 'system'
+  end
+  
   def formatted_timestamp
     created_at.strftime('%H:%M')
   end
 
-  def truncate_message(content, limit = 80)
-    return '' unless content
+  def truncate_content(limit = 80)
+    return '' unless content.present?
     content.length > limit ? "#{content[0..limit-1]}..." : content
+  end
+  
+  # ENHANCED: Helper method to get sender display name safely
+  def sender_display_name
+    return 'System' if is_system?
+    return 'Unknown User' unless user
+    
+    user.display_name.presence || 
+    user.name.presence || 
+    user.email.presence || 
+    'Unknown User'
+  end
+  
+  # ENHANCED: Get message preview for notifications
+  def preview_content(limit = 100)
+    case message_type
+    when 'text'
+      truncate_content(limit)
+    when 'image'
+      '📷 Image'
+    when 'voice'
+      '🎤 Voice message'
+    when 'file'
+      "📎 #{metadata&.dig('filename') || 'File'}"
+    when 'system'
+      content # System messages usually short and informative
+    else
+      content.presence || 'Message'
+    end
   end
   
   private
   
+  # FIXED: Simplified conversation activity update
   def update_conversation_activity
-    conversation.touch(:last_activity_at)
-    
-    # Update support ticket status if applicable
-    if conversation.support_ticket? && !is_system?
-      update_support_ticket_status
+    begin
+      # Update conversation's last activity timestamp
+      conversation.touch(:last_activity_at) if conversation.respond_to?(:last_activity_at)
+      
+      # Update support ticket status if applicable
+      if conversation.respond_to?(:support_ticket?) && conversation.support_ticket? && !is_system?
+        update_support_ticket_status
+      end
+      
+    rescue => e
+      Rails.logger.error "Failed to update conversation activity for message #{id}: #{e.message}"
     end
   end
   
   def update_support_ticket_status
+    return unless conversation.respond_to?(:status) && conversation.respond_to?(:update_support_status)
+    
     current_status = conversation.status
     
-    if from_customer? && current_status == 'waiting_customer'
-      conversation.update_support_status('in_progress')
-    elsif from_support? && current_status == 'assigned'
-      conversation.update_support_status('in_progress')
-    end
-  end
-  
-  # ENHANCED: Comprehensive real-time message broadcasting
-  def broadcast_new_message
-    return unless conversation.present?
-
-    begin
-      # Get all participants of this conversation
-      conversation.participants.each do |participant|
-        # Calculate unread message count for this participant
-        unread_count = calculate_unread_messages_for_user(participant)
-        
-        # Broadcast to participant's message channel
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.id}",
-          {
-            type: 'new_message',
-            message: {
-              id: id,
-              content: content,
-              message_type: message_type,
-              metadata: metadata,
-              created_at: created_at.iso8601,
-              timestamp: formatted_timestamp,
-              from_support: from_support?,
-              is_system: is_system?,
-              user: {
-                id: user.id,
-                name: user.display_name,
-                role: from_support? ? 'support' : 'customer'
-              }
-            },
-            conversation: {
-              id: conversation.id,
-              title: conversation.title || "Conversation #{conversation.id}",
-              support_status: conversation.support_status,
-              conversation_type: conversation.conversation_type
-            },
-            unread_messages_count: unread_count,
-            timestamp: Time.current.iso8601
-          }
-        )
-        
-        Rails.logger.info "📡 New message broadcast sent to user #{participant.id} for conversation #{conversation.id}"
+    case current_status
+    when 'waiting_customer'
+      if from_customer?
+        conversation.update_support_status('in_progress')
+        Rails.logger.info "Updated ticket status from waiting_customer to in_progress (customer replied)"
       end
-      
-      # Also broadcast to conversation-specific channel for real-time chat
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'new_message',
-          message: {
-            id: id,
-            content: content,
-            message_type: message_type,
-            metadata: metadata,
-            timestamp: formatted_timestamp,
-            from_support: from_support?,
-            is_system: is_system?,
-            user: {
-              id: user.id,
-              name: user.display_name,
-              role: from_support? ? 'support' : 'customer'
-            }
-          },
-          conversation_id: conversation.id
-        }
-      )
-      
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast new message for conversation #{conversation.id}: #{e.message}"
-      Rails.logger.error "Error details: #{e.class.name} - #{e.backtrace.first(3).join(', ')}"
-    end
-  end
-  
-  # ENHANCED: Broadcast message updates (like read status changes)
-  def broadcast_message_update
-    return unless conversation.present?
-
-    begin
-      conversation.participants.each do |participant|
-        unread_count = calculate_unread_messages_for_user(participant)
-        
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.id}",
-          {
-            type: 'message_count_update',
-            conversation_id: conversation.id,
-            unread_messages_count: unread_count,
-            updated_message_id: id,
-            timestamp: Time.current.iso8601
-          }
-        )
+    when 'assigned', 'pending'
+      if from_support?
+        conversation.update_support_status('in_progress')
+        Rails.logger.info "Updated ticket status from #{current_status} to in_progress (support replied)"
       end
-      
-      Rails.logger.info "📡 Message update broadcast sent for conversation #{conversation.id}"
-    rescue => e
-      Rails.logger.error "❌ Failed to broadcast message update for conversation #{conversation.id}: #{e.message}"
     end
+    
+  rescue => e
+    Rails.logger.error "Failed to update support ticket status for message #{id}: #{e.message}"
   end
   
-  # ENHANCED: Calculate total unread messages across all conversations for a user
-  def calculate_unread_messages_for_user(user)
-    total_unread = 0
+  # FIXED: Simple job enqueueing - let the job handle all broadcasting complexity
+  def enqueue_broadcast_job
+    return unless conversation.present?
     
     begin
-      user.conversations.includes(:messages).each do |conv|
-        last_read_at = conv.last_read_at_for(user)
-        
-        if last_read_at
-          total_unread += conv.messages.where('created_at > ?', last_read_at).count
-        else
-          total_unread += conv.messages.count
-        end
-      end
+      # Enqueue the broadcast job to handle all ActionCable broadcasting
+      ConversationBroadcastJob.perform_later(conversation.id, id)
       
-      total_unread
+      Rails.logger.info "📡 ConversationBroadcastJob enqueued for conversation #{conversation.id}, message #{id}"
+      
     rescue => e
-      Rails.logger.error "❌ Failed to calculate unread messages for user #{user.id}: #{e.message}"
-      0
+      Rails.logger.error "❌ Failed to enqueue ConversationBroadcastJob for message #{id}: #{e.message}"
+      
+      # FALLBACK: Try immediate broadcast if job enqueueing fails
+      begin
+        ConversationBroadcastJob.perform_now(conversation.id, id)
+        Rails.logger.info "📡 ConversationBroadcastJob executed immediately as fallback"
+      rescue => fallback_error
+        Rails.logger.error "❌ Even fallback broadcast failed for message #{id}: #{fallback_error.message}"
+      end
     end
-  end
-
-  # Helper method to determine if message update should be broadcast
-  def should_broadcast_update?
-    # Broadcast when message read status changes or other significant updates
-    saved_change_to_read? || saved_change_to_content? || saved_change_to_message_type?
   end
 end
