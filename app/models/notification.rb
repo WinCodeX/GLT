@@ -55,9 +55,10 @@ class Notification < ApplicationRecord
   scope :expired, -> { where('expires_at <= ?', Time.current) }
   scope :deliverable, -> { where(status: ['pending', 'failed']).active }
 
-  # ENHANCED CALLBACKS - PRESERVE EXISTING + ADD PUSH FUNCTIONALITY
+  # ENHANCED CALLBACKS - PRESERVE EXISTING + ADD COMPREHENSIVE BROADCASTING
   after_create :schedule_delivery
-  after_create_commit :broadcast_to_user  # NEW: Real-time broadcast
+  after_create_commit :broadcast_new_notification
+  after_update_commit :broadcast_notification_update, if: :saved_change_to_read?
   after_update :handle_delivery_status_change
 
   # EXISTING METHODS (PRESERVED)
@@ -112,7 +113,7 @@ class Notification < ApplicationRecord
     end
   end
 
-  # FIXED: INSTANT PUSH NOTIFICATION METHOD - Extract control parameters
+  # ENHANCED: INSTANT PUSH NOTIFICATION METHOD
   def self.create_and_broadcast!(attributes)
     # Extract control parameters that aren't database attributes
     should_send_immediate_push = attributes.delete(:instant_push)
@@ -133,7 +134,7 @@ class Notification < ApplicationRecord
     notification
   end
 
-  # FIXED: ENHANCED NOTIFICATION CREATION WITH PUSH SUPPORT
+  # ENHANCED: NOTIFICATION CREATION WITH PUSH SUPPORT
   def self.create_with_push(attributes)
     # Set default channel to push and mark for immediate sending
     unless attributes.key?(:channel)
@@ -156,7 +157,6 @@ class Notification < ApplicationRecord
       "Your package #{package.code} has been rejected. Reason: #{reason}. You can resubmit this package if eligible."
     end
 
-    # ENHANCED: Use push notifications for immediate delivery
     create_with_push(
       user: package.user,
       package: package,
@@ -176,7 +176,6 @@ class Notification < ApplicationRecord
   end
 
   def self.create_expiry_warning(package:, hours_remaining:)
-    # ENHANCED: Use push notifications for critical warnings
     create_with_push(
       user: package.user,
       package: package,
@@ -196,7 +195,6 @@ class Notification < ApplicationRecord
   def self.create_resubmission_success(package:, new_deadline:)
     deadline_hours = ((new_deadline - Time.current) / 1.hour).round(1)
     
-    # ENHANCED: Use push notifications for positive updates
     create_with_push(
       user: package.user,
       package: package,
@@ -336,26 +334,53 @@ class Notification < ApplicationRecord
     end
   end
 
-  # NEW: REAL-TIME BROADCAST METHOD
-  def broadcast_to_user
-    # Real-time update via ActionCable
-    ActionCable.server.broadcast(
-      "user_notifications_#{user.id}",
-      {
-        type: 'new_notification',
-        notification: {
-          id: id,
-          title: title,
-          message: message,
-          notification_type: notification_type,
-          priority: priority,
-          read: read,
-          created_at: created_at.iso8601,
-          icon: icon || 'bell',
-          package_code: package_code
-        },
-        unread_count: user.notifications.unread.count
-      }
-    )
+  # ENHANCED: COMPREHENSIVE REAL-TIME BROADCASTING
+  def broadcast_new_notification
+    begin
+      # Broadcast new notification with updated count
+      ActionCable.server.broadcast(
+        "user_notifications_#{user.id}",
+        {
+          type: 'new_notification',
+          notification: {
+            id: id,
+            title: title,
+            message: message,
+            notification_type: notification_type,
+            priority: priority,
+            read: read,
+            created_at: created_at.iso8601,
+            icon: icon || 'bell',
+            package_code: package_code,
+            action_url: action_url
+          },
+          notification_count: user.notifications.unread.count,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 New notification broadcast sent to user #{user.id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast new notification: #{e.message}"
+    end
+  end
+
+  def broadcast_notification_update
+    begin
+      # Broadcast notification count update when read status changes
+      ActionCable.server.broadcast(
+        "user_notifications_#{user.id}",
+        {
+          type: 'notification_count_update',
+          notification_count: user.notifications.unread.count,
+          updated_notification_id: id,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "📡 Notification count update broadcast to user #{user.id}"
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast notification update: #{e.message}"
+    end
   end
 end
