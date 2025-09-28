@@ -128,10 +128,7 @@ Rails.application.configure do
   # 🔌 ACTIONCABLE CONFIGURATION - CRITICAL FIX
   # ==========================================
   
-  # CRITICAL: Set ActionCable adapter explicitly
-  config.action_cable.adapter = :redis
-  
-  # ActionCable Redis URL
+  # ActionCable server URL (adapter configured in cable.yml)
   config.action_cable.url = 'wss://glt-53x8.onrender.com/cable'
   
   # Allowed origins for ActionCable
