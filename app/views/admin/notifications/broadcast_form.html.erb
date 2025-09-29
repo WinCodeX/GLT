@@ -1,0 +1,80 @@
+
+<!-- app/views/admin/notifications/broadcast_form.html.erb -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Broadcast Notification - Admin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; padding: 20px; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; }
+    h1 { margin-bottom: 10px; color: #1f2937; }
+    .warning { background: #fef3c7; padding: 15px; border-radius: 5px; margin-bottom: 30px; border-left: 4px solid #f59e0b; }
+    .form-group { margin-bottom: 20px; }
+    label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; }
+    input, textarea, select { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 5px; }
+    textarea { min-height: 120px; resize: vertical; }
+    .btn { padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 10px; }
+    .btn-success { background: #10b981; color: white; }
+    .btn-secondary { background: #6b7280; color: white; }
+    .user-list { border: 1px solid #d1d5db; border-radius: 5px; padding: 15px; max-height: 200px; overflow-y: auto; }
+    .user-item { padding: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📢 Broadcast Notification</h1>
+    <div class="warning">
+      <strong>⚠️ Warning:</strong> This will send a notification to multiple users. 
+      Leave "Select Users" empty to broadcast to ALL users.
+    </div>
+    
+    <%= form_with url: broadcast_admin_notifications_path, method: :post, local: true do |f| %>
+      <div class="form-group">
+        <%= label_tag 'broadcast[user_ids]', 'Select Users (Optional - leave empty for all users)' %>
+        <%= select_tag 'broadcast[user_ids][]', 
+            options_for_select(@users.map { |u| [u.email, u.id] }), 
+            { multiple: true, size: 8, class: 'user-list' } %>
+        <small style="color: #6b7280;">Hold Ctrl/Cmd to select multiple users</small>
+      </div>
+
+      <div class="form-group">
+        <%= label_tag 'broadcast[title]', 'Title' %>
+        <%= text_field_tag 'broadcast[title]', '', required: true, placeholder: 'Broadcast title' %>
+      </div>
+
+      <div class="form-group">
+        <%= label_tag 'broadcast[message]', 'Message' %>
+        <%= text_area_tag 'broadcast[message]', '', required: true, placeholder: 'Broadcast message content' %>
+      </div>
+
+      <div class="form-group">
+        <%= label_tag 'broadcast[notification_type]', 'Type' %>
+        <%= select_tag 'broadcast[notification_type]', 
+            options_for_select([
+              ['General', 'general'],
+              ['System Announcement', 'system'],
+              ['Update', 'update']
+            ]), { required: true } %>
+      </div>
+
+      <div class="form-group">
+        <%= label_tag 'broadcast[priority]', 'Priority' %>
+        <%= select_tag 'broadcast[priority]', 
+            options_for_select([
+              ['Low (0)', 0],
+              ['Normal (1)', 1],
+              ['High (2)', 2],
+              ['Urgent (3)', 3]
+            ], 1), { required: true } %>
+      </div>
+
+      <div style="margin-top: 30px;">
+        <%= submit_tag 'Send Broadcast', class: 'btn btn-success', 
+            data: { confirm: 'Are you sure you want to send this broadcast?' } %>
+        <%= link_to 'Cancel', admin_notifications_path, class: 'btn btn-secondary' %>
+      </div>
+    <% end %>
+  </div>
+</body>
+</html>
