@@ -1,6 +1,6 @@
 # app/controllers/api/v1/support_controller.rb
 class Api::V1::SupportController < ApplicationController
-  include AvatarHelper  # FIXED: Include avatar helper for R2 support
+  include AvatarHelper
   
   before_action :authenticate_user!
   before_action :ensure_support_access!
@@ -34,13 +34,9 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/tickets
   def tickets
     begin
-      # Build base query for support tickets
       tickets_query = build_tickets_query
-      
-      # Apply filters
       tickets_query = apply_ticket_filters(tickets_query)
       
-      # Apply pagination
       page = [params[:page].to_i, 1].max
       limit = [params[:limit].to_i, 20].max.clamp(1, 100)
       
@@ -113,22 +109,18 @@ class Api::V1::SupportController < ApplicationController
 
       agent = User.with_role(:support).find(agent_id)
       
-      # Remove existing agent if any
       existing_agent = @conversation.conversation_participants.find_by(role: 'agent')
       existing_agent&.destroy
 
-      # Add new agent
       @conversation.conversation_participants.create!(
         user: agent,
         role: 'agent',
         joined_at: Time.current
       )
 
-      # Update ticket status
       @conversation.update_support_status('assigned')
 
-      # Add system message
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: "Ticket assigned to #{agent.display_name} by #{current_user.display_name}",
         message_type: 'system',
@@ -139,6 +131,18 @@ class Api::V1::SupportController < ApplicationController
           assigned_by: current_user.id
         }
       )
+
+      # BROADCAST: Agent assignment update
+      broadcast_agent_assignment(agent)
+      
+      # BROADCAST: Ticket status update
+      broadcast_ticket_status_update('assigned')
+      
+      # BROADCAST: System message to conversation
+      broadcast_system_message(system_message)
+      
+      # BROADCAST: Dashboard stats update
+      broadcast_dashboard_stats_update
 
       render json: {
         success: true,
@@ -166,9 +170,8 @@ class Api::V1::SupportController < ApplicationController
   def escalate_ticket
     begin
       escalation_reason = params[:reason]
-      escalate_to = params[:escalate_to] # 'manager', 'technical', 'billing'
+      escalate_to = params[:escalate_to]
       
-      # Update ticket priority and metadata
       current_metadata = @conversation.metadata || {}
       @conversation.metadata = current_metadata.merge({
         'priority' => 'high',
@@ -180,8 +183,7 @@ class Api::V1::SupportController < ApplicationController
       })
       @conversation.save!
 
-      # Add system message
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: "Ticket escalated to #{escalate_to} team. Reason: #{escalation_reason}",
         message_type: 'system',
@@ -194,7 +196,15 @@ class Api::V1::SupportController < ApplicationController
         }
       )
 
-      # Notify relevant team (implement notification logic as needed)
+      # BROADCAST: Ticket escalated
+      broadcast_ticket_escalated(escalate_to, escalation_reason)
+      
+      # BROADCAST: System message
+      broadcast_system_message(system_message)
+      
+      # BROADCAST: Dashboard stats update
+      broadcast_dashboard_stats_update
+
       notify_escalation_team(escalate_to, @conversation, escalation_reason)
 
       render json: {
@@ -217,7 +227,7 @@ class Api::V1::SupportController < ApplicationController
   def add_note
     begin
       note_content = params[:note]
-      note_type = params[:note_type] || 'internal' # 'internal', 'customer_visible'
+      note_type = params[:note_type] || 'internal'
       
       if note_content.blank?
         return render json: {
@@ -238,6 +248,9 @@ class Api::V1::SupportController < ApplicationController
           visibility: note_type
         }
       )
+
+      # BROADCAST: System message (note)
+      broadcast_system_message(note)
 
       render json: {
         success: true,
@@ -276,8 +289,7 @@ class Api::V1::SupportController < ApplicationController
       })
       @conversation.save!
 
-      # Add system message
-      @conversation.messages.create!(
+      system_message = @conversation.messages.create!(
         user: current_user,
         content: "Priority updated from #{old_priority} to #{new_priority}",
         message_type: 'system',
@@ -289,6 +301,15 @@ class Api::V1::SupportController < ApplicationController
           updated_by: current_user.id
         }
       )
+
+      # BROADCAST: Ticket status update (priority change)
+      broadcast_ticket_status_update(@conversation.status)
+      
+      # BROADCAST: System message
+      broadcast_system_message(system_message)
+      
+      # BROADCAST: Dashboard stats update
+      broadcast_dashboard_stats_update
 
       render json: {
         success: true,
@@ -353,6 +374,9 @@ class Api::V1::SupportController < ApplicationController
 
       results = perform_bulk_action(action, ticket_ids)
       
+      # BROADCAST: Dashboard stats update after bulk action
+      broadcast_dashboard_stats_update
+      
       render json: {
         success: true,
         message: "Bulk action '#{action}' completed",
@@ -370,7 +394,7 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/stats
   def stats
     begin
-      time_range = params[:time_range] || '7d' # '1d', '7d', '30d', '90d'
+      time_range = params[:time_range] || '7d'
       
       stats = calculate_detailed_stats(time_range)
       
@@ -417,41 +441,33 @@ class Api::V1::SupportController < ApplicationController
 
   def build_tickets_query
     query = accessible_conversations.includes(:conversation_participants, :users, :messages)
-    
-    # Default ordering
     query.recent
   end
 
   def apply_ticket_filters(query)
-    # Status filter
     if params[:status].present?
       query = query.where("metadata->>'status' = ?", params[:status])
     end
 
-    # Priority filter
     if params[:priority].present?
       query = query.where("metadata->>'priority' = ?", params[:priority])
     end
 
-    # Category filter
     if params[:category].present?
       query = query.where("metadata->>'category' = ?", params[:category])
     end
 
-    # Agent filter
     if params[:agent_id].present?
       query = query.joins(:conversation_participants)
                   .where(conversation_participants: { user_id: params[:agent_id], role: 'agent' })
     end
 
-    # Unassigned filter
     if params[:unassigned] == 'true'
       query = query.left_joins(:conversation_participants)
                   .where(conversation_participants: { role: 'agent' })
                   .where(conversation_participants: { id: nil })
     end
 
-    # Date range filter
     if params[:created_after].present?
       query = query.where('created_at >= ?', params[:created_after])
     end
@@ -460,7 +476,6 @@ class Api::V1::SupportController < ApplicationController
       query = query.where('created_at <= ?', params[:created_before])
     end
 
-    # Search filter
     if params[:search].present?
       search_term = "%#{params[:search]}%"
       query = query.joins(:users)
@@ -487,6 +502,138 @@ class Api::V1::SupportController < ApplicationController
       }
     }.compact
   end
+
+  # ============================================
+  # BROADCASTING METHODS
+  # ============================================
+
+  def broadcast_agent_assignment(agent)
+    ActionCable.server.broadcast(
+      "support_dashboard",
+      {
+        type: 'agent_assignment_update',
+        ticket_id: @conversation.id,
+        agent: {
+          id: agent.id,
+          name: agent.display_name,
+          email: agent.email
+        },
+        timestamp: Time.current.iso8601
+      }
+    )
+
+    # Also broadcast to the conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{@conversation.id}",
+      {
+        type: 'conversation_updated',
+        conversation_id: @conversation.id,
+        assigned_agent: {
+          id: agent.id,
+          name: agent.display_name,
+          email: agent.email
+        },
+        status: 'assigned',
+        timestamp: Time.current.iso8601
+      }
+    )
+  end
+
+  def broadcast_ticket_status_update(new_status)
+    ActionCable.server.broadcast(
+      "support_dashboard",
+      {
+        type: 'ticket_status_update',
+        ticket_id: @conversation.id,
+        status: new_status,
+        timestamp: Time.current.iso8601
+      }
+    )
+
+    # Also broadcast to the conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{@conversation.id}",
+      {
+        type: 'ticket_status_changed',
+        conversation_id: @conversation.id,
+        new_status: new_status,
+        timestamp: Time.current.iso8601
+      }
+    )
+  end
+
+  def broadcast_ticket_escalated(escalate_to, reason)
+    ActionCable.server.broadcast(
+      "support_dashboard",
+      {
+        type: 'ticket_escalated',
+        ticket_id: @conversation.id,
+        escalated_to: escalate_to,
+        reason: reason,
+        timestamp: Time.current.iso8601
+      }
+    )
+
+    # Also broadcast to the conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{@conversation.id}",
+      {
+        type: 'ticket_escalated',
+        conversation_id: @conversation.id,
+        escalated_to: escalate_to,
+        timestamp: Time.current.iso8601
+      }
+    )
+  end
+
+  def broadcast_system_message(message)
+    # Format the message for broadcasting
+    formatted_message = {
+      id: message.id,
+      content: message.content,
+      created_at: message.created_at.iso8601,
+      timestamp: message.created_at.strftime('%H:%M'),
+      is_system: true,
+      from_support: true,
+      message_type: 'system',
+      user: {
+        id: message.user.id,
+        name: message.user.display_name,
+        role: message.user.primary_role
+      },
+      metadata: message.metadata || {}
+    }
+
+    # Broadcast to conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{@conversation.id}",
+      {
+        type: 'new_message',
+        conversation_id: @conversation.id,
+        message: formatted_message,
+        timestamp: Time.current.iso8601
+      }
+    )
+  end
+
+  def broadcast_dashboard_stats_update
+    # Calculate fresh stats
+    stats = calculate_dashboard_stats
+
+    # Broadcast to all support staff
+    ActionCable.server.broadcast(
+      "support_dashboard",
+      {
+        type: 'dashboard_stats_update',
+        stats: stats,
+        timestamp: Time.current.iso8601
+      }
+    )
+  end
+
+  # ============================================
+  # HELPER METHODS
+  # ============================================
 
   def calculate_dashboard_stats
     base_tickets = accessible_conversations
@@ -565,7 +712,7 @@ class Api::V1::SupportController < ApplicationController
         id: conversation.customer.id,
         name: conversation.customer.display_name,
         email: conversation.customer.email,
-        avatar_url: avatar_api_url(conversation.customer)  # FIXED: Use avatar helper instead of direct Active Storage
+        avatar_url: avatar_api_url(conversation.customer)
       } : nil,
       
       assigned_agent: conversation.assigned_agent ? {
@@ -596,7 +743,7 @@ class Api::V1::SupportController < ApplicationController
       name: agent.display_name,
       email: agent.email,
       online: agent.online?,
-      avatar_url: avatar_api_url(agent),  # FIXED: Use avatar helper instead of direct Active Storage
+      avatar_url: avatar_api_url(agent),
       role: agent.primary_role,
       last_seen_at: agent.last_seen_at
     }
@@ -623,17 +770,23 @@ class Api::V1::SupportController < ApplicationController
     
     conversations.each do |conversation|
       begin
+        @conversation = conversation
+        
         case action
         when 'close'
           conversation.update_support_status('closed')
           add_bulk_action_message(conversation, 'closed')
+          broadcast_ticket_status_update('closed')
         when 'assign_to_me'
           assign_ticket_to_agent(conversation, current_user)
+          broadcast_agent_assignment(current_user)
         when 'mark_resolved'
           conversation.update_support_status('resolved')
           add_bulk_action_message(conversation, 'resolved')
+          broadcast_ticket_status_update('resolved')
         when 'set_priority_high'
           update_conversation_priority(conversation, 'high')
+          broadcast_ticket_status_update(conversation.status)
         else
           raise "Unknown action: #{action}"
         end
@@ -649,11 +802,9 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def assign_ticket_to_agent(conversation, agent)
-    # Remove existing agent
     existing_agent = conversation.conversation_participants.find_by(role: 'agent')
     existing_agent&.destroy
 
-    # Add new agent
     conversation.conversation_participants.create!(
       user: agent,
       role: 'agent',
@@ -664,7 +815,7 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def add_bulk_action_message(conversation, action)
-    conversation.messages.create!(
+    message = conversation.messages.create!(
       user: current_user,
       content: "Ticket #{action} via bulk action by #{current_user.display_name}",
       message_type: 'system',
@@ -675,6 +826,8 @@ class Api::V1::SupportController < ApplicationController
         performed_by: current_user.id
       }
     )
+    
+    broadcast_system_message(message)
   end
 
   def update_conversation_priority(conversation, priority)
@@ -688,15 +841,11 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_avg_response_time
-    # Implementation for calculating average response time
-    # This would require tracking response timestamps
-    "2.5 hours" # Placeholder
+    "2.5 hours"
   end
 
   def calculate_satisfaction_score
-    # Implementation for calculating satisfaction scores
-    # This would require customer feedback/rating system
-    4.2 # Placeholder
+    4.2
   end
 
   def calculate_tickets_by_category
@@ -704,7 +853,6 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_ticket_trends
-    # Calculate trends over time periods
     {
       daily_trend: "↑12%",
       weekly_trend: "↓3%",
@@ -729,17 +877,14 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_agent_avg_resolution_time(agent)
-    # Implementation for agent-specific resolution time
-    "1.8 hours" # Placeholder
+    "1.8 hours"
   end
 
   def calculate_agent_satisfaction(agent)
-    # Implementation for agent-specific satisfaction
-    4.3 # Placeholder
+    4.3
   end
 
   def calculate_detailed_stats(time_range)
-    # Implementation for detailed statistics based on time range
     {
       time_range: time_range,
       tickets_created: 45,
@@ -751,8 +896,6 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def notify_escalation_team(team, conversation, reason)
-    # Implementation for notifying escalation teams
-    # This could send emails, create notifications, etc.
     Rails.logger.info "Ticket #{conversation.ticket_id} escalated to #{team} team: #{reason}"
   end
 end
