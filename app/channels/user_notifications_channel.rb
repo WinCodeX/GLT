@@ -114,69 +114,70 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   # NEW: Message acknowledgment handling
   def acknowledge_message(data)
-    begin
-      message_id = data['message_id']
-      status = data['status']
-      
-      unless ['delivered', 'read'].include?(status)
-        transmit({
-          type: 'error',
-          message: 'Invalid status. Must be delivered or read',
-          error_code: 'INVALID_STATUS'
-        })
-        return
-      end
-      
-      message = Message.find_by(id: message_id)
-      unless message
-        transmit({
-          type: 'error',
-          message: 'Message not found',
-          error_code: 'MESSAGE_NOT_FOUND'
-        })
-        return
-      end
-      
-      # Update message acknowledgment
-      if status == 'delivered' && message.delivered_at.nil?
-        message.update_column(:delivered_at, Time.current)
-      elsif status == 'read' && message.read_at.nil?
-        message.update_columns(
-          delivered_at: message.delivered_at || Time.current,
-          read_at: Time.current
-        )
-      end
-      
-      # Broadcast acknowledgment to sender
-      ActionCable.server.broadcast(
-        "user_messages_#{message.user_id}",
-        {
-          type: 'message_acknowledged',
-          message_id: message_id,
-          status: status,
-          acknowledged_by: current_user.id,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      transmit({
-        type: 'acknowledge_success',
-        message_id: message_id,
-        status: status,
-        timestamp: Time.current.iso8601
-      })
-      
-      Rails.logger.info "Message #{message_id} marked as #{status} by user #{current_user.id}"
-      
-    rescue => e
-      Rails.logger.error "Failed to acknowledge message: #{e.message}"
+  begin
+    message_id = data['message_id']
+    status = data['status']
+    
+    unless ['delivered', 'read'].include?(status)
       transmit({
         type: 'error',
-        message: 'Failed to acknowledge message',
-        error_code: 'ACKNOWLEDGE_FAILED'
+        message: 'Invalid status. Must be delivered or read',
+        error_code: 'INVALID_STATUS'
       })
+      return
     end
+    
+    message = Message.find_by(id: message_id)
+    unless message
+      transmit({
+        type: 'error',
+        message: 'Message not found',
+        error_code: 'MESSAGE_NOT_FOUND'
+      })
+      return
+    end
+    
+    # Update message acknowledgment
+    if status == 'delivered' && message.delivered_at.nil?
+      message.update_column(:delivered_at, Time.current)
+    elsif status == 'read' && message.read_at.nil?
+      message.update_columns(
+        delivered_at: message.delivered_at || Time.current,
+        read_at: Time.current
+      )
+    end
+    
+    # ✅ FIXED: Broadcast to conversation channel (not user channel)
+    ActionCable.server.broadcast(
+      "conversation_#{message.conversation_id}",  # ✅ Conversation channel
+      {
+        type: 'message_acknowledged',
+        message_id: message_id,
+        conversation_id: message.conversation_id,
+        status: status,
+        acknowledged_by: current_user.id,
+        timestamp: Time.current.iso8601
+      }
+    )
+    
+    transmit({
+      type: 'acknowledge_success',
+      message_id: message_id,
+      status: status,
+      timestamp: Time.current.iso8601
+    })
+    
+    Rails.logger.info "✅ Message #{message_id} marked as #{status} by user #{current_user.id}"
+    
+  rescue => e
+    Rails.logger.error "❌ Failed to acknowledge message: #{e.message}"
+    transmit({
+      type: 'error',
+      message: 'Failed to acknowledge message',
+      error_code: 'ACKNOWLEDGE_FAILED'
+    })
   end
+end
 
   def mark_message_read(data)
     begin
