@@ -26,61 +26,62 @@ Rails.application.routes.draw do
   # ==========================================
   
   namespace :admin do
-    root 'updates#index'
-    
-    # Updates (existing)
-    resources :updates do
-      member do
-        patch :publish
-        patch :unpublish
-      end
-      collection do
-        post :upload_bundle_only
-        get :stats
-      end
-    end
+  root 'updates#index'
 
-    # Notifications Web Interface
-    resources :notifications, only: [:index, :show, :new, :create, :destroy] do
-      member do
-        patch :mark_as_read
-        patch :mark_as_unread
-      end
-      
-      collection do
-        get :broadcast_form
-        post :broadcast
-        get :stats
-      end
+  # Updates (existing)
+  resources :updates do
+    member do
+      patch :publish
+      patch :unpublish
     end
-    
-    # Cable Monitoring Web Interface
-    resource :cable, only: [:show], controller: 'cable_monitoring' do
-      get :connections, on: :collection
-      get :subscriptions, on: :collection
-      get :stats, on: :collection
-      post :test_broadcast, on: :collection
-    end
-    
-    # Conversations Web Interface (for testing)
-    resources :conversations, only: [:index, :show] do
-      member do
-        patch :assign_to_me
-        patch :update_status, path: 'status'
-      end
-      
-      collection do
-        get :test
-        post :test_message
-      end
+    collection do
+      post :upload_bundle_only
+      get :stats
     end
   end
 
-  get '/dashboard', to: 'sessions#dashboard', as: :dashboard
-  get '/sign_in', to: 'sessions#new', as: :sign_in
-  post '/sign_in', to: 'sessions#create'
-  delete '/sign_out', to: 'sessions#destroy', as: :sign_out
-  get '/logout', to: 'sessions#destroy'
+  # Notifications Web Interface - FIXED
+  resources :notifications, only: [:index, :show, :new, :create, :destroy] do
+    member do
+      patch :mark_as_read
+      patch :mark_as_unread
+    end
+
+    collection do
+      get :broadcast_form
+      post :broadcast
+      get :stats
+    end
+  end
+
+  # Cable Monitoring Web Interface - FIXED
+  # Changed from singular resource to custom routes
+  get 'cable', to: 'cable_monitoring#index', as: 'cable'
+  get 'cable/connections', to: 'cable_monitoring#connections', as: 'cable_connections'
+  get 'cable/subscriptions', to: 'cable_monitoring#subscriptions', as: 'cable_subscriptions'
+  get 'cable/stats', to: 'cable_monitoring#stats', as: 'cable_stats'
+  post 'cable/test_broadcast', to: 'cable_monitoring#test_broadcast', as: 'test_broadcast_cable'
+
+  # Conversations Web Interface - FIXED
+  resources :conversations, only: [:index, :show] do
+    member do
+      patch :assign_to_me
+      patch :update_status, as: 'update_status_for'
+    end
+
+    collection do
+      get :test
+      post :test_message
+    end
+  end
+end
+
+# Web Authentication Routes
+get '/dashboard', to: 'sessions#dashboard', as: :dashboard
+get '/sign_in', to: 'sessions#new', as: :sign_in
+post '/sign_in', to: 'sessions#create'
+delete '/sign_out', to: 'sessions#destroy', as: :sign_out
+get '/logout', to: 'sessions#destroy'
 
   # ==========================================
   # 🔐 AUTHENTICATION (Devise)
