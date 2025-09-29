@@ -18,6 +18,8 @@ bundle exec rails generate rolify Role User
 bundle exec rails db:migrate
 bundle exec rails active_storage:install
 
+rake conversations:merge_duplicates
+
 echo "=== Seeding Test Data ==="
 bundle exec rails db:seed
 
