@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb
+# app/controllers/api/v1/conversations_controller.rb - FIXED: Instant broadcasting
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
   
@@ -115,7 +115,8 @@ class Api::V1::ConversationsController < ApplicationController
           package: package
         )
         
-        safely_broadcast_new_support_ticket(existing_conversation)
+        # FIXED: Broadcast to support dashboard
+        broadcast_new_support_ticket_to_dashboard(existing_conversation)
         
         return render json: {
           success: true,
@@ -135,7 +136,8 @@ class Api::V1::ConversationsController < ApplicationController
       if @conversation&.persisted?
         Rails.logger.info "Created first support conversation: #{@conversation.id}"
         
-        safely_broadcast_new_support_ticket(@conversation)
+        # FIXED: Broadcast to support dashboard
+        broadcast_new_support_ticket_to_dashboard(@conversation)
         
         render json: {
           success: true,
@@ -181,8 +183,13 @@ class Api::V1::ConversationsController < ApplicationController
         @conversation.touch(:last_activity_at)
         update_support_ticket_status_if_needed
         
-        # INSTANT broadcast - no job queue
+        # FIXED: Instant broadcast - no job queue
         broadcast_message_immediately(@conversation, @message)
+        
+        # FIXED: Broadcast to support dashboard for new messages
+        if @conversation.support_ticket?
+          broadcast_message_to_support_dashboard(@conversation, @message)
+        end
         
         if @conversation.support_ticket? && !@message.is_system?
           send_support_notifications_immediate(@message)
@@ -418,70 +425,116 @@ class Api::V1::ConversationsController < ApplicationController
     @conversation.update_support_status('pending')
   end
 
-  # NEW: Instant message broadcasting (no job queue)
+  # FIXED: Instant message broadcasting (no job queue)
   def broadcast_message_immediately(conversation, message)
-  begin
-    sender = message.user
-    
-    # FIXED: Include delivered_at and read_at in payload
-    message_payload = {
-      id: message.id,
-      content: message.content,
-      message_type: message.message_type || 'text',
-      created_at: message.created_at.iso8601,
-      timestamp: message.created_at.strftime('%H:%M'),
-      from_support: message.from_support?,
-      is_system: message.message_type == 'system',
-      delivered_at: message.delivered_at&.iso8601,  # ✅ ADDED
-      read_at: message.read_at&.iso8601,            # ✅ ADDED
-      user: {
-        id: sender.id,
-        name: sender.display_name || sender.email || 'Unknown User',
-        role: message.from_support? ? 'support' : 'customer',
-        avatar_url: get_avatar_url_safely(sender)
-      },
-      metadata: message.metadata || {}
-    }
-    
-    # Broadcast to conversation channel
-    ActionCable.server.broadcast(
-      "conversation_#{conversation.id}",
-      {
-        type: 'new_message',
-        conversation_id: conversation.id,
-        message: message_payload,
-        conversation: {
-          id: conversation.id,
-          title: conversation.title,
-          type: conversation.conversation_type,
-          status: conversation.respond_to?(:status) ? conversation.status : 'active',
-          last_activity_at: conversation.last_activity_at&.iso8601
+    begin
+      sender = message.user
+      
+      message_payload = {
+        id: message.id,
+        content: message.content,
+        message_type: message.message_type || 'text',
+        created_at: message.created_at.iso8601,
+        timestamp: message.created_at.strftime('%H:%M'),
+        from_support: message.from_support?,
+        is_system: message.message_type == 'system',
+        delivered_at: message.delivered_at&.iso8601,
+        read_at: message.read_at&.iso8601,
+        user: {
+          id: sender.id,
+          name: sender.display_name || sender.email || 'Unknown User',
+          role: message.from_support? ? 'support' : 'customer',
+          avatar_url: get_avatar_url_safely(sender)
         },
-        timestamp: Time.current.iso8601
+        metadata: message.metadata || {}
       }
-    )
-    
-    # Broadcast to individual participant channels
-    conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
+      
+      # Broadcast to conversation channel
       ActionCable.server.broadcast(
-        "user_messages_#{participant.user_id}",
+        "conversation_#{conversation.id}",
         {
-          type: 'new_message_notification',
+          type: 'new_message',
           conversation_id: conversation.id,
           message: message_payload,
-          sender_name: sender.display_name || sender.email || 'Unknown User',
-          preview: message.content.to_s.truncate(50),
+          conversation: {
+            id: conversation.id,
+            title: conversation.title,
+            type: conversation.conversation_type,
+            status: conversation.respond_to?(:status) ? conversation.status : 'active',
+            last_activity_at: conversation.last_activity_at&.iso8601
+          },
           timestamp: Time.current.iso8601
         }
       )
+      
+      # Broadcast to individual participant channels
+      conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
+        ActionCable.server.broadcast(
+          "user_messages_#{participant.user_id}",
+          {
+            type: 'new_message_notification',
+            conversation_id: conversation.id,
+            message: message_payload,
+            sender_name: sender.display_name || sender.email || 'Unknown User',
+            preview: message.content.to_s.truncate(50),
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      Rails.logger.info "✅ Message broadcast completed instantly for conversation #{conversation.id}"
+      
+    rescue => e
+      Rails.logger.error "❌ Error broadcasting message immediately: #{e.message}"
     end
-    
-    Rails.logger.info "✅ Message broadcast completed instantly for conversation #{conversation.id}"
-    
-  rescue => e
-    Rails.logger.error "❌ Error broadcasting message immediately: #{e.message}"
   end
-end
+
+  # FIXED: Broadcast new messages to support dashboard
+  def broadcast_message_to_support_dashboard(conversation, message)
+    begin
+      ActionCable.server.broadcast(
+        "support_dashboard",
+        {
+          type: 'new_message',
+          conversation_id: conversation.id,
+          ticket_id: conversation.current_ticket_id || conversation.ticket_id,
+          message: {
+            content: message.content.to_s.truncate(50),
+            created_at: message.created_at.iso8601,
+            from_support: message.from_support?
+          },
+          last_activity_at: conversation.last_activity_at&.iso8601,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "✅ Message broadcast to support dashboard for conversation #{conversation.id}"
+    rescue => e
+      Rails.logger.error "❌ Error broadcasting to support dashboard: #{e.message}"
+    end
+  end
+
+  # FIXED: Broadcast new ticket to support dashboard
+  def broadcast_new_support_ticket_to_dashboard(conversation)
+    begin
+      ticket_data = efficiently_format_conversation_summary(conversation)
+      
+      ActionCable.server.broadcast(
+        "support_dashboard",
+        {
+          type: 'new_support_ticket',
+          ticket: ticket_data,
+          conversation_id: conversation.id,
+          ticket_id: conversation.current_ticket_id || conversation.ticket_id,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "✅ New support ticket broadcast to dashboard: #{conversation.id}"
+    rescue => e
+      Rails.logger.error "❌ Error broadcasting new ticket to dashboard: #{e.message}"
+    end
+  end
 
   def send_support_notifications_immediate(message)
     participants_to_notify = @conversation.conversation_participants
@@ -560,11 +613,14 @@ end
       priority: conversation.priority,
       total_tickets: all_tickets.size,
       has_active_ticket: has_active_ticket,
+      customer: format_customer_data(conversation),
+      assigned_agent: format_assigned_agent_data(conversation),
       last_message: last_message ? {
         content: truncate_message(last_message.content),
         created_at: last_message.created_at,
         from_support: last_message.from_support? || false
-      } : nil
+      } : nil,
+      message_count: conversation.messages.count
     }
   end
 
@@ -716,17 +772,6 @@ end
     Rails.logger.error "Error marking as read: #{e.message}"
   end
 
-  def safely_broadcast_new_support_ticket(conversation)
-    ActionCable.server.broadcast("support_tickets", {
-      type: 'new_support_ticket',
-      conversation_id: conversation.id,
-      ticket_id: conversation.current_ticket_id,
-      timestamp: Time.current.iso8601
-    })
-  rescue => e
-    Rails.logger.error "Error broadcasting: #{e.message}"
-  end
-
   def safely_broadcast_conversation_read_status(conversation, reader)
     ActionCable.server.broadcast("conversation_#{conversation.id}", {
       type: 'conversation_read',
@@ -746,6 +791,15 @@ end
       new_status: conversation.status,
       current_ticket_id: conversation.current_ticket_id,
       system_message: system_message ? efficiently_format_message(system_message) : nil,
+      timestamp: Time.current.iso8601
+    })
+    
+    # FIXED: Also broadcast to support dashboard
+    ActionCable.server.broadcast("support_dashboard", {
+      type: 'ticket_status_update',
+      ticket_id: conversation.id,
+      status: conversation.status,
+      action: action,
       timestamp: Time.current.iso8601
     })
   rescue => e
