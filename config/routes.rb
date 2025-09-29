@@ -28,6 +28,7 @@ Rails.application.routes.draw do
   namespace :admin do
     root 'updates#index'
     
+    # Updates (existing)
     resources :updates do
       member do
         patch :publish
@@ -39,15 +40,38 @@ Rails.application.routes.draw do
       end
     end
 
-    resources :notifications, only: [:index, :show, :create, :destroy] do
+    # Notifications Web Interface
+    resources :notifications, only: [:index, :show, :new, :create, :destroy] do
       member do
         patch :mark_as_read
         patch :mark_as_unread
       end
       
       collection do
-        get :stats
+        get :broadcast_form
         post :broadcast
+        get :stats
+      end
+    end
+    
+    # Cable Monitoring Web Interface
+    resource :cable, only: [:show], controller: 'cable_monitoring' do
+      get :connections, on: :collection
+      get :subscriptions, on: :collection
+      get :stats, on: :collection
+      post :test_broadcast, on: :collection
+    end
+    
+    # Conversations Web Interface (for testing)
+    resources :conversations, only: [:index, :show] do
+      member do
+        patch :assign_to_me
+        patch :update_status, path: 'status'
+      end
+      
+      collection do
+        get :test
+        post :test_message
       end
     end
   end
