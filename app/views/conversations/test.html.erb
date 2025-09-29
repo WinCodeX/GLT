@@ -1,0 +1,245 @@
+<!-- app/views/admin/conversations/test.html.erb -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test ActionCable - Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+    
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+    .header h1 { font-size: 2rem; margin-bottom: 10px; }
+    
+    .test-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .section { background: white; padding: 30px; border-radius: 10px; }
+    .section h2 { margin-bottom: 20px; color: #1f2937; }
+    
+    .conversation-select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px; }
+    .message-form textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; min-height: 100px; resize: vertical; }
+    .btn { padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+    .btn-primary { background: #f59e0b; color: white; }
+    .btn-success { background: #10b981; color: white; }
+    
+    .messages-container { border: 1px solid #e5e7eb; border-radius: 5px; padding: 20px; min-height: 400px; max-height: 500px; overflow-y: auto; background: #f9fafb; }
+    .message { padding: 12px; margin-bottom: 10px; border-radius: 8px; background: white; border-left: 3px solid #06b6d4; }
+    .message.system { border-left-color: #9ca3af; background: #f3f4f6; }
+    .message.new { animation: slideIn 0.3s ease-out; border-left-color: #10b981; }
+    .message-header { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.85rem; color: #6b7280; }
+    .message-content { color: #1f2937; }
+    
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    
+    .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+    .status-connected { background: #10b981; }
+    .status-disconnected { background: #ef4444; }
+    
+    .connection-status { background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #f59e0b; }
+    .connection-status.connected { background: #d1fae5; border-left-color: #10b981; }
+    
+    .log-container { background: #1f2937; color: #e5e7eb; padding: 20px; border-radius: 5px; font-family: 'Courier New', monospace; font-size: 0.85rem; min-height: 200px; max-height: 300px; overflow-y: auto; }
+    .log-entry { margin-bottom: 5px; }
+    .log-entry.info { color: #60a5fa; }
+    .log-entry.success { color: #34d399; }
+    .log-entry.error { color: #f87171; }
+  </style>
+  <script>
+    let cable;
+    let currentConversationId;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+      initializeActionCable();
+    });
+    
+    function initializeActionCable() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/cable`;
+      
+      log('Initializing ActionCable...', 'info');
+      log(`WebSocket URL: ${wsUrl}`, 'info');
+      
+      cable = new WebSocket(wsUrl);
+      
+      cable.onopen = function() {
+        log('✅ WebSocket connected!', 'success');
+        updateConnectionStatus(true);
+      };
+      
+      cable.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        log(`📨 Received: ${JSON.stringify(data)}`, 'info');
+        
+        if (data.type === 'welcome') {
+          log('👋 Welcome message received', 'success');
+        } else if (data.message && data.message.type === 'new_message') {
+          handleNewMessage(data.message);
+        }
+      };
+      
+      cable.onerror = function(error) {
+        log('❌ WebSocket error: ' + error, 'error');
+        updateConnectionStatus(false);
+      };
+      
+      cable.onclose = function() {
+        log('🔌 WebSocket disconnected', 'error');
+        updateConnectionStatus(false);
+      };
+    }
+    
+    function subscribeToConversation(conversationId) {
+      if (!cable || cable.readyState !== WebSocket.OPEN) {
+        log('❌ Cannot subscribe - WebSocket not connected', 'error');
+        return;
+      }
+      
+      currentConversationId = conversationId;
+      
+      const subscribeCommand = {
+        command: 'subscribe',
+        identifier: JSON.stringify({
+          channel: 'ConversationChannel',
+          conversation_id: conversationId
+        })
+      };
+      
+      cable.send(JSON.stringify(subscribeCommand));
+      log(`📡 Subscribed to conversation ${conversationId}`, 'success');
+    }
+    
+    function handleNewMessage(messageData) {
+      log('✨ New message received via ActionCable', 'success');
+      
+      const messagesContainer = document.getElementById('messages-container');
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'message new';
+      messageDiv.innerHTML = `
+        <div class="message-header">
+          <span><strong>${messageData.message.user.name}</strong></span>
+          <span>${new Date(messageData.message.created_at).toLocaleTimeString()}</span>
+        </div>
+        <div class="message-content">${messageData.message.content}</div>
+      `;
+      
+      messagesContainer.appendChild(messageDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+    
+    function log(message, type = 'info') {
+      const logContainer = document.getElementById('log-container');
+      const timestamp = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${timestamp}] ${message}`;
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusEl = document.getElementById('connection-status');
+      const indicatorEl = document.getElementById('connection-indicator');
+      
+      if (connected) {
+        statusEl.className = 'connection-status connected';
+        statusEl.innerHTML = '<span class="status-indicator status-connected"></span>✅ ActionCable Connected';
+        indicatorEl.className = 'status-indicator status-connected';
+      } else {
+        statusEl.className = 'connection-status';
+        statusEl.innerHTML = '<span class="status-indicator status-disconnected"></span>❌ ActionCable Disconnected';
+        indicatorEl.className = 'status-indicator status-disconnected';
+      }
+    }
+    
+    function selectConversation() {
+      const select = document.getElementById('conversation-select');
+      const conversationId = select.value;
+      
+      if (conversationId) {
+        subscribeToConversation(conversationId);
+        document.getElementById('messages-container').innerHTML = '';
+        log(`Switched to conversation ${conversationId}`, 'info');
+      }
+    }
+    
+    function sendTestMessage(event) {
+      event.preventDefault();
+      
+      const conversationId = document.getElementById('conversation-select').value;
+      const content = document.getElementById('message-content').value;
+      
+      if (!conversationId || !content) {
+        log('❌ Please select a conversation and enter a message', 'error');
+        return;
+      }
+      
+      // Submit the form
+      event.target.submit();
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🧪 Test ActionCable Messaging</h1>
+      <p>Send test messages and monitor real-time updates</p>
+      <a href="<%= admin_root_path %>" class="btn btn-primary" style="margin-top: 15px;">← Back to Admin</a>
+    </div>
+
+    <div id="connection-status" class="connection-status">
+      <span id="connection-indicator" class="status-indicator status-disconnected"></span>
+      Connecting to ActionCable...
+    </div>
+
+    <div class="test-layout">
+      <div class="section">
+        <h2>📤 Send Test Message</h2>
+        
+        <%= form_with url: test_message_admin_conversations_path, method: :post, local: true, onsubmit: 'sendTestMessage(event)' do |f| %>
+          <label>Select Conversation:</label>
+          <%= select_tag :conversation_id, 
+              options_for_select(@conversations.map { |c| [c.title || "Conversation ##{c.id}", c.id] }), 
+              { class: 'conversation-select', id: 'conversation-select', onchange: 'selectConversation()' } %>
+          
+          <label>Message:</label>
+          <%= text_area_tag :content, '', 
+              placeholder: 'Type your test message here...', 
+              class: 'message-form', 
+              id: 'message-content' %>
+          
+          <%= submit_tag 'Send Message', class: 'btn btn-success' %>
+        <% end %>
+        
+        <div style="margin-top: 30px;">
+          <h3>📋 Instructions:</h3>
+          <ol style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+            <li>Select a conversation from the dropdown</li>
+            <li>Type a test message</li>
+            <li>Click "Send Message"</li>
+            <li>Watch the message appear in real-time on the right →</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📨 Live Messages</h2>
+        <div id="messages-container" class="messages-container">
+          <div style="text-align: center; color: #9ca3af; padding: 40px;">
+            Select a conversation and send a message to see it appear here in real-time
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top: 20px;">
+      <h2>📝 Connection Logs</h2>
+      <div id="log-container" class="log-container">
+        <div class="log-entry">Starting connection...</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
