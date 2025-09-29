@@ -28,9 +28,6 @@ class Api::V1::ConversationsController < ApplicationController
         end
       end
 
-      # For support tickets, show all (don't filter by status)
-      # Users can see their entire conversation history
-
       page = [params[:page].to_i, 1].max
       @conversations = @conversations.limit(20).offset((page - 1) * 20)
 
@@ -91,18 +88,16 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # POST /api/v1/conversations/support_ticket - FIXED
+  # POST /api/v1/conversations/support_ticket
   def create_support_ticket
     Rails.logger.info "Creating support ticket for user #{current_user.id}"
     
     begin
       package = safely_find_package_for_ticket
       
-      # Check if user already has a support conversation
       existing_conversation = Conversation.support_tickets.find_by(customer_id: current_user.id)
       
       if existing_conversation
-        # Check if there's an active ticket
         if existing_conversation.current_ticket_id.present?
           Rails.logger.info "User has active ticket: #{existing_conversation.current_ticket_id}"
           return render json: {
@@ -114,7 +109,6 @@ class Api::V1::ConversationsController < ApplicationController
           }
         end
         
-        # No active ticket, create new one in existing conversation
         Rails.logger.info "Creating new ticket in existing conversation #{existing_conversation.id}"
         existing_conversation.reopen_or_create_ticket(
           category: params[:category] || 'general',
@@ -132,7 +126,6 @@ class Api::V1::ConversationsController < ApplicationController
         }, status: :created
       end
 
-      # No existing conversation, create new one with first ticket
       @conversation = Conversation.create_support_ticket(
         customer: current_user,
         category: params[:category] || 'general',
@@ -166,7 +159,7 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # POST /api/v1/conversations/:id/send_message
+  # POST /api/v1/conversations/:id/send_message - FIXED: Instant broadcasting
   def send_message
     Rails.logger.info "Sending message to conversation #{params[:id]}"
     
@@ -188,11 +181,12 @@ class Api::V1::ConversationsController < ApplicationController
         @conversation.touch(:last_activity_at)
         update_support_ticket_status_if_needed
         
+        # INSTANT broadcast - no job queue
+        broadcast_message_immediately(@conversation, @message)
+        
         if @conversation.support_ticket? && !@message.is_system?
           send_support_notifications_immediate(@message)
         end
-        
-        broadcast_message_updates_async(@conversation, @message)
         
         render json: {
           success: true,
@@ -218,10 +212,9 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # GET /api/v1/conversations/active_support - FIXED
+  # GET /api/v1/conversations/active_support
   def active_support
     begin
-      # Find user's support conversation (there should only be one)
       @conversation = current_user.conversations
                                  .support_tickets
                                  .find_by(customer_id: current_user.id)
@@ -287,7 +280,7 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # PATCH /api/v1/conversations/:id/close - FIXED: Closes current ticket, not conversation
+  # PATCH /api/v1/conversations/:id/close
   def close
     unless @conversation&.support_ticket?
       return render json: { success: false, message: 'Only support tickets can be closed' }, status: :unprocessable_entity
@@ -296,7 +289,6 @@ class Api::V1::ConversationsController < ApplicationController
     begin
       old_ticket_id = @conversation.current_ticket_id
       
-      # Close current ticket (not entire conversation)
       @conversation.close_current_ticket
       
       system_message = create_system_message(
@@ -321,7 +313,7 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # PATCH /api/v1/conversations/:id/reopen - FIXED: Creates new ticket in same conversation
+  # PATCH /api/v1/conversations/:id/reopen
   def reopen
     unless @conversation&.support_ticket?
       return render json: { success: false, message: 'Only support tickets can be reopened' }, status: :unprocessable_entity
@@ -330,7 +322,6 @@ class Api::V1::ConversationsController < ApplicationController
     begin
       package = safely_find_package_for_ticket
       
-      # Create new ticket in existing conversation
       @conversation.reopen_or_create_ticket(
         category: params[:category] || 'general',
         package: package
@@ -427,6 +418,69 @@ class Api::V1::ConversationsController < ApplicationController
     @conversation.update_support_status('pending')
   end
 
+  # NEW: Instant message broadcasting (no job queue)
+  def broadcast_message_immediately(conversation, message)
+    begin
+      sender = message.user
+      
+      # Prepare message payload
+      message_payload = {
+        id: message.id,
+        content: message.content,
+        message_type: message.message_type || 'text',
+        created_at: message.created_at.iso8601,
+        timestamp: message.created_at.strftime('%H:%M'),
+        from_support: message.from_support?,
+        is_system: message.message_type == 'system',
+        user: {
+          id: sender.id,
+          name: sender.display_name || sender.email || 'Unknown User',
+          role: message.from_support? ? 'support' : 'customer',
+          avatar_url: get_avatar_url_safely(sender)
+        },
+        metadata: message.metadata || {}
+      }
+      
+      # Broadcast to conversation channel
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        {
+          type: 'new_message',
+          conversation_id: conversation.id,
+          message: message_payload,
+          conversation: {
+            id: conversation.id,
+            title: conversation.title,
+            type: conversation.conversation_type,
+            status: conversation.respond_to?(:status) ? conversation.status : 'active',
+            last_activity_at: conversation.last_activity_at&.iso8601
+          },
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      # Broadcast to individual participant channels
+      conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
+        ActionCable.server.broadcast(
+          "user_messages_#{participant.user_id}",
+          {
+            type: 'new_message_notification',
+            conversation_id: conversation.id,
+            message: message_payload,
+            sender_name: sender.display_name || sender.email || 'Unknown User',
+            preview: message.content.to_s.truncate(50),
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+      Rails.logger.info "Message broadcast completed instantly for conversation #{conversation.id}"
+      
+    rescue => e
+      Rails.logger.error "Error broadcasting message immediately: #{e.message}"
+    end
+  end
+
   def send_support_notifications_immediate(message)
     participants_to_notify = @conversation.conversation_participants
                                         .includes(:user)
@@ -484,18 +538,10 @@ class Api::V1::ConversationsController < ApplicationController
     notification
   end
 
-  def broadcast_message_updates_async(conversation, message)
-    ConversationBroadcastJob.perform_later(conversation.id, message.id)
-  rescue => e
-    Rails.logger.error "Error queuing broadcast: #{e.message}"
-  end
-
   def efficiently_format_conversation_summary(conversation)
     return nil unless conversation
     
     last_message = conversation.last_message
-    
-    # Get ticket count and status
     all_tickets = conversation.all_tickets
     has_active_ticket = conversation.current_ticket_id.present?
     
@@ -561,6 +607,8 @@ class Api::V1::ConversationsController < ApplicationController
       timestamp: format_timestamp(message.created_at),
       is_system: message.is_system? || false,
       from_support: message.from_support? || false,
+      delivered_at: message.delivered_at,
+      read_at: message.read_at,
       user: format_message_user(message.user),
       metadata: message.metadata || {}
     }
