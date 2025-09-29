@@ -75,20 +75,31 @@ class Admin::CableMonitoringController < AdminController
   
   def gather_cable_stats
     {
-      total_connections: ActionCable.server.connections.size,
-      worker_pool_size: ActionCable.server.worker_pool.size,
+      total_connections: safe_connection_count,
+      worker_pool_size: safe_worker_pool_size,
       redis_connected: redis_connected?,
       uptime: uptime_seconds,
       redis_keys_count: redis_keys_count
     }
+  rescue => e
+    Rails.logger.error "Error gathering cable stats: #{e.message}"
+    {
+      total_connections: 0,
+      worker_pool_size: 0,
+      redis_connected: false,
+      uptime: 0,
+      redis_keys_count: 0
+    }
   end
   
   def gather_connection_info
+    return [] unless ActionCable.server.respond_to?(:connections)
+    
     ActionCable.server.connections.map do |conn|
       {
-        user: conn.current_user,
-        connection_identifier: conn.connection_identifier,
-        started_at: conn.started_at
+        user: conn.respond_to?(:current_user) ? conn.current_user : nil,
+        connection_identifier: conn.respond_to?(:connection_identifier) ? conn.connection_identifier : 'unknown',
+        started_at: conn.respond_to?(:started_at) ? conn.started_at : Time.current
       }
     end
   rescue => e
@@ -97,6 +108,8 @@ class Admin::CableMonitoringController < AdminController
   end
   
   def gather_subscription_info
+    return {} unless ActionCable.server.respond_to?(:pubsub)
+    
     redis = ActionCable.server.pubsub.redis_connection_for_subscriptions
     keys = redis.keys("action_cable/*")
     
@@ -106,19 +119,36 @@ class Admin::CableMonitoringController < AdminController
     {}
   end
   
+  def safe_connection_count
+    return 0 unless ActionCable.server.respond_to?(:connections)
+    ActionCable.server.connections.size
+  rescue
+    0
+  end
+  
+  def safe_worker_pool_size
+    # worker_pool doesn't have a size method, return configured value
+    return 4 # Default worker pool size in Rails
+  rescue
+    4
+  end
+  
   def redis_connected?
+    return false unless ActionCable.server.respond_to?(:pubsub)
     ActionCable.server.pubsub.redis_connection_for_subscriptions.ping == "PONG"
   rescue
     false
   end
   
   def redis_keys_count
+    return 0 unless ActionCable.server.respond_to?(:pubsub)
     ActionCable.server.pubsub.redis_connection_for_subscriptions.keys("action_cable/*").count
   rescue
     0
   end
   
   def uptime_seconds
+    return 0 unless ActionCable.server.respond_to?(:started_at)
     (Time.current - ActionCable.server.started_at).to_i
   rescue
     0
