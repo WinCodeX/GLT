@@ -19,6 +19,7 @@ bundle exec rails db:migrate
 bundle exec rails active_storage:install
 
 rake conversations:merge_duplicates
+rake messages:backfill_acknowledgments
 
 echo "=== Seeding Test Data ==="
 bundle exec rails db:seed
