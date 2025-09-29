@@ -1,46 +1,30 @@
-# app/channels/user_notifications_channel.rb - Enhanced with Telegram-like presence tracking
-
+# app/channels/user_notifications_channel.rb
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
-    # Core user-specific channels
     stream_from "user_notifications_#{current_user.id}"
     stream_from "user_cart_#{current_user.id}"
     stream_from "user_messages_#{current_user.id}"
     stream_from "user_packages_#{current_user.id}"
-    
-    # ENHANCED: Profile and avatar update channels
     stream_from "user_profile_updates"
     stream_from "user_avatar_updates"
     
-    # ENHANCED: Business-related channels
     subscribe_to_business_channels
-    
-    # ENHANCED: Support and conversation channels
     subscribe_to_support_channels
     
     Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates"
     
-    # ENHANCED: Update user's online presence immediately
     update_user_presence_status('online')
-    
-    # Send initial state immediately upon connection
     send_initial_state
-    
-    # ENHANCED: Broadcast user came online to relevant channels
     broadcast_presence_to_relevant_channels('online')
   end
 
   def unsubscribed
     Rails.logger.info "User #{current_user.id} unsubscribed from real-time updates"
     
-    # ENHANCED: Update user's offline presence
     update_user_presence_status('offline')
-    
-    # ENHANCED: Broadcast user went offline to relevant channels
     broadcast_presence_to_relevant_channels('offline')
   end
 
-  # ENHANCED: Handle presence updates from client
   def update_presence(data)
     begin
       status = data['status'] || 'online'
@@ -49,7 +33,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       Rails.logger.info "User #{current_user.id} presence update: #{status} (app_state: #{app_state})"
       
-      # Determine effective status based on app state
       effective_status = case app_state
       when 'background', 'inactive'
         'away'
@@ -59,13 +42,9 @@ class UserNotificationsChannel < ApplicationCable::Channel
         status
       end
       
-      # Update user's presence in database
       update_user_presence_status(effective_status, device_info)
-      
-      # Broadcast presence change to relevant channels
       broadcast_presence_to_relevant_channels(effective_status)
       
-      # Send confirmation back to client
       transmit({
         type: 'presence_updated',
         status: effective_status,
@@ -85,17 +64,22 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # Client can request fresh counts manually
+  def ping(data)
+    transmit({
+      type: 'pong',
+      server_time: Time.current.iso8601,
+      user_id: current_user.id
+    })
+  end
+
   def request_counts
     send_initial_counts
   end
 
-  # ENHANCED: Request full initial state
   def request_initial_state
     send_initial_state
   end
 
-  # ENHANCED: Get presence information for specific users
   def get_user_presence(data)
     begin
       user_ids = data['user_ids'] || []
@@ -109,7 +93,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         return
       end
       
-      # Get presence for requested users (limit to prevent abuse)
       user_ids = user_ids.first(50)
       presence_data = get_users_presence_data(user_ids)
       
@@ -129,19 +112,80 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced message read status updates with proper broadcasting
+  # NEW: Message acknowledgment handling
+  def acknowledge_message(data)
+    begin
+      message_id = data['message_id']
+      status = data['status']
+      
+      unless ['delivered', 'read'].include?(status)
+        transmit({
+          type: 'error',
+          message: 'Invalid status. Must be delivered or read',
+          error_code: 'INVALID_STATUS'
+        })
+        return
+      end
+      
+      message = Message.find_by(id: message_id)
+      unless message
+        transmit({
+          type: 'error',
+          message: 'Message not found',
+          error_code: 'MESSAGE_NOT_FOUND'
+        })
+        return
+      end
+      
+      # Update message acknowledgment
+      if status == 'delivered' && message.delivered_at.nil?
+        message.update_column(:delivered_at, Time.current)
+      elsif status == 'read' && message.read_at.nil?
+        message.update_columns(
+          delivered_at: message.delivered_at || Time.current,
+          read_at: Time.current
+        )
+      end
+      
+      # Broadcast acknowledgment to sender
+      ActionCable.server.broadcast(
+        "user_messages_#{message.user_id}",
+        {
+          type: 'message_acknowledged',
+          message_id: message_id,
+          status: status,
+          acknowledged_by: current_user.id,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      transmit({
+        type: 'acknowledge_success',
+        message_id: message_id,
+        status: status,
+        timestamp: Time.current.iso8601
+      })
+      
+      Rails.logger.info "Message #{message_id} marked as #{status} by user #{current_user.id}"
+      
+    rescue => e
+      Rails.logger.error "Failed to acknowledge message: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to acknowledge message',
+        error_code: 'ACKNOWLEDGE_FAILED'
+      })
+    end
+  end
+
   def mark_message_read(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # Mark conversation as read
       conversation.mark_read_by(current_user)
-      
-      # Broadcast updated unread message count to user
       broadcast_message_counts
       
-      # FIXED: Broadcast read status to all conversation participants
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -154,7 +198,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # Send success response back to client
       transmit({
         type: 'message_read_success',
         conversation_id: conversation_id,
@@ -180,19 +223,14 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced notification read status updates
   def mark_notification_read(data)
     begin
       notification_id = data['notification_id']
       notification = current_user.notifications.find(notification_id)
       
-      # Mark notification as read
       notification.mark_as_read!
-      
-      # Broadcast updated notification count
       broadcast_notification_counts
       
-      # Send success response
       transmit({
         type: 'notification_read_success',
         notification_id: notification_id,
@@ -218,16 +256,13 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced typing indicators with proper error handling
   def typing_indicator(data)
     begin
       conversation_id = data['conversation_id']
       typing = data['typing'] == true
       
-      # Verify user has access to this conversation
       conversation = current_user.conversations.find(conversation_id)
       
-      # FIXED: Broadcast typing status to other conversation participants with proper format
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -240,7 +275,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # Send confirmation back to client
       transmit({
         type: 'typing_indicator_sent',
         conversation_id: conversation_id,
@@ -266,19 +300,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced conversation joining with proper channel management and presence
   def join_conversation(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # Subscribe to conversation-specific channel
       stream_from "conversation_#{conversation_id}"
       
-      # ENHANCED: Get current user's presence for the broadcast
       user_presence = get_user_presence_data(current_user.id)
       
-      # FIXED: Broadcast user joined to other participants with enhanced data including presence
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -291,7 +321,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # Send success confirmation with conversation participants' presence
       participants_presence = get_conversation_participants_presence(conversation)
       
       transmit({
@@ -321,12 +350,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced conversation leaving with proper cleanup
   def leave_conversation(data)
     begin
       conversation_id = data['conversation_id']
       
-      # FIXED: Broadcast user left to other participants before unsubscribing
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -338,10 +365,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # Stop streaming from conversation channel
       stop_stream_from "conversation_#{conversation_id}"
       
-      # Send success confirmation
       transmit({
         type: 'conversation_left',
         conversation_id: conversation_id,
@@ -361,12 +386,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # ENHANCED: Handle business channel subscriptions
   def subscribe_to_business(data)
     begin
       business_id = data['business_id']
       
-      # Verify user has access to this business
       business = get_user_business(business_id)
       if business
         stream_from "business_#{business_id}_updates"
@@ -405,10 +428,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   private
 
-  # ENHANCED: Presence management methods
   def update_user_presence_status(status, device_info = {})
     begin
-      # Update user's presence in Redis for real-time access
       presence_key = "user_presence:#{current_user.id}"
       presence_data = {
         status: status,
@@ -417,17 +438,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
         updated_at: Time.current.to_i
       }
       
-      # Store in Redis with 5 minute expiry (will be refreshed by heartbeat)
       if defined?(Redis) && Rails.application.config.respond_to?(:redis)
         begin
           redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
-          redis.setex(presence_key, 300, presence_data.to_json) # 5 minutes
+          redis.setex(presence_key, 300, presence_data.to_json)
         rescue => redis_error
           Rails.logger.error "Redis presence update failed: #{redis_error.message}"
         end
       end
       
-      # Also update user's last_seen_at in database if user model supports it
       if current_user.respond_to?(:update_presence_status)
         current_user.update_presence_status(status)
       elsif current_user.respond_to?(:last_seen_at=)
@@ -445,7 +464,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     begin
       presence_key = "user_presence:#{user_id}"
       
-      # Try to get from Redis first
       if defined?(Redis)
         begin
           redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
@@ -466,7 +484,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      # Fallback to database
       user = User.find_by(id: user_id)
       if user
         last_seen = user.respond_to?(:last_seen_at) ? user.last_seen_at : user.updated_at
@@ -489,7 +506,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       end
       
-      # Default fallback
       {
         user_id: user_id,
         status: 'offline',
@@ -516,7 +532,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   def get_conversation_participants_presence(conversation)
     begin
-      # Get all participants except current user
       participant_ids = conversation.conversation_participants
                                   .where.not(user_id: current_user.id)
                                   .pluck(:user_id)
@@ -539,7 +554,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       }
       
-      # Broadcast to businesses where user is involved
       business_ids = get_user_business_ids
       business_ids.each do |business_id|
         ActionCable.server.broadcast(
@@ -551,7 +565,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         )
       end
       
-      # Broadcast to active conversations
       if current_user.respond_to?(:conversations)
         active_conversation_ids = current_user.conversations
                                              .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
@@ -575,24 +588,16 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Enhanced initial state with better error handling and formatting
   def send_initial_state
     begin
-      # Calculate all counts efficiently with error handling
       notification_count = safe_count { current_user.notifications.unread.count }
       cart_count = calculate_cart_count
       unread_messages_count = calculate_unread_messages_count
       
-      # Get recent conversations for quick access
       recent_conversations = get_recent_conversations
-      
-      # Get business information
       business_info = get_user_businesses_info
-      
-      # ENHANCED: Get user's current presence
       user_presence = get_user_presence_data(current_user.id)
       
-      # FIXED: Send comprehensive initial state with proper formatting
       transmit({
         type: 'initial_state',
         counts: {
@@ -625,7 +630,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # Existing methods remain the same...
   def send_initial_counts
     begin
       notification_count = safe_count { current_user.notifications.unread.count }
@@ -796,11 +800,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
                     }
                   rescue => e
                     Rails.logger.error "Error formatting conversation #{conversation.id}: #{e.message}"
-                    {
-                      id: conversation.id,
-                      title: 'Error loading conversation',
-                      error: true
-                    }
+                    nil
                   end
                 end.compact
   rescue => e
