@@ -18,9 +18,6 @@ bundle exec rails generate rolify Role User
 bundle exec rails db:migrate
 bundle exec rails active_storage:install
 
-rake assets:precompile 
-rake assets:clean
-
 rake conversations:merge_duplicates
 rake messages:backfill_acknowledgments
 
