@@ -1,0 +1,128 @@
+<!-- app/views/admin/notifications/index.html.erb -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Notifications - Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+    
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+    .header h1 { font-size: 2rem; margin-bottom: 10px; }
+    .header .actions { display: flex; gap: 10px; margin-top: 20px; }
+    .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-primary { background: white; color: #667eea; font-weight: bold; }
+    .btn-success { background: #10b981; color: white; }
+    
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+    .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .stat-card h3 { font-size: 0.9rem; color: #6b7280; margin-bottom: 10px; }
+    .stat-card .number { font-size: 2rem; font-weight: bold; color: #667eea; }
+    
+    .filters { background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+    .filters form { display: flex; gap: 10px; align-items: center; }
+    .filters select { padding: 8px; border: 1px solid #ddd; border-radius: 5px; }
+    
+    .notifications-list { background: white; border-radius: 10px; overflow: hidden; }
+    .notification-item { padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: start; }
+    .notification-item:hover { background: #f9fafb; }
+    .notification-item:last-child { border-bottom: none; }
+    .notification-content { flex: 1; }
+    .notification-title { font-weight: bold; margin-bottom: 5px; }
+    .notification-message { color: #6b7280; margin-bottom: 10px; }
+    .notification-meta { font-size: 0.85rem; color: #9ca3af; }
+    .notification-actions { display: flex; gap: 10px; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; }
+    .badge-unread { background: #ef4444; color: white; }
+    .badge-read { background: #e5e7eb; color: #6b7280; }
+    .badge-delivered { background: #10b981; color: white; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📬 Notifications Management</h1>
+      <p>Manage and send notifications to users</p>
+      <div class="actions">
+        <a href="<%= new_admin_notification_path %>" class="btn btn-primary">+ Create Notification</a>
+        <a href="<%= broadcast_form_admin_notifications_path %>" class="btn btn-success">📢 Broadcast</a>
+        <a href="<%= admin_root_path %>" class="btn btn-primary">← Back to Admin</a>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <h3>Total Notifications</h3>
+        <div class="number"><%= @stats[:total] %></div>
+      </div>
+      <div class="stat-card">
+        <h3>Unread</h3>
+        <div class="number"><%= @stats[:unread] %></div>
+      </div>
+      <div class="stat-card">
+        <h3>Delivered</h3>
+        <div class="number"><%= @stats[:delivered] %></div>
+      </div>
+    </div>
+
+    <div class="filters">
+      <%= form_with url: admin_notifications_path, method: :get, local: true do |f| %>
+        <%= f.select :type, [
+          ['All Types', ''],
+          ['General', 'general'],
+          ['Package Update', 'package_update'],
+          ['Support', 'support']
+        ], {}, { onchange: 'this.form.submit()' } %>
+        
+        <%= f.select :read, [
+          ['All Status', ''],
+          ['Unread', 'false'],
+          ['Read', 'true']
+        ], {}, { onchange: 'this.form.submit()' } %>
+      <% end %>
+    </div>
+
+    <div class="notifications-list">
+      <% if @notifications.any? %>
+        <% @notifications.each do |notification| %>
+          <div class="notification-item">
+            <div class="notification-content">
+              <div class="notification-title">
+                <%= notification.title %>
+                <% if !notification.read? %>
+                  <span class="badge badge-unread">Unread</span>
+                <% else %>
+                  <span class="badge badge-read">Read</span>
+                <% end %>
+                <% if notification.delivered? %>
+                  <span class="badge badge-delivered">Delivered</span>
+                <% end %>
+              </div>
+              <div class="notification-message"><%= notification.message %></div>
+              <div class="notification-meta">
+                To: <%= notification.user&.email || 'System' %> | 
+                Type: <%= notification.notification_type %> | 
+                <%= time_ago_in_words(notification.created_at) %> ago
+              </div>
+            </div>
+            <div class="notification-actions">
+              <% if !notification.read? %>
+                <%= button_to 'Mark Read', mark_as_read_admin_notification_path(notification), method: :patch, class: 'btn btn-primary' %>
+              <% end %>
+              <%= button_to 'Delete', admin_notification_path(notification), method: :delete, data: { confirm: 'Are you sure?' }, class: 'btn' %>
+            </div>
+          </div>
+        <% end %>
+      <% else %>
+        <div style="padding: 40px; text-align: center; color: #9ca3af;">
+          No notifications found
+        </div>
+      <% end %>
+    </div>
+
+    <%= paginate @notifications %>
+  </div>
+</body>
+</html>
