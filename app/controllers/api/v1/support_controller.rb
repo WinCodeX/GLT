@@ -1,4 +1,4 @@
-# app/controllers/api/v1/support_controller.rb
+# app/controllers/api/v1/support_controller.rb - FIXED: Dashboard broadcasting
 class Api::V1::SupportController < ApplicationController
   include AvatarHelper
   
@@ -134,9 +134,6 @@ class Api::V1::SupportController < ApplicationController
 
       # BROADCAST: Agent assignment update
       broadcast_agent_assignment(agent)
-      
-      # BROADCAST: Ticket status update
-      broadcast_ticket_status_update('assigned')
       
       # BROADCAST: System message to conversation
       broadcast_system_message(system_message)
@@ -504,10 +501,11 @@ class Api::V1::SupportController < ApplicationController
   end
 
   # ============================================
-  # BROADCASTING METHODS
+  # FIXED: BROADCASTING METHODS
   # ============================================
 
   def broadcast_agent_assignment(agent)
+    # Broadcast to support dashboard
     ActionCable.server.broadcast(
       "support_dashboard",
       {
@@ -522,7 +520,7 @@ class Api::V1::SupportController < ApplicationController
       }
     )
 
-    # Also broadcast to the conversation channel
+    # Broadcast to conversation channel
     ActionCable.server.broadcast(
       "conversation_#{@conversation.id}",
       {
@@ -537,9 +535,12 @@ class Api::V1::SupportController < ApplicationController
         timestamp: Time.current.iso8601
       }
     )
+    
+    Rails.logger.info "✅ Agent assignment broadcast to dashboard and conversation #{@conversation.id}"
   end
 
   def broadcast_ticket_status_update(new_status)
+    # Broadcast to support dashboard
     ActionCable.server.broadcast(
       "support_dashboard",
       {
@@ -550,7 +551,7 @@ class Api::V1::SupportController < ApplicationController
       }
     )
 
-    # Also broadcast to the conversation channel
+    # Broadcast to conversation channel
     ActionCable.server.broadcast(
       "conversation_#{@conversation.id}",
       {
@@ -560,9 +561,12 @@ class Api::V1::SupportController < ApplicationController
         timestamp: Time.current.iso8601
       }
     )
+    
+    Rails.logger.info "✅ Status update broadcast to dashboard: #{new_status}"
   end
 
   def broadcast_ticket_escalated(escalate_to, reason)
+    # Broadcast to support dashboard
     ActionCable.server.broadcast(
       "support_dashboard",
       {
@@ -574,7 +578,7 @@ class Api::V1::SupportController < ApplicationController
       }
     )
 
-    # Also broadcast to the conversation channel
+    # Broadcast to conversation channel
     ActionCable.server.broadcast(
       "conversation_#{@conversation.id}",
       {
@@ -584,45 +588,49 @@ class Api::V1::SupportController < ApplicationController
         timestamp: Time.current.iso8601
       }
     )
+    
+    Rails.logger.info "✅ Escalation broadcast to dashboard"
   end
 
   def broadcast_system_message(message)
-  # FIXED: Include delivered_at and read_at in formatted message
-  formatted_message = {
-    id: message.id,
-    content: message.content,
-    created_at: message.created_at.iso8601,
-    timestamp: message.created_at.strftime('%H:%M'),
-    is_system: true,
-    from_support: true,
-    message_type: 'system',
-    delivered_at: message.delivered_at&.iso8601,  # ✅ ADDED
-    read_at: message.read_at&.iso8601,            # ✅ ADDED
-    user: {
-      id: message.user.id,
-      name: message.user.display_name,
-      role: message.user.primary_role
-    },
-    metadata: message.metadata || {}
-  }
-
-  # Broadcast to conversation channel
-  ActionCable.server.broadcast(
-    "conversation_#{@conversation.id}",
-    {
-      type: 'new_message',
-      conversation_id: @conversation.id,
-      message: formatted_message,
-      timestamp: Time.current.iso8601
+    formatted_message = {
+      id: message.id,
+      content: message.content,
+      created_at: message.created_at.iso8601,
+      timestamp: message.created_at.strftime('%H:%M'),
+      is_system: true,
+      from_support: true,
+      message_type: 'system',
+      delivered_at: message.delivered_at&.iso8601,
+      read_at: message.read_at&.iso8601,
+      user: {
+        id: message.user.id,
+        name: message.user.display_name,
+        role: message.user.primary_role
+      },
+      metadata: message.metadata || {}
     }
-  )
-end
 
+    # Broadcast to conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{@conversation.id}",
+      {
+        type: 'new_message',
+        conversation_id: @conversation.id,
+        message: formatted_message,
+        timestamp: Time.current.iso8601
+      }
+    )
+    
+    Rails.logger.info "✅ System message broadcast to conversation #{@conversation.id}"
+  end
+
+  # FIXED: Broadcast real dashboard stats updates
   def broadcast_dashboard_stats_update
     # Calculate fresh stats
     stats = calculate_dashboard_stats
 
-    # Broadcast to all support staff
+    # Broadcast to all support staff on the support_dashboard channel
     ActionCable.server.broadcast(
       "support_dashboard",
       {
@@ -631,6 +639,8 @@ end
         timestamp: Time.current.iso8601
       }
     )
+    
+    Rails.logger.info "✅ Dashboard stats broadcast: #{stats.inspect}"
   end
 
   # ============================================
@@ -829,6 +839,7 @@ end
       }
     )
     
+    @conversation = conversation
     broadcast_system_message(message)
   end
 
