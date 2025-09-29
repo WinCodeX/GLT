@@ -61,6 +61,7 @@
       
       log('Initializing ActionCable...', 'info');
       log(`WebSocket URL: ${wsUrl}`, 'info');
+      log('🌐 Connecting via web session (no token required)', 'info');
       
       cable = new WebSocket(wsUrl);
       
@@ -75,6 +76,8 @@
         
         if (data.type === 'welcome') {
           log('👋 Welcome message received', 'success');
+        } else if (data.type === 'disconnect') {
+          log(`⚠️ Disconnected: ${data.reason}`, 'error');
         } else if (data.message && data.message.type === 'new_message') {
           handleNewMessage(data.message);
         }
