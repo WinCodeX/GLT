@@ -420,66 +420,68 @@ class Api::V1::ConversationsController < ApplicationController
 
   # NEW: Instant message broadcasting (no job queue)
   def broadcast_message_immediately(conversation, message)
-    begin
-      sender = message.user
-      
-      # Prepare message payload
-      message_payload = {
-        id: message.id,
-        content: message.content,
-        message_type: message.message_type || 'text',
-        created_at: message.created_at.iso8601,
-        timestamp: message.created_at.strftime('%H:%M'),
-        from_support: message.from_support?,
-        is_system: message.message_type == 'system',
-        user: {
-          id: sender.id,
-          name: sender.display_name || sender.email || 'Unknown User',
-          role: message.from_support? ? 'support' : 'customer',
-          avatar_url: get_avatar_url_safely(sender)
+  begin
+    sender = message.user
+    
+    # FIXED: Include delivered_at and read_at in payload
+    message_payload = {
+      id: message.id,
+      content: message.content,
+      message_type: message.message_type || 'text',
+      created_at: message.created_at.iso8601,
+      timestamp: message.created_at.strftime('%H:%M'),
+      from_support: message.from_support?,
+      is_system: message.message_type == 'system',
+      delivered_at: message.delivered_at&.iso8601,  # ✅ ADDED
+      read_at: message.read_at&.iso8601,            # ✅ ADDED
+      user: {
+        id: sender.id,
+        name: sender.display_name || sender.email || 'Unknown User',
+        role: message.from_support? ? 'support' : 'customer',
+        avatar_url: get_avatar_url_safely(sender)
+      },
+      metadata: message.metadata || {}
+    }
+    
+    # Broadcast to conversation channel
+    ActionCable.server.broadcast(
+      "conversation_#{conversation.id}",
+      {
+        type: 'new_message',
+        conversation_id: conversation.id,
+        message: message_payload,
+        conversation: {
+          id: conversation.id,
+          title: conversation.title,
+          type: conversation.conversation_type,
+          status: conversation.respond_to?(:status) ? conversation.status : 'active',
+          last_activity_at: conversation.last_activity_at&.iso8601
         },
-        metadata: message.metadata || {}
+        timestamp: Time.current.iso8601
       }
-      
-      # Broadcast to conversation channel
+    )
+    
+    # Broadcast to individual participant channels
+    conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
       ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
+        "user_messages_#{participant.user_id}",
         {
-          type: 'new_message',
+          type: 'new_message_notification',
           conversation_id: conversation.id,
           message: message_payload,
-          conversation: {
-            id: conversation.id,
-            title: conversation.title,
-            type: conversation.conversation_type,
-            status: conversation.respond_to?(:status) ? conversation.status : 'active',
-            last_activity_at: conversation.last_activity_at&.iso8601
-          },
+          sender_name: sender.display_name || sender.email || 'Unknown User',
+          preview: message.content.to_s.truncate(50),
           timestamp: Time.current.iso8601
         }
       )
-      
-      # Broadcast to individual participant channels
-      conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.user_id}",
-          {
-            type: 'new_message_notification',
-            conversation_id: conversation.id,
-            message: message_payload,
-            sender_name: sender.display_name || sender.email || 'Unknown User',
-            preview: message.content.to_s.truncate(50),
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      Rails.logger.info "Message broadcast completed instantly for conversation #{conversation.id}"
-      
-    rescue => e
-      Rails.logger.error "Error broadcasting message immediately: #{e.message}"
     end
+    
+    Rails.logger.info "✅ Message broadcast completed instantly for conversation #{conversation.id}"
+    
+  rescue => e
+    Rails.logger.error "❌ Error broadcasting message immediately: #{e.message}"
   end
+end
 
   def send_support_notifications_immediate(message)
     participants_to_notify = @conversation.conversation_participants
