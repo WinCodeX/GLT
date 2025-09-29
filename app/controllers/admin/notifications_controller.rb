@@ -1,13 +1,13 @@
 # app/controllers/admin/notifications_controller.rb
 class Admin::NotificationsController < AdminController
-  before_action :set_notification, only: [:show, :destroy, :mark_as_read, :mark_as_unread]
+  before_action :set_notification, only: [:destroy, :mark_as_read, :mark_as_unread]  # FIXED: Removed :show since we don't have a show action
   
   # GET /admin/notifications
   def index
     @notifications = Notification.includes(:user, :package)
                                  .order(created_at: :desc)
-                                 .page(params[:page])
-                                 .per(20)
+                                 .limit(20)  # FIXED: Removed .page(), use limit instead
+                                 .offset((params[:page].to_i.clamp(1, 999) - 1) * 20)
     
     # Apply filters if present
     @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
