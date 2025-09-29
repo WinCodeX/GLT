@@ -1,4 +1,4 @@
-# app/controllers/admin/conversations_controller.rb
+# app/controllers/admin/conversations_controller.rb - FIXED pagination
 class Admin::ConversationsController < AdminController
   before_action :set_conversation, only: [:show, :assign_to_me, :update_status]
   
@@ -7,8 +7,8 @@ class Admin::ConversationsController < AdminController
     @conversations = Conversation.support_tickets
                                 .includes(:conversation_participants, :users, :messages)
                                 .recent
-                                .page(params[:page])
-                                .per(20)
+                                .limit(20)  # FIXED: Removed .page() - use limit instead
+                                .offset((params[:page].to_i - 1) * 20)
     
     # Apply filters
     @conversations = @conversations.where("metadata->>'status' = ?", params[:status]) if params[:status].present?
@@ -31,7 +31,6 @@ class Admin::ConversationsController < AdminController
   
   # GET /admin/conversations/test
   def test
-    # Test page for sending messages and monitoring cable
     @conversations = Conversation.support_tickets.recent.limit(10)
   end
   
@@ -56,7 +55,7 @@ class Admin::ConversationsController < AdminController
           content: message.content,
           user: {
             id: current_user.id,
-            name: current_user.display_name
+            name: current_user.display_name || current_user.email
           },
           created_at: message.created_at.iso8601
         }
@@ -72,11 +71,9 @@ class Admin::ConversationsController < AdminController
   
   # PATCH /admin/conversations/:id/assign_to_me
   def assign_to_me
-    # Remove existing agent
     existing_agent = @conversation.conversation_participants.find_by(role: 'agent')
     existing_agent&.destroy
     
-    # Add current user as agent
     @conversation.conversation_participants.create!(
       user: current_user,
       role: 'agent',
@@ -89,7 +86,7 @@ class Admin::ConversationsController < AdminController
     redirect_to admin_conversation_path(@conversation)
   end
   
-  # PATCH /admin/conversations/:id/status
+  # PATCH /admin/conversations/:id/update_status
   def update_status
     valid_statuses = %w[pending assigned in_progress waiting_customer resolved closed]
     
@@ -100,7 +97,6 @@ class Admin::ConversationsController < AdminController
     
     @conversation.update_support_status(params[:status])
     
-    # Broadcast status change
     ActionCable.server.broadcast(
       "conversation_#{@conversation.id}",
       {
