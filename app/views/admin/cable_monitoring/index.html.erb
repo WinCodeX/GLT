@@ -1,0 +1,222 @@
+<!-- app/views/admin/cable_monitoring/index.html.erb -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cable Monitoring - Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+    
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+    .header h1 { font-size: 2rem; margin-bottom: 10px; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+    .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .stat-card h3 { font-size: 0.9rem; color: #6b7280; margin-bottom: 10px; }
+    .stat-card .number { font-size: 2rem; font-weight: bold; color: #06b6d4; }
+    .stat-card.online .number { color: #10b981; }
+    .stat-card.offline .number { color: #ef4444; }
+    
+    .section { background: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; }
+    .section h2 { margin-bottom: 20px; color: #1f2937; }
+    
+    .connections-table { width: 100%; border-collapse: collapse; }
+    .connections-table th { background: #f9fafb; padding: 12px; text-align: left; font-weight: 600; }
+    .connections-table td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
+    .connections-table tr:hover { background: #f9fafb; }
+    
+    .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+    .status-online { background: #10b981; }
+    .status-offline { background: #ef4444; }
+    
+    .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-primary { background: #06b6d4; color: white; }
+    .btn-success { background: #10b981; color: white; }
+    
+    .test-broadcast { background: #fef3c7; padding: 20px; border-radius: 10px; border-left: 4px solid #f59e0b; }
+    .test-form { display: flex; gap: 10px; margin-top: 15px; }
+    .test-form input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+    
+    .refresh-btn { margin: 10px 0; }
+  </style>
+  <script>
+    // Auto-refresh every 5 seconds
+    let refreshInterval;
+    
+    function toggleAutoRefresh(checkbox) {
+      if (checkbox.checked) {
+        refreshInterval = setInterval(() => {
+          location.reload();
+        }, 5000);
+      } else {
+        clearInterval(refreshInterval);
+      }
+    }
+    
+    function fetchConnections() {
+      fetch('/admin/cable/connections')
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('connections-count').textContent = data.total_connections;
+          updateConnectionsTable(data.connections);
+        });
+    }
+    
+    function fetchSubscriptions() {
+      fetch('/admin/cable/subscriptions')
+        .then(res => res.json())
+        .then(data => {
+          updateSubscriptionsTable(data.by_channel);
+        });
+    }
+    
+    function updateConnectionsTable(connections) {
+      const tbody = document.getElementById('connections-tbody');
+      tbody.innerHTML = connections.map(conn => `
+        <tr>
+          <td><span class="status-indicator status-online"></span>${conn.user_email || 'Anonymous'}</td>
+          <td>${conn.user_id || 'N/A'}</td>
+          <td>${new Date(conn.connected_at).toLocaleString()}</td>
+        </tr>
+      `).join('');
+    }
+    
+    function updateSubscriptionsTable(channels) {
+      const tbody = document.getElementById('subscriptions-tbody');
+      tbody.innerHTML = Object.entries(channels).map(([channel, count]) => `
+        <tr>
+          <td>${channel}</td>
+          <td>${count}</td>
+        </tr>
+      `).join('');
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔌 ActionCable Monitoring</h1>
+      <p>Real-time WebSocket connection monitoring</p>
+      <div style="margin-top: 20px;">
+        <a href="<%= admin_root_path %>" class="btn btn-primary">← Back to Admin</a>
+        <button onclick="location.reload()" class="btn btn-success">🔄 Refresh</button>
+      </div>
+      <div style="margin-top: 15px;">
+        <label style="color: white;">
+          <input type="checkbox" onchange="toggleAutoRefresh(this)"> Auto-refresh every 5 seconds
+        </label>
+      </div>
+    </div>
+    
+    <script>
+    // Update fetch URLs to use correct paths
+    function fetchConnections() {
+      fetch('/admin/cable/connections')
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('connections-count').textContent = data.total_connections;
+          updateConnectionsTable(data.connections);
+        });
+    }
+    
+    function fetchSubscriptions() {
+      fetch('/admin/cable/subscriptions')
+        .then(res => res.json())
+        .then(data => {
+          updateSubscriptionsTable(data.by_channel);
+        });
+    }
+    </script>
+
+    <div class="stats-grid">
+      <div class="stat-card online">
+        <h3>Active Connections</h3>
+        <div class="number" id="connections-count"><%= @stats[:total_connections] %></div>
+      </div>
+      <div class="stat-card">
+        <h3>Worker Pool Size</h3>
+        <div class="number"><%= @stats[:worker_pool_size] %></div>
+      </div>
+      <div class="stat-card <%= @stats[:redis_connected] ? 'online' : 'offline' %>">
+        <h3>Redis Status</h3>
+        <div class="number"><%= @stats[:redis_connected] ? 'Connected' : 'Disconnected' %></div>
+      </div>
+      <div class="stat-card">
+        <h3>Uptime</h3>
+        <div class="number" style="font-size: 1.2rem;"><%= Time.at(@stats[:uptime]).utc.strftime("%H:%M:%S") %></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📡 Active Connections</h2>
+      <button onclick="fetchConnections()" class="btn btn-primary refresh-btn">Refresh Connections</button>
+      
+      <% if @connections.any? %>
+        <table class="connections-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>User ID</th>
+              <th>Connected At</th>
+            </tr>
+          </thead>
+          <tbody id="connections-tbody">
+            <% @connections.each do |conn| %>
+              <tr>
+                <td>
+                  <span class="status-indicator status-online"></span>
+                  <%= conn[:user]&.email || 'Anonymous' %>
+                </td>
+                <td><%= conn[:user]&.id || 'N/A' %></td>
+                <td><%= conn[:started_at]&.strftime('%Y-%m-%d %H:%M:%S') || 'Unknown' %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% else %>
+        <p style="color: #9ca3af; text-align: center; padding: 40px;">No active connections</p>
+      <% end %>
+    </div>
+
+    <div class="section">
+      <h2>📺 Active Subscriptions by Channel</h2>
+      <button onclick="fetchSubscriptions()" class="btn btn-primary refresh-btn">Refresh Subscriptions</button>
+      
+      <% if @subscriptions.any? %>
+        <table class="connections-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>Subscription Count</th>
+            </tr>
+          </thead>
+          <tbody id="subscriptions-tbody">
+            <% @subscriptions.each do |channel, count| %>
+              <tr>
+                <td><%= channel %></td>
+                <td><%= count %></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% else %>
+        <p style="color: #9ca3af; text-align: center; padding: 40px;">No active subscriptions</p>
+      <% end %>
+    </div>
+
+    <div class="section test-broadcast">
+      <h2>🧪 Test Broadcast</h2>
+      <p>Send a test message to a specific channel to verify ActionCable is working.</p>
+      
+      <form action="/admin/cable/test_broadcast" method="post" class="test-form">
+        <input type="hidden" name="authenticity_token" value="<%= form_authenticity_token %>">
+        <input type="text" name="channel" placeholder="Channel name (e.g., test_channel)" required>
+        <input type="text" name="message" placeholder="Test message" required>
+        <button type="submit" class="btn btn-success">Send Test Broadcast</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
