@@ -668,10 +668,12 @@ Rails.application.routes.draw do
       # ==========================================
       
       namespace :admin do
+        # Notifications API
         resources :notifications, only: [:index, :show, :create, :destroy] do
           member do
             patch :mark_as_read
             patch :mark_as_unread
+            post :resend_push
           end
           
           collection do
@@ -679,16 +681,23 @@ Rails.application.routes.draw do
             post :broadcast
           end
         end
-
+        
+        # Conversations API (Fixed)
         resources :conversations, only: [:index, :show] do
           member do
             patch :assign_to_me
             patch :transfer
-            patch 'status', to: 'conversations#update_status'
+            patch :update_status, path: 'status'
+            post :send_message
           end
         end
-
-        get 'users/search', to: 'users#search'
+        
+        # Users API
+        resources :users, only: [] do
+          collection do
+            get :search
+          end
+        end
       end
 
       # ==========================================
