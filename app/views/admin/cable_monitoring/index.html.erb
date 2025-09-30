@@ -42,7 +42,6 @@
     .refresh-btn { margin: 10px 0; }
   </style>
   <script>
-    // Auto-refresh every 5 seconds
     let refreshInterval;
     
     function toggleAutoRefresh(checkbox) {
@@ -68,6 +67,7 @@
       fetch('/admin/cable/subscriptions')
         .then(res => res.json())
         .then(data => {
+          document.getElementById('subscriptions-count').textContent = data.total_subscriptions || 0;
           updateSubscriptionsTable(data.by_channel);
         });
     }
@@ -85,23 +85,27 @@
     
     function updateSubscriptionsTable(channels) {
       const tbody = document.getElementById('subscriptions-tbody');
-      tbody.innerHTML = Object.entries(channels).map(([channel, count]) => `
-        <tr>
-          <td>${channel}</td>
-          <td>${count}</td>
-        </tr>
-      `).join('');
+      if (Object.keys(channels).length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #9ca3af; padding: 20px;">No active subscriptions</td></tr>';
+      } else {
+        tbody.innerHTML = Object.entries(channels).map(([channel, count]) => `
+          <tr>
+            <td>${channel}</td>
+            <td>${count}</td>
+          </tr>
+        `).join('');
+      }
     }
   </script>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>🔌 ActionCable Monitoring</h1>
+      <h1>ActionCable Monitoring</h1>
       <p>Real-time WebSocket connection monitoring</p>
       <div style="margin-top: 20px;">
-        <a href="<%= admin_root_path %>" class="btn btn-primary">← Back to Admin</a>
-        <button onclick="location.reload()" class="btn btn-success">🔄 Refresh</button>
+        <a href="<%= admin_root_path %>" class="btn btn-primary">Back to Admin</a>
+        <button onclick="location.reload()" class="btn btn-success">Refresh</button>
       </div>
       <div style="margin-top: 15px;">
         <label style="color: white;">
@@ -109,48 +113,28 @@
         </label>
       </div>
     </div>
-    
-    <script>
-    // Update fetch URLs to use correct paths
-    function fetchConnections() {
-      fetch('/admin/cable/connections')
-        .then(res => res.json())
-        .then(data => {
-          document.getElementById('connections-count').textContent = data.total_connections;
-          updateConnectionsTable(data.connections);
-        });
-    }
-    
-    function fetchSubscriptions() {
-      fetch('/admin/cable/subscriptions')
-        .then(res => res.json())
-        .then(data => {
-          updateSubscriptionsTable(data.by_channel);
-        });
-    }
-    </script>
 
     <div class="stats-grid">
       <div class="stat-card online">
         <h3>Active Connections</h3>
-        <div class="number" id="connections-count"><%= @stats[:total_connections] %></div>
+        <div class="number" id="connections-count"><%= @stats[:total_connections] || 0 %></div>
+      </div>
+      <div class="stat-card">
+        <h3>Total Subscriptions</h3>
+        <div class="number" id="subscriptions-count"><%= @stats[:total_subscriptions] || 0 %></div>
       </div>
       <div class="stat-card">
         <h3>Worker Pool Size</h3>
-        <div class="number"><%= @stats[:worker_pool_size] %></div>
+        <div class="number"><%= @stats[:worker_pool_size] || 4 %></div>
       </div>
       <div class="stat-card <%= @stats[:redis_connected] ? 'online' : 'offline' %>">
         <h3>Redis Status</h3>
         <div class="number"><%= @stats[:redis_connected] ? 'Connected' : 'Disconnected' %></div>
       </div>
-      <div class="stat-card">
-        <h3>Uptime</h3>
-        <div class="number" style="font-size: 1.2rem;"><%= Time.at(@stats[:uptime]).utc.strftime("%H:%M:%S") %></div>
-      </div>
     </div>
 
     <div class="section">
-      <h2>📡 Active Connections</h2>
+      <h2>Active Connections</h2>
       <button onclick="fetchConnections()" class="btn btn-primary refresh-btn">Refresh Connections</button>
       
       <% if @connections.any? %>
@@ -181,7 +165,7 @@
     </div>
 
     <div class="section">
-      <h2>📺 Active Subscriptions by Channel</h2>
+      <h2>Active Subscriptions by Channel</h2>
       <button onclick="fetchSubscriptions()" class="btn btn-primary refresh-btn">Refresh Subscriptions</button>
       
       <% if @subscriptions.any? %>
@@ -207,7 +191,7 @@
     </div>
 
     <div class="section test-broadcast">
-      <h2>🧪 Test Broadcast</h2>
+      <h2>Test Broadcast</h2>
       <p>Send a test message to a specific channel to verify ActionCable is working.</p>
       
       <form action="/admin/cable/test_broadcast" method="post" class="test-form">
