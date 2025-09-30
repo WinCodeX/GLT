@@ -241,8 +241,7 @@ class Admin::CableMonitoringController < AdminController
     false
   end
 
-# Then in your controller:
-def uptime_seconds
-  0
-end
-end
+  def uptime_seconds
+    0
+  end
+end  # Only one 'end' here to close the class
