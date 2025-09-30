@@ -112,72 +112,69 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # NEW: Message acknowledgment handling
   def acknowledge_message(data)
-  begin
-    message_id = data['message_id']
-    status = data['status']
-    
-    unless ['delivered', 'read'].include?(status)
-      transmit({
-        type: 'error',
-        message: 'Invalid status. Must be delivered or read',
-        error_code: 'INVALID_STATUS'
-      })
-      return
-    end
-    
-    message = Message.find_by(id: message_id)
-    unless message
-      transmit({
-        type: 'error',
-        message: 'Message not found',
-        error_code: 'MESSAGE_NOT_FOUND'
-      })
-      return
-    end
-    
-    # Update message acknowledgment
-    if status == 'delivered' && message.delivered_at.nil?
-      message.update_column(:delivered_at, Time.current)
-    elsif status == 'read' && message.read_at.nil?
-      message.update_columns(
-        delivered_at: message.delivered_at || Time.current,
-        read_at: Time.current
+    begin
+      message_id = data['message_id']
+      status = data['status']
+      
+      unless ['delivered', 'read'].include?(status)
+        transmit({
+          type: 'error',
+          message: 'Invalid status. Must be delivered or read',
+          error_code: 'INVALID_STATUS'
+        })
+        return
+      end
+      
+      message = Message.find_by(id: message_id)
+      unless message
+        transmit({
+          type: 'error',
+          message: 'Message not found',
+          error_code: 'MESSAGE_NOT_FOUND'
+        })
+        return
+      end
+      
+      if status == 'delivered' && message.delivered_at.nil?
+        message.update_column(:delivered_at, Time.current)
+      elsif status == 'read' && message.read_at.nil?
+        message.update_columns(
+          delivered_at: message.delivered_at || Time.current,
+          read_at: Time.current
+        )
+      end
+      
+      ActionCable.server.broadcast(
+        "conversation_#{message.conversation_id}",
+        {
+          type: 'message_acknowledged',
+          message_id: message_id,
+          conversation_id: message.conversation_id,
+          status: status,
+          acknowledged_by: current_user.id,
+          timestamp: Time.current.iso8601
+        }
       )
-    end
-    
-    # ✅ FIXED: Broadcast to conversation channel (not user channel)
-    ActionCable.server.broadcast(
-      "conversation_#{message.conversation_id}",  # ✅ Conversation channel
-      {
-        type: 'message_acknowledged',
+      
+      transmit({
+        type: 'acknowledge_success',
         message_id: message_id,
-        conversation_id: message.conversation_id,
         status: status,
-        acknowledged_by: current_user.id,
         timestamp: Time.current.iso8601
-      }
-    )
-    
-    transmit({
-      type: 'acknowledge_success',
-      message_id: message_id,
-      status: status,
-      timestamp: Time.current.iso8601
-    })
-    
-    Rails.logger.info "✅ Message #{message_id} marked as #{status} by user #{current_user.id}"
-    
-  rescue => e
-    Rails.logger.error "❌ Failed to acknowledge message: #{e.message}"
-    transmit({
-      type: 'error',
-      message: 'Failed to acknowledge message',
-      error_code: 'ACKNOWLEDGE_FAILED'
-    })
+      })
+      
+      Rails.logger.info "✅ Message #{message_id} marked as #{status} by user #{current_user.id}"
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to acknowledge message: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to acknowledge message',
+        error_code: 'ACKNOWLEDGE_FAILED'
+      })
+    end
   end
-end
 
   def mark_message_read(data)
     begin
@@ -599,7 +596,7 @@ end
       business_info = get_user_businesses_info
       user_presence = get_user_presence_data(current_user.id)
       
-      transmit({
+      initial_state_data = {
         type: 'initial_state',
         counts: {
           notifications: notification_count,
@@ -616,7 +613,20 @@ end
         recent_conversations: recent_conversations,
         businesses: business_info,
         timestamp: Time.current.iso8601
-      })
+      }
+      
+      # Add support dashboard data if user is support agent
+      if is_support_user?
+        dashboard_stats = calculate_dashboard_stats
+        agent_stats = calculate_agent_stats
+        
+        initial_state_data[:dashboard_stats] = dashboard_stats
+        initial_state_data[:agent_stats] = agent_stats
+        
+        Rails.logger.info "Initial state sent to support user #{current_user.id} with dashboard stats"
+      end
+      
+      transmit(initial_state_data)
       
       Rails.logger.info "Initial state sent to user #{current_user.id}: notifications=#{notification_count}, cart=#{cart_count}, messages=#{unread_messages_count}"
       
@@ -687,8 +697,13 @@ end
   def subscribe_to_support_channels
     begin
       if is_support_user?
+        # Subscribe to the main support dashboard broadcast channel
+        stream_from "support_dashboard"
+        
+        # Subscribe to individual support ticket updates
         stream_from "support_tickets"
-        Rails.logger.info "User #{current_user.id} subscribed to support tickets channel"
+        
+        Rails.logger.info "User #{current_user.id} subscribed to support dashboard and tickets channels"
       end
       
       if current_user.respond_to?(:conversations)
@@ -780,6 +795,65 @@ end
   rescue => e
     Rails.logger.error "Failed to calculate unread messages: #{e.message}"
     0
+  end
+
+  def calculate_dashboard_stats
+    return {} unless defined?(Conversation)
+    
+    begin
+      total_tickets = Conversation.support_tickets.count
+      pending_tickets = Conversation.support_tickets.where(status: 'pending').count
+      in_progress_tickets = Conversation.support_tickets.where(status: 'in_progress').count
+      
+      resolved_today = Conversation.support_tickets
+                                   .where(status: 'resolved')
+                                   .where('updated_at >= ?', Time.current.beginning_of_day)
+                                   .count
+      
+      {
+        total_tickets: total_tickets,
+        pending_tickets: pending_tickets,
+        in_progress_tickets: in_progress_tickets,
+        resolved_today: resolved_today,
+        avg_response_time: '0m',
+        satisfaction_score: 0,
+        tickets_by_priority: {
+          high: 0,
+          normal: 0,
+          low: 0
+        }
+      }
+    rescue => e
+      Rails.logger.error "Failed to calculate dashboard stats: #{e.message}"
+      {}
+    end
+  end
+
+  def calculate_agent_stats
+    return {} unless defined?(Conversation)
+    
+    begin
+      active_tickets = current_user.conversations
+                                   .support_tickets
+                                   .where(status: ['pending', 'in_progress', 'assigned'])
+                                   .count
+      
+      tickets_resolved_today = current_user.conversations
+                                           .support_tickets
+                                           .where(status: 'resolved')
+                                           .where('updated_at >= ?', Time.current.beginning_of_day)
+                                           .count
+      
+      {
+        tickets_resolved_today: tickets_resolved_today,
+        avg_resolution_time: '0m',
+        active_tickets: active_tickets,
+        satisfaction_rating: 0
+      }
+    rescue => e
+      Rails.logger.error "Failed to calculate agent stats: #{e.message}"
+      {}
+    end
   end
 
   def get_recent_conversations
