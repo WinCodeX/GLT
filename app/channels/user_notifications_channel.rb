@@ -1,4 +1,5 @@
-# app/channels/user_notifications_channel.rb - FIXED: Proper presence + auto mark read
+# app/channels/user_notifications_channel.rb - With app updates streaming
+
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
     stream_from "user_notifications_#{current_user.id}"
@@ -8,10 +9,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
     stream_from "user_profile_updates"
     stream_from "user_avatar_updates"
     
+    # ============================================
+    # STREAM APP UPDATES TO ALL USERS
+    # ============================================
+    stream_from "app_updates"
+    
     subscribe_to_business_channels
     subscribe_to_support_channels
     
-    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates"
+    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates including app updates"
     
     update_user_presence_status('online')
     send_initial_state
@@ -176,13 +182,11 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Mark all messages in conversation as read
   def mark_message_read(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # Mark all unread messages in this conversation as read
       unread_messages = conversation.messages.where(read_at: nil)
       now = Time.current
       
@@ -308,19 +312,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Now properly establishes persistent streaming + sends presence
   def join_conversation(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # CRITICAL FIX: Establish persistent stream to conversation channel
       stream_from "conversation_#{conversation_id}"
       
-      # FIXED: Get current user presence
       user_presence = get_user_presence_data(current_user.id)
       
-      # FIXED: Broadcast to conversation with full presence data
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -333,7 +333,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # FIXED: Get all participants' presence
       participants_presence = get_conversation_participants_presence(conversation)
       
       transmit({
@@ -367,7 +366,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     begin
       conversation_id = data['conversation_id']
       
-      # FIXED: Broadcast with proper presence status
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -475,7 +473,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Returns complete presence data including last_seen_at
   def get_user_presence_data(user_id)
     begin
       presence_key = "user_presence:#{user_id}"
@@ -559,7 +556,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Broadcasts proper presence with last_seen
   def broadcast_presence_to_relevant_channels(status)
     begin
       last_seen = status == 'online' ? nil : Time.current.iso8601
@@ -715,7 +711,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Explicitly stream from support_dashboard for support users
   def subscribe_to_support_channels
     begin
       if is_support_user?
