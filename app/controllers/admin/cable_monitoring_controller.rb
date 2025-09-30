@@ -243,9 +243,6 @@ class Admin::CableMonitoringController < AdminController
 
 # Then in your controller:
 def uptime_seconds
-  return 0 unless ActionCable.server.config.respond_to?(:started_at)
-  (Time.current - ActionCable.server.config.started_at).to_i
-rescue
   0
 end
 end
