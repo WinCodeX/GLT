@@ -1,2 +1,2 @@
 # config/initializers/action_cable.rb
-ActionCable.server.config.started_at = Time.current
+# Be sure to restart your server when you modify this file.
