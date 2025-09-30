@@ -1,13 +1,11 @@
-# app/controllers/api/v1/updates_controller.rb - Fixed to always return JSON
+# app/controllers/api/v1/updates_controller.rb - With ActionCable broadcasting
 
 class Api::V1::UpdatesController < ApplicationController
-  # Ensure we always respond with JSON
   before_action :set_json_format
   before_action :authenticate_user_json!, except: [:manifest, :info, :check, :download]
   before_action :ensure_admin!, only: [:create, :publish, :upload_apk]
 
   def index
-    # Return list of updates (admin only or published for regular users)
     if current_user&.admin?
       @updates = AppUpdate.all.order(created_at: :desc)
     else
@@ -33,7 +31,6 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def manifest
-    # Legacy endpoint - now returns APK update info instead of Expo manifest
     latest_update = AppUpdate.published.latest
     
     if latest_update
@@ -59,7 +56,6 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def info
-    # Get latest APK update information
     latest_update = AppUpdate.published.latest
     current_version = params[:current_version] || '1.0.0'
     
@@ -82,7 +78,6 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def check
-    # Check if APK updates are available for specific version
     current_version = params[:version] || '1.0.0'
     latest_update = AppUpdate.published.latest
     
@@ -98,7 +93,6 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def download
-    # Direct APK download endpoint with download tracking
     update = if params[:version]
       AppUpdate.published.find_by(version: params[:version])
     else
@@ -115,10 +109,7 @@ class Api::V1::UpdatesController < ApplicationController
       return
     end
     
-    # Increment download count
     update.increment_download_count!
-    
-    # Redirect to actual APK download URL
     redirect_to update.apk_url, allow_other_host: true
   end
 
@@ -126,7 +117,6 @@ class Api::V1::UpdatesController < ApplicationController
     @update = AppUpdate.new(update_params)
     @update.update_id = SecureRandom.uuid
     
-    # Handle APK file upload if present
     if params[:apk].present?
       begin
         Rails.logger.info "Starting APK upload: #{params[:apk].original_filename} (#{params[:apk].size} bytes)"
@@ -181,12 +171,17 @@ class Api::V1::UpdatesController < ApplicationController
     @update = AppUpdate.find(params[:id])
     
     if @update.update(published: true, published_at: Time.current)
+      # ============================================
+      # BROADCAST UPDATE TO ALL CONNECTED USERS
+      # ============================================
+      broadcast_update_to_users(@update)
+      
       render json: {
         id: @update.id,
         version: @update.version,
         published: @update.published,
         published_at: @update.published_at,
-        message: 'Update published successfully'
+        message: 'Update published successfully and broadcast to users'
       }
     else
       render json: { 
@@ -197,7 +192,6 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def upload_bundle
-    # Legacy endpoint for bundle uploads (now handles APK uploads)
     unless params[:apk].present?
       render json: { error: 'No APK file provided' }, status: 400
       return
@@ -259,14 +253,42 @@ class Api::V1::UpdatesController < ApplicationController
     false
   end
 
+  # ============================================
+  # BROADCAST UPDATE TO ALL USERS VIA ACTIONCABLE
+  # ============================================
+  def broadcast_update_to_users(update)
+    begin
+      Rails.logger.info "📢 Broadcasting app update #{update.version} to all users..."
+      
+      update_data = {
+        type: 'app_update_available',
+        version: update.version,
+        changelog: update.changelog || [],
+        description: update.description,
+        force_update: update.force_update || false,
+        download_url: update.apk_url,
+        file_size: update.apk_size,
+        release_date: update.published_at&.iso8601 || Time.current.iso8601,
+        timestamp: Time.current.iso8601
+      }
+      
+      # Broadcast to all users via the app_updates channel
+      ActionCable.server.broadcast('app_updates', update_data)
+      
+      Rails.logger.info "✅ Successfully broadcast update #{update.version} to all connected users"
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to broadcast update: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+    end
+  end
+
   def upload_apk_file(file, version)
-    # Validate file type
     unless file.content_type == 'application/vnd.android.package-archive' || 
            file.original_filename&.end_with?('.apk')
       raise 'Invalid file type. Please upload an APK file.'
     end
 
-    # Validate file size (200MB limit)
     max_size = 200.megabytes
     if file.size > max_size
       raise "File too large. Maximum size is #{max_size / 1.megabyte}MB."
@@ -301,7 +323,6 @@ class Api::V1::UpdatesController < ApplicationController
     bucket_name = ENV['CLOUDFLARE_R2_BUCKET'] || 'gltapp'
     object_key = "AppUpdate/#{version}/#{key}.apk"
     
-    # Use streaming upload instead of loading entire file into memory
     File.open(file.tempfile.path, 'rb') do |file_stream|
       client.put_object(
         bucket: bucket_name,
@@ -322,14 +343,12 @@ class Api::V1::UpdatesController < ApplicationController
   end
 
   def upload_apk_to_local(file, key, version)
-    # Development/local storage - use streaming to avoid memory issues
     filename = "#{key}.apk"
     upload_path = Rails.root.join('public', 'uploads', 'apks', version)
     FileUtils.mkdir_p(upload_path)
     
     file_path = upload_path.join(filename)
     
-    # Stream file copy instead of loading into memory
     File.open(file_path, 'wb') do |output_file|
       File.open(file.tempfile.path, 'rb') do |input_file|
         IO.copy_stream(input_file, output_file)
