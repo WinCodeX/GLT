@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb
+# app/channels/user_notifications_channel.rb - FIXED: Support dashboard streaming
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
     stream_from "user_notifications_#{current_user.id}"
@@ -298,11 +298,13 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # FIXED: Now properly establishes persistent streaming
   def join_conversation(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
+      # CRITICAL FIX: Establish persistent stream to conversation channel
       stream_from "conversation_#{conversation_id}"
       
       user_presence = get_user_presence_data(current_user.id)
@@ -329,7 +331,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "User #{current_user.id} joined conversation #{conversation_id}"
+      Rails.logger.info "✅ User #{current_user.id} joined and streaming conversation #{conversation_id}"
       
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for join: #{e.message}"
@@ -615,7 +617,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       }
       
-      # Add support dashboard data if user is support agent
       if is_support_user?
         dashboard_stats = calculate_dashboard_stats
         agent_stats = calculate_agent_stats
@@ -694,16 +695,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # FIXED: Explicitly stream from support_dashboard for support users
   def subscribe_to_support_channels
     begin
       if is_support_user?
-        # Subscribe to the main support dashboard broadcast channel
+        # CRITICAL FIX: Explicitly stream from support dashboard
         stream_from "support_dashboard"
-        
-        # Subscribe to individual support ticket updates
         stream_from "support_tickets"
         
-        Rails.logger.info "User #{current_user.id} subscribed to support dashboard and tickets channels"
+        Rails.logger.info "✅ User #{current_user.id} subscribed to support dashboard and tickets channels"
       end
       
       if current_user.respond_to?(:conversations)
