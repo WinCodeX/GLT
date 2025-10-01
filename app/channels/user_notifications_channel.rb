@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - With app updates streaming
+# app/channels/user_notifications_channel.rb - With message delivery retry logic
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -8,10 +8,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     stream_from "user_packages_#{current_user.id}"
     stream_from "user_profile_updates"
     stream_from "user_avatar_updates"
-    
-    # ============================================
-    # STREAM APP UPDATES TO ALL USERS
-    # ============================================
     stream_from "app_updates"
     
     subscribe_to_business_channels
@@ -22,6 +18,9 @@ class UserNotificationsChannel < ApplicationCable::Channel
     update_user_presence_status('online')
     send_initial_state
     broadcast_presence_to_relevant_channels('online')
+    
+    # ADDED: Retry delivery of undelivered messages when user comes online
+    retry_undelivered_messages
   end
 
   def unsubscribed
@@ -142,6 +141,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         return
       end
       
+      # FIXED: Mark as delivered when client acknowledges receipt
       if status == 'delivered' && message.delivered_at.nil?
         message.update_column(:delivered_at, Time.current)
       elsif status == 'read' && message.read_at.nil?
@@ -440,6 +440,63 @@ class UserNotificationsChannel < ApplicationCable::Channel
   end
 
   private
+
+  # ADDED: Retry delivery of messages that were sent but not delivered
+  def retry_undelivered_messages
+    begin
+      return unless current_user.respond_to?(:conversations)
+      
+      undelivered_messages = Message.joins(:conversation)
+                                    .joins('INNER JOIN conversation_participants ON conversation_participants.conversation_id = conversations.id')
+                                    .where('conversation_participants.user_id = ?', current_user.id)
+                                    .where.not(user_id: current_user.id)
+                                    .undelivered
+                                    .where('messages.created_at > ?', 7.days.ago)
+                                    .order(created_at: :asc)
+                                    .limit(50)
+      
+      if undelivered_messages.any?
+        Rails.logger.info "🔄 Retrying delivery of #{undelivered_messages.count} undelivered messages for user #{current_user.id}"
+        
+        undelivered_messages.each do |message|
+          begin
+            ActionCable.server.broadcast(
+              "conversation_#{message.conversation_id}",
+              {
+                type: 'new_message',
+                message: format_message_for_broadcast(message),
+                conversation_id: message.conversation_id,
+                timestamp: message.created_at.iso8601,
+                retry: true
+              }
+            )
+            
+            Rails.logger.debug "✅ Retried message #{message.id} for conversation #{message.conversation_id}"
+          rescue => e
+            Rails.logger.error "❌ Failed to retry message #{message.id}: #{e.message}"
+          end
+        end
+      end
+      
+    rescue => e
+      Rails.logger.error "Failed to retry undelivered messages: #{e.message}"
+    end
+  end
+
+  def format_message_for_broadcast(message)
+    {
+      id: message.id,
+      content: message.content,
+      message_type: message.message_type,
+      user_id: message.user_id,
+      user_name: message.sender_display_name,
+      created_at: message.created_at.iso8601,
+      sent_at: message.sent_at&.iso8601,
+      delivered_at: message.delivered_at&.iso8601,
+      read_at: message.read_at&.iso8601,
+      formatted_timestamp: message.formatted_timestamp
+    }
+  end
 
   def update_user_presence_status(status, device_info = {})
     begin
