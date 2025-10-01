@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - With message delivery retry logic
+# app/channels/user_notifications_channel.rb - Fixed presence broadcasting
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -19,7 +19,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     send_initial_state
     broadcast_presence_to_relevant_channels('online')
     
-    # ADDED: Retry delivery of undelivered messages when user comes online
     retry_undelivered_messages
   end
 
@@ -38,11 +37,12 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       Rails.logger.info "User #{current_user.id} presence update: #{status} (app_state: #{app_state})"
       
+      # FIXED: Force online when app is active
       effective_status = case app_state
       when 'background', 'inactive'
         'away'
       when 'active'
-        status == 'offline' ? 'away' : status
+        status == 'offline' ? 'online' : status
       else
         status
       end
@@ -141,7 +141,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         return
       end
       
-      # FIXED: Mark as delivered when client acknowledges receipt
       if status == 'delivered' && message.delivered_at.nil?
         message.update_column(:delivered_at, Time.current)
       elsif status == 'read' && message.read_at.nil?
@@ -170,10 +169,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "✅ Message #{message_id} marked as #{status} by user #{current_user.id}"
+      Rails.logger.info "Message #{message_id} marked as #{status} by user #{current_user.id}"
       
     rescue => e
-      Rails.logger.error "❌ Failed to acknowledge message: #{e.message}"
+      Rails.logger.error "Failed to acknowledge message: #{e.message}"
       transmit({
         type: 'error',
         message: 'Failed to acknowledge message',
@@ -216,7 +215,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: now.iso8601
       })
       
-      Rails.logger.info "✅ User #{current_user.id} marked conversation #{conversation_id} as read"
+      Rails.logger.info "User #{current_user.id} marked conversation #{conversation_id} as read"
       
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for mark_message_read: #{e.message}"
@@ -343,7 +342,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "✅ User #{current_user.id} joined and streaming conversation #{conversation_id}"
+      Rails.logger.info "User #{current_user.id} joined and streaming conversation #{conversation_id}"
       
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for join: #{e.message}"
@@ -441,7 +440,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   private
 
-  # ADDED: Retry delivery of messages that were sent but not delivered
   def retry_undelivered_messages
     begin
       return unless current_user.respond_to?(:conversations)
@@ -456,7 +454,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
                                     .limit(50)
       
       if undelivered_messages.any?
-        Rails.logger.info "🔄 Retrying delivery of #{undelivered_messages.count} undelivered messages for user #{current_user.id}"
+        Rails.logger.info "Retrying delivery of #{undelivered_messages.count} undelivered messages for user #{current_user.id}"
         
         undelivered_messages.each do |message|
           begin
@@ -471,9 +469,9 @@ class UserNotificationsChannel < ApplicationCable::Channel
               }
             )
             
-            Rails.logger.debug "✅ Retried message #{message.id} for conversation #{message.conversation_id}"
+            Rails.logger.debug "Retried message #{message.id} for conversation #{message.conversation_id}"
           rescue => e
-            Rails.logger.error "❌ Failed to retry message #{message.id}: #{e.message}"
+            Rails.logger.error "Failed to retry message #{message.id}: #{e.message}"
           end
         end
       end
@@ -498,6 +496,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     }
   end
 
+  # FIXED: Now properly updates the online column in the database
   def update_user_presence_status(status, device_info = {})
     begin
       presence_key = "user_presence:#{current_user.id}"
@@ -508,6 +507,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         updated_at: Time.current.to_i
       }
       
+      # Store in Redis for quick lookups
       if defined?(Redis) && Rails.application.config.respond_to?(:redis)
         begin
           redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
@@ -517,23 +517,30 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      if current_user.respond_to?(:update_presence_status)
-        current_user.update_presence_status(status)
-      elsif current_user.respond_to?(:last_seen_at=)
-        current_user.update_column(:last_seen_at, Time.current)
+      # CRITICAL FIX: Actually update the online column in database
+      case status
+      when 'online'
+        current_user.mark_online! unless current_user.online?
+      when 'offline'
+        current_user.mark_offline! if current_user.online?
+      when 'away', 'busy'
+        # Mark as online in DB but with different status in Redis
+        current_user.mark_online! unless current_user.online?
       end
       
-      Rails.logger.debug "Presence updated for user #{current_user.id}: #{status}"
+      Rails.logger.debug "Presence updated for user #{current_user.id}: #{status} (DB online: #{current_user.reload.online?})"
       
     rescue => e
       Rails.logger.error "Failed to update user presence status: #{e.message}"
     end
   end
 
+  # FIXED: Now checks the online column first as source of truth
   def get_user_presence_data(user_id)
     begin
       presence_key = "user_presence:#{user_id}"
       
+      # Try Redis first for real-time status
       if defined?(Redis)
         begin
           redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
@@ -554,14 +561,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
+      # Fall back to database - USE online column as source of truth
       user = User.find_by(id: user_id)
       if user
-        last_seen = user.respond_to?(:last_seen_at) ? user.last_seen_at : user.updated_at
-        time_since_last_seen = Time.current - (last_seen || 1.hour.ago)
+        last_seen = user.last_seen_at || user.updated_at
         
-        status = if time_since_last_seen < 5.minutes
+        # CRITICAL FIX: Check the online column first
+        status = if user.online?
                   'online'
-                elsif time_since_last_seen < 30.minutes
+                elsif last_seen && (Time.current - last_seen) < 30.minutes
                   'away'
                 else
                   'offline'
@@ -570,12 +578,13 @@ class UserNotificationsChannel < ApplicationCable::Channel
         return {
           user_id: user_id,
           status: status,
-          last_seen_at: (last_seen || 1.hour.ago).iso8601,
-          is_online: status == 'online',
+          last_seen_at: last_seen.iso8601,
+          is_online: user.online?,
           updated_at: Time.current.iso8601
         }
       end
       
+      # Default offline if user not found
       {
         user_id: user_id,
         status: 'offline',
@@ -774,7 +783,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         stream_from "support_dashboard"
         stream_from "support_tickets"
         
-        Rails.logger.info "✅ User #{current_user.id} subscribed to support dashboard and tickets channels"
+        Rails.logger.info "User #{current_user.id} subscribed to support dashboard and tickets channels"
       end
       
       if current_user.respond_to?(:conversations)
