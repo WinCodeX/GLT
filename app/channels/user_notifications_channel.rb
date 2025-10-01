@@ -1,3 +1,5 @@
+# app/channels/user_notifications_channel.rb - Fixed with Redis connection pooling
+
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
     stream_from "user_notifications_#{current_user.id}"
@@ -17,7 +19,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     send_initial_state
     broadcast_presence_to_relevant_channels('online')
     
-    # FIXED: Retry undelivered messages AFTER all subscriptions are set up and directly to user
     retry_undelivered_messages_to_user
   end
 
@@ -36,7 +37,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       Rails.logger.info "User #{current_user.id} presence update: #{status} (app_state: #{app_state})"
       
-      # FIXED: Force online when app is active
       effective_status = case app_state
       when 'background', 'inactive'
         'away'
@@ -439,12 +439,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   private
 
-  # FIXED: Send undelivered messages directly to the specific user immediately upon reconnection
   def retry_undelivered_messages_to_user
     begin
       return unless current_user.respond_to?(:conversations)
       
-      # Find all messages for this user that haven't been delivered yet
       undelivered_messages = Message.joins(:conversation)
                                     .joins('INNER JOIN conversation_participants ON conversation_participants.conversation_id = conversations.id')
                                     .where('conversation_participants.user_id = ?', current_user.id)
@@ -459,10 +457,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         
         undelivered_messages.each do |message|
           begin
-            # FIXED: Send directly to user's message channel for immediate delivery
             message_data = format_message_for_broadcast(message)
             
-            # Send to user's personal message channel IMMEDIATELY
             transmit({
               type: 'new_message',
               message: message_data,
@@ -472,7 +468,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
               retry_reason: 'undelivered_on_reconnect'
             })
             
-            # Also broadcast to conversation channel for other participants
             ActionCable.server.broadcast(
               "conversation_#{message.conversation_id}",
               {
@@ -484,7 +479,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
               }
             )
             
-            # Mark as delivered now that user is online
             message.update_column(:delivered_at, Time.current)
             
             Rails.logger.debug "Retried message #{message.id} directly to user #{current_user.id}"
@@ -494,7 +488,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
           end
         end
         
-        # Update message counts after retry
         broadcast_message_counts
         
         Rails.logger.info "Completed retry of #{undelivered_messages.count} messages to user #{current_user.id}"
@@ -523,7 +516,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     }
   end
 
-  # FIXED: Now properly updates the online column in the database
+  # FIXED: Use Redis connection pooling
   def update_user_presence_status(status, device_info = {})
     begin
       presence_key = "user_presence:#{current_user.id}"
@@ -534,24 +527,24 @@ class UserNotificationsChannel < ApplicationCable::Channel
         updated_at: Time.current.to_i
       }
       
-      # Store in Redis for quick lookups
-      if defined?(Redis) && Rails.application.config.respond_to?(:redis)
+      # Store in Redis using connection pool
+      if defined?(REDIS_POOL)
         begin
-          redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
-          redis.setex(presence_key, 300, presence_data.to_json)
+          REDIS_POOL.with do |redis|
+            redis.setex(presence_key, 300, presence_data.to_json)
+          end
         rescue => redis_error
           Rails.logger.error "Redis presence update failed: #{redis_error.message}"
         end
       end
       
-      # CRITICAL FIX: Actually update the online column in database
+      # Update database online column
       case status
       when 'online'
         current_user.mark_online! unless current_user.online?
       when 'offline'
         current_user.mark_offline! if current_user.online?
       when 'away', 'busy'
-        # Mark as online in DB but with different status in Redis
         current_user.mark_online! unless current_user.online?
       end
       
@@ -562,16 +555,17 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Now checks the online column first as source of truth
+  # FIXED: Use Redis connection pooling
   def get_user_presence_data(user_id)
     begin
       presence_key = "user_presence:#{user_id}"
       
-      # Try Redis first for real-time status
-      if defined?(Redis)
+      # Try Redis first using connection pool
+      if defined?(REDIS_POOL)
         begin
-          redis = Redis.new(url: ENV['REDIS_URL'] || 'redis://localhost:6379/1')
-          presence_json = redis.get(presence_key)
+          presence_json = REDIS_POOL.with do |redis|
+            redis.get(presence_key)
+          end
           
           if presence_json
             presence_data = JSON.parse(presence_json)
@@ -588,12 +582,11 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      # Fall back to database - USE online column as source of truth
+      # Fall back to database
       user = User.find_by(id: user_id)
       if user
         last_seen = user.last_seen_at || user.updated_at
         
-        # CRITICAL FIX: Check the online column first
         status = if user.online?
                   'online'
                 elsif last_seen && (Time.current - last_seen) < 30.minutes
@@ -611,7 +604,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       end
       
-      # Default offline if user not found
       {
         user_id: user_id,
         status: 'offline',
