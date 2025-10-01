@@ -1,5 +1,3 @@
-# app/channels/user_notifications_channel.rb - Fixed presence broadcasting
-
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
     stream_from "user_notifications_#{current_user.id}"
@@ -19,7 +17,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
     send_initial_state
     broadcast_presence_to_relevant_channels('online')
     
-    retry_undelivered_messages
+    # FIXED: Retry undelivered messages AFTER all subscriptions are set up and directly to user
+    retry_undelivered_messages_to_user
   end
 
   def unsubscribed
@@ -440,44 +439,72 @@ class UserNotificationsChannel < ApplicationCable::Channel
 
   private
 
-  def retry_undelivered_messages
+  # FIXED: Send undelivered messages directly to the specific user immediately upon reconnection
+  def retry_undelivered_messages_to_user
     begin
       return unless current_user.respond_to?(:conversations)
       
+      # Find all messages for this user that haven't been delivered yet
       undelivered_messages = Message.joins(:conversation)
                                     .joins('INNER JOIN conversation_participants ON conversation_participants.conversation_id = conversations.id')
                                     .where('conversation_participants.user_id = ?', current_user.id)
                                     .where.not(user_id: current_user.id)
-                                    .undelivered
+                                    .where(delivered_at: nil)
                                     .where('messages.created_at > ?', 7.days.ago)
                                     .order(created_at: :asc)
-                                    .limit(50)
+                                    .limit(100)
       
       if undelivered_messages.any?
-        Rails.logger.info "Retrying delivery of #{undelivered_messages.count} undelivered messages for user #{current_user.id}"
+        Rails.logger.info "Retrying delivery of #{undelivered_messages.count} undelivered messages DIRECTLY to user #{current_user.id}"
         
         undelivered_messages.each do |message|
           begin
+            # FIXED: Send directly to user's message channel for immediate delivery
+            message_data = format_message_for_broadcast(message)
+            
+            # Send to user's personal message channel IMMEDIATELY
+            transmit({
+              type: 'new_message',
+              message: message_data,
+              conversation_id: message.conversation_id,
+              timestamp: message.created_at.iso8601,
+              retry: true,
+              retry_reason: 'undelivered_on_reconnect'
+            })
+            
+            # Also broadcast to conversation channel for other participants
             ActionCable.server.broadcast(
               "conversation_#{message.conversation_id}",
               {
                 type: 'new_message',
-                message: format_message_for_broadcast(message),
+                message: message_data,
                 conversation_id: message.conversation_id,
                 timestamp: message.created_at.iso8601,
                 retry: true
               }
             )
             
-            Rails.logger.debug "Retried message #{message.id} for conversation #{message.conversation_id}"
+            # Mark as delivered now that user is online
+            message.update_column(:delivered_at, Time.current)
+            
+            Rails.logger.debug "Retried message #{message.id} directly to user #{current_user.id}"
+            
           rescue => e
             Rails.logger.error "Failed to retry message #{message.id}: #{e.message}"
           end
         end
+        
+        # Update message counts after retry
+        broadcast_message_counts
+        
+        Rails.logger.info "Completed retry of #{undelivered_messages.count} messages to user #{current_user.id}"
+      else
+        Rails.logger.debug "No undelivered messages found for user #{current_user.id}"
       end
       
     rescue => e
-      Rails.logger.error "Failed to retry undelivered messages: #{e.message}"
+      Rails.logger.error "Failed to retry undelivered messages to user: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
     end
   end
 
