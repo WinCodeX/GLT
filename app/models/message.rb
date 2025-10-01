@@ -1,8 +1,9 @@
+# app/models/message.rb - Fixed with ActionCable broadcasting
+
 class Message < ApplicationRecord
   belongs_to :conversation
   belongs_to :user
   
-  # Add _suffix to avoid enum conflicts
   enum message_type: {
     text: 0,
     voice: 1,
@@ -20,9 +21,11 @@ class Message < ApplicationRecord
   scope :system_messages, -> { where(message_type: 'system') }
   scope :undelivered, -> { where(delivered_at: nil).where.not(sent_at: nil) }
   
-  # FIXED: Set sent_at on creation (message marked as sent immediately)
   before_create :set_sent_at
   after_create :update_conversation_activity
+  
+  # CRITICAL FIX: Broadcast message to all channels after creation
+  after_create_commit :broadcast_to_channels
   
   def from_support?
     return false unless user
@@ -118,7 +121,6 @@ class Message < ApplicationRecord
   
   private
   
-  # FIXED: Automatically set sent_at timestamp on message creation
   def set_sent_at
     self.sent_at ||= Time.current
   end
@@ -156,5 +158,23 @@ class Message < ApplicationRecord
     
   rescue => e
     Rails.logger.error "Failed to update support ticket status for message #{id}: #{e.message}"
+  end
+  
+  # CRITICAL FIX: Broadcast message to all relevant ActionCable channels
+  def broadcast_to_channels
+    begin
+      Rails.logger.info "Broadcasting message #{id} to ActionCable channels..."
+      
+      # Use the UserNotificationsChannel class method to broadcast
+      if defined?(UserNotificationsChannel)
+        UserNotificationsChannel.broadcast_new_message(self)
+      else
+        Rails.logger.error "UserNotificationsChannel not found - cannot broadcast message #{id}"
+      end
+      
+    rescue => e
+      Rails.logger.error "Failed to broadcast message #{id} to channels: #{e.message}"
+      Rails.logger.error e.backtrace.first(5).join("\n")
+    end
   end
 end
