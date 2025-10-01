@@ -163,61 +163,57 @@ class Api::V1::ConversationsController < ApplicationController
 
   # POST /api/v1/conversations/:id/send_message - FIXED: Instant broadcasting
   def send_message
-    Rails.logger.info "Sending message to conversation #{params[:id]}"
-    
-    begin
-      unless @conversation
-        return render json: { success: false, message: 'Conversation not found' }, status: :not_found
-      end
+  Rails.logger.info "Sending message to conversation #{params[:id]}"
 
-      @message = @conversation.messages.build(
-        content: params[:content],
-        message_type: params[:message_type] || 'text',
-        user: current_user,
-        metadata: parse_lightweight_metadata
-      )
-
-      if @message.save
-        Rails.logger.info "Message saved: #{@message.id}"
-        
-        @conversation.touch(:last_activity_at)
-        update_support_ticket_status_if_needed
-        
-        # FIXED: Instant broadcast - no job queue
-        broadcast_message_immediately(@conversation, @message)
-        
-        # FIXED: Broadcast to support dashboard for new messages
-        if @conversation.support_ticket?
-          broadcast_message_to_support_dashboard(@conversation, @message)
-        end
-        
-        if @conversation.support_ticket? && !@message.is_system?
-          send_support_notifications_immediate(@message)
-        end
-        
-        render json: {
-          success: true,
-          message: efficiently_format_message(@message),
-          conversation: {
-            id: @conversation.id,
-            last_activity_at: @conversation.last_activity_at,
-            status: @conversation.status,
-            current_ticket_id: @conversation.current_ticket_id
-          }
-        }
-      else
-        render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
-      end
-      
-    rescue => e
-      Rails.logger.error "Error sending message: #{e.message}"
-      render json: { 
-        success: false, 
-        message: 'Failed to send message',
-        error: Rails.env.development? ? e.message : 'Internal server error'
-      }, status: :internal_server_error
+  begin
+    unless @conversation
+      return render json: { success: false, message: 'Conversation not found' }, status: :not_found
     end
+
+    @message = @conversation.messages.build(
+      content: params[:content],
+      message_type: params[:message_type] || 'text',
+      user: current_user,
+      metadata: parse_lightweight_metadata
+    )
+
+    if @message.save
+      Rails.logger.info "Message saved: #{@message.id} - broadcasting handled by model callback"
+
+      @conversation.touch(:last_activity_at)
+      update_support_ticket_status_if_needed
+
+      # REMOVED: broadcast_message_immediately - now handled by Message model callback
+      # REMOVED: broadcast_message_to_support_dashboard - should be added to model callback
+
+      # Keep notifications - they're separate from broadcasting
+      if @conversation.support_ticket? && !@message.is_system?
+        send_support_notifications_immediate(@message)
+      end
+
+      render json: {
+        success: true,
+        message: efficiently_format_message(@message),
+        conversation: {
+          id: @conversation.id,
+          last_activity_at: @conversation.last_activity_at,
+          status: @conversation.status,
+          current_ticket_id: @conversation.current_ticket_id
+        }
+      }
+    else
+      render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
+    end
+
+  rescue => e
+    Rails.logger.error "Error sending message: #{e.message}"
+    render json: { 
+      success: false, 
+      message: 'Failed to send message',
+      error: Rails.env.development? ? e.message : 'Internal server error'
+    }, status: :internal_server_error
   end
+end
 
   # GET /api/v1/conversations/active_support
   def active_support
