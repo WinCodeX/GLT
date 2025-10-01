@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - Fixed with Redis connection pooling
+# app/channels/user_notifications_channel.rb - Fixed with comprehensive message broadcasting
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -315,6 +315,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
+      # CRITICAL: This sets up the stream for conversation-specific messages
       stream_from "conversation_#{conversation_id}"
       
       user_presence = get_user_presence_data(current_user.id)
@@ -397,6 +398,62 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # FIXED: New method for sending messages with comprehensive broadcasting
+  def send_message(data)
+    begin
+      conversation_id = data['conversation_id']
+      content = data['content']
+      message_type = data['message_type'] || 'text'
+      metadata = data['metadata'] || {}
+      temp_id = data['temp_id']
+      
+      conversation = current_user.conversations.find(conversation_id)
+      
+      message = conversation.messages.create!(
+        user: current_user,
+        content: content,
+        message_type: message_type,
+        metadata: metadata,
+        sent_at: Time.current
+      )
+      
+      if message.persisted?
+        # Broadcast to ALL relevant channels
+        broadcast_message_to_all_channels(message, temp_id)
+        
+        transmit({
+          type: 'message_sent',
+          success: true,
+          message: format_message_for_broadcast(message),
+          temp_id: temp_id,
+          timestamp: Time.current.iso8601
+        })
+      else
+        transmit({
+          type: 'error',
+          message: 'Failed to send message',
+          error_code: 'MESSAGE_SEND_FAILED',
+          temp_id: temp_id
+        })
+      end
+      
+    rescue ActiveRecord::RecordNotFound => e
+      Rails.logger.error "Conversation not found for send_message: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Conversation not found',
+        error_code: 'CONVERSATION_NOT_FOUND'
+      })
+    rescue => e
+      Rails.logger.error "Failed to send message: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to send message',
+        error_code: 'MESSAGE_SEND_FAILED'
+      })
+    end
+  end
+
   def subscribe_to_business(data)
     begin
       business_id = data['business_id']
@@ -437,7 +494,103 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # FIXED: Class method to broadcast messages from anywhere in the app
+  def self.broadcast_new_message(message)
+    begin
+      conversation = message.conversation
+      message_data = {
+        id: message.id,
+        content: message.content,
+        message_type: message.message_type,
+        user_id: message.user_id,
+        user_name: message.user&.display_name || message.user&.email || 'Unknown User',
+        from_support: message.user&.support_agent? || false,
+        created_at: message.created_at.iso8601,
+        sent_at: message.sent_at&.iso8601,
+        delivered_at: message.delivered_at&.iso8601,
+        read_at: message.read_at&.iso8601,
+        formatted_timestamp: message.created_at.strftime('%H:%M'),
+        metadata: message.metadata || {}
+      }
+      
+      broadcast_payload = {
+        type: 'new_message',
+        message: message_data,
+        conversation_id: conversation.id,
+        timestamp: message.created_at.iso8601
+      }
+      
+      # 1. Broadcast to conversation channel (for users actively in the chat)
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        broadcast_payload
+      )
+      
+      # 2. Broadcast to each participant's user message channel (for dashboard/other screens)
+      conversation.conversation_participants.each do |participant|
+        next if participant.user_id == message.user_id # Don't send to sender
+        
+        ActionCable.server.broadcast(
+          "user_messages_#{participant.user_id}",
+          broadcast_payload.merge(
+            notification: true,
+            unread: true
+          )
+        )
+      end
+      
+      Rails.logger.info "Broadcasted message #{message.id} to conversation #{conversation.id} and all participant channels"
+      
+    rescue => e
+      Rails.logger.error "Failed to broadcast message: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+    end
+  end
+
   private
+
+  # FIXED: Comprehensive message broadcasting to all channels
+  def broadcast_message_to_all_channels(message, temp_id = nil)
+    begin
+      conversation = message.conversation
+      message_data = format_message_for_broadcast(message)
+      message_data[:temp_id] = temp_id if temp_id
+      
+      broadcast_payload = {
+        type: 'new_message',
+        message: message_data,
+        conversation_id: conversation.id,
+        timestamp: message.created_at.iso8601
+      }
+      
+      # 1. Broadcast to conversation channel (for users actively in the chat)
+      ActionCable.server.broadcast(
+        "conversation_#{conversation.id}",
+        broadcast_payload
+      )
+      Rails.logger.debug "Broadcasted to conversation_#{conversation.id}"
+      
+      # 2. Broadcast to each participant's user message channel
+      conversation.conversation_participants.each do |participant|
+        next if participant.user_id == current_user.id # Don't send to self
+        
+        ActionCable.server.broadcast(
+          "user_messages_#{participant.user_id}",
+          broadcast_payload.merge(
+            notification: true,
+            unread: true
+          )
+        )
+        Rails.logger.debug "Broadcasted to user_messages_#{participant.user_id}"
+      end
+      
+      Rails.logger.info "Successfully broadcasted message #{message.id} to all channels"
+      
+    rescue => e
+      Rails.logger.error "Failed to broadcast message to all channels: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+    end
+  end
 
   def retry_undelivered_messages_to_user
     begin
@@ -459,6 +612,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
           begin
             message_data = format_message_for_broadcast(message)
             
+            # Send directly to user via transmit
             transmit({
               type: 'new_message',
               message: message_data,
@@ -468,6 +622,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
               retry_reason: 'undelivered_on_reconnect'
             })
             
+            # Also broadcast to conversation channel
             ActionCable.server.broadcast(
               "conversation_#{message.conversation_id}",
               {
@@ -507,16 +662,17 @@ class UserNotificationsChannel < ApplicationCable::Channel
       content: message.content,
       message_type: message.message_type,
       user_id: message.user_id,
-      user_name: message.sender_display_name,
+      user_name: message.user&.display_name || message.user&.email || 'Unknown User',
+      from_support: message.user&.support_agent? || false,
       created_at: message.created_at.iso8601,
       sent_at: message.sent_at&.iso8601,
       delivered_at: message.delivered_at&.iso8601,
       read_at: message.read_at&.iso8601,
-      formatted_timestamp: message.formatted_timestamp
+      formatted_timestamp: message.created_at.strftime('%H:%M'),
+      metadata: message.metadata || {}
     }
   end
 
-  # FIXED: Use Redis connection pooling
   def update_user_presence_status(status, device_info = {})
     begin
       presence_key = "user_presence:#{current_user.id}"
@@ -527,7 +683,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         updated_at: Time.current.to_i
       }
       
-      # Store in Redis using connection pool
       if defined?(REDIS_POOL)
         begin
           REDIS_POOL.with do |redis|
@@ -538,7 +693,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      # Update database online column
       case status
       when 'online'
         current_user.mark_online! unless current_user.online?
@@ -555,12 +709,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Use Redis connection pooling
   def get_user_presence_data(user_id)
     begin
       presence_key = "user_presence:#{user_id}"
       
-      # Try Redis first using connection pool
       if defined?(REDIS_POOL)
         begin
           presence_json = REDIS_POOL.with do |redis|
@@ -582,7 +734,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      # Fall back to database
       user = User.find_by(id: user_id)
       if user
         last_seen = user.last_seen_at || user.updated_at
