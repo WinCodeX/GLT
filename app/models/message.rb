@@ -18,11 +18,11 @@ class Message < ApplicationRecord
   scope :recent, -> { order(created_at: :desc) }
   scope :user_messages, -> { where.not(message_type: 'system') }
   scope :system_messages, -> { where(message_type: 'system') }
+  scope :undelivered, -> { where(delivered_at: nil).where.not(sent_at: nil) }
   
-  # FIXED: Set delivered_at on creation + simplified callbacks
-  before_create :set_delivered_at
+  # FIXED: Set sent_at on creation (message marked as sent immediately)
+  before_create :set_sent_at
   after_create :update_conversation_activity
-  # REMOVED: after_create_commit :enqueue_broadcast_job (controller handles broadcasting)
   
   def from_support?
     return false unless user
@@ -118,9 +118,9 @@ class Message < ApplicationRecord
   
   private
   
-  # FIXED: Automatically set delivered_at timestamp on message creation
-  def set_delivered_at
-    self.delivered_at ||= Time.current
+  # FIXED: Automatically set sent_at timestamp on message creation
+  def set_sent_at
+    self.sent_at ||= Time.current
   end
   
   def update_conversation_activity
