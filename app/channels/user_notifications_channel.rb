@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - FIXED: Instant message broadcasting
+# app/channels/user_notifications_channel.rb - FIXED: Message read broadcast with individual acknowledgments
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -151,8 +151,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         "conversation_#{message.conversation_id}",
         {
           type: 'message_acknowledged',
-          message_id: message_id,
-          conversation_id: message.conversation_id,
+          message_id: message_id.to_s,
+          conversation_id: message.conversation_id.to_s,
           status: status,
           acknowledged_by: current_user.id,
           timestamp: Time.current.iso8601
@@ -176,14 +176,19 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # CRITICAL FIX: Broadcast individual message acknowledgments
   def mark_message_read(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      unread_messages = conversation.messages.where(read_at: nil)
+      # Get unread messages and their IDs BEFORE updating
+      unread_messages = conversation.messages.where(read_at: nil).where.not(user_id: current_user.id)
+      unread_message_ids = unread_messages.pluck(:id)
+      
       now = Time.current
       
+      # Update all unread messages
       unread_messages.update_all(
         delivered_at: now,
         read_at: now
@@ -192,6 +197,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       conversation.mark_read_by(current_user) if conversation.respond_to?(:mark_read_by)
       broadcast_message_counts
       
+      # Broadcast conversation_read (for overall conversation status)
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -199,16 +205,34 @@ class UserNotificationsChannel < ApplicationCable::Channel
           user_id: current_user.id,
           user_name: current_user.display_name || current_user.email,
           reader_name: current_user.display_name || current_user.email,
-          conversation_id: conversation_id,
+          conversation_id: conversation_id.to_s,
           timestamp: now.iso8601
         }
       )
       
+      # CRITICAL FIX: Broadcast individual message acknowledgments for blue ticks
+      unread_message_ids.each do |message_id|
+        ActionCable.server.broadcast(
+          "conversation_#{conversation_id}",
+          {
+            type: 'message_acknowledged',
+            message_id: message_id.to_s,
+            conversation_id: conversation_id.to_s,
+            status: 'read',
+            acknowledged_by: current_user.id,
+            timestamp: now.iso8601
+          }
+        )
+      end
+      
       transmit({
         type: 'message_read_success',
         conversation_id: conversation_id,
+        messages_marked: unread_message_ids.size,
         timestamp: now.iso8601
       })
+      
+      Rails.logger.info "Marked #{unread_message_ids.size} messages as read in conversation #{conversation_id}"
       
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for mark_message_read: #{e.message}"
@@ -404,8 +428,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       )
       
       if message.persisted?
-        # Let the model callback handle broadcasting
-        
         transmit({
           type: 'message_sent',
           success: true,
@@ -482,32 +504,29 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # CRITICAL FIX: Class method called by Message model after_create_commit
   def self.broadcast_new_message(message)
     begin
       return unless message&.conversation_id
       
-      # Eager load associations to avoid N+1
       conversation = message.conversation
       return unless conversation
       
       user = message.user
       return unless user
       
-      # FIXED: Format message data to match frontend expectations EXACTLY
       message_data = {
         id: message.id.to_s,
         content: message.content,
         message_type: message.message_type || 'text',
         user_id: user.id.to_s,
         user_name: user.display_name.presence || user.name.presence || user.email.presence || 'Unknown User',
-        from_support: message.from_support?, # Use Message model method
+        from_support: message.from_support?,
         is_system: message.is_system?,
         created_at: message.created_at.iso8601,
         sent_at: message.sent_at&.iso8601,
         delivered_at: message.delivered_at&.iso8601,
         read_at: message.read_at&.iso8601,
-        timestamp: message.created_at.strftime('%H:%M'), # Frontend expects this format
+        timestamp: message.created_at.strftime('%H:%M'),
         metadata: message.metadata || {},
         temp_id: message.metadata&.dig('temp_id')
       }
@@ -519,17 +538,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       }
       
-      # 1. Broadcast to conversation channel (active chat users)
       ActionCable.server.broadcast(
         "conversation_#{conversation.id}",
         broadcast_payload
       )
       
-      # 2. Broadcast to each participant's personal channel (dashboard/other screens)
       participant_ids = conversation.conversation_participants.pluck(:user_id)
       
       participant_ids.each do |participant_id|
-        next if participant_id == user.id # Don't send to sender via user_messages channel
+        next if participant_id == user.id
         
         ActionCable.server.broadcast(
           "user_messages_#{participant_id}",
@@ -540,10 +557,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
         )
       end
       
-      Rails.logger.info "✅ Broadcasted message #{message.id} to conversation_#{conversation.id} and #{participant_ids.size} user channels"
+      Rails.logger.info "Broadcasted message #{message.id} to conversation_#{conversation.id} and #{participant_ids.size} user channels"
       
     rescue => e
-      Rails.logger.error "❌ Failed to broadcast message #{message&.id}: #{e.message}"
+      Rails.logger.error "Failed to broadcast message #{message&.id}: #{e.message}"
       Rails.logger.error e.backtrace.first(10).join("\n")
     end
   end
@@ -764,6 +781,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
             "conversation_#{conversation_id}",
             {
               type: 'user_presence_changed',
+              conversation_id: conversation_id,
               **user_presence_data
             }
           )
