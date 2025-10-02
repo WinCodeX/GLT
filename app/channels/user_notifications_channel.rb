@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - Fixed with comprehensive message broadcasting
+# app/channels/user_notifications_channel.rb - FIXED: Instant message broadcasting
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -13,7 +13,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     subscribe_to_business_channels
     subscribe_to_support_channels
     
-    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates including app updates"
+    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates"
     
     update_user_presence_status('online')
     send_initial_state
@@ -55,8 +55,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         user_id: current_user.id,
         timestamp: Time.current.iso8601
       })
-      
-      Rails.logger.debug "Presence updated for user #{current_user.id}: #{effective_status}"
       
     rescue => e
       Rails.logger.error "Failed to update presence: #{e.message}"
@@ -168,8 +166,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "Message #{message_id} marked as #{status} by user #{current_user.id}"
-      
     rescue => e
       Rails.logger.error "Failed to acknowledge message: #{e.message}"
       transmit({
@@ -193,7 +189,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         read_at: now
       )
       
-      conversation.mark_read_by(current_user)
+      conversation.mark_read_by(current_user) if conversation.respond_to?(:mark_read_by)
       broadcast_message_counts
       
       ActionCable.server.broadcast(
@@ -213,8 +209,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         conversation_id: conversation_id,
         timestamp: now.iso8601
       })
-      
-      Rails.logger.info "User #{current_user.id} marked conversation #{conversation_id} as read"
       
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for mark_message_read: #{e.message}"
@@ -247,10 +241,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "User #{current_user.id} marked notification #{notification_id} as read"
-      
     rescue ActiveRecord::RecordNotFound => e
-      Rails.logger.error "Notification not found for mark_notification_read: #{e.message}"
+      Rails.logger.error "Notification not found: #{e.message}"
       transmit({
         type: 'error',
         message: 'Notification not found',
@@ -291,8 +283,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         typing: typing
       })
       
-      Rails.logger.info "Typing indicator broadcast for user #{current_user.id} in conversation #{conversation_id}: #{typing}"
-      
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error "Conversation not found for typing indicator: #{e.message}"
       transmit({
@@ -315,7 +305,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # CRITICAL: This sets up the stream for conversation-specific messages
       stream_from "conversation_#{conversation_id}"
       
       user_presence = get_user_presence_data(current_user.id)
@@ -342,10 +331,10 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "User #{current_user.id} joined and streaming conversation #{conversation_id}"
+      Rails.logger.info "User #{current_user.id} joined conversation #{conversation_id}"
       
     rescue ActiveRecord::RecordNotFound => e
-      Rails.logger.error "Conversation not found for join: #{e.message}"
+      Rails.logger.error "Conversation not found: #{e.message}"
       transmit({
         type: 'error',
         message: 'Conversation not found or access denied',
@@ -386,8 +375,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601
       })
       
-      Rails.logger.info "User #{current_user.id} left conversation #{conversation_id}"
-      
     rescue => e
       Rails.logger.error "Failed to leave conversation: #{e.message}"
       transmit({
@@ -398,7 +385,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: New method for sending messages with comprehensive broadcasting
   def send_message(data)
     begin
       conversation_id = data['conversation_id']
@@ -413,21 +399,22 @@ class UserNotificationsChannel < ApplicationCable::Channel
         user: current_user,
         content: content,
         message_type: message_type,
-        metadata: metadata,
+        metadata: metadata.merge(temp_id: temp_id).compact,
         sent_at: Time.current
       )
       
       if message.persisted?
-        # Broadcast to ALL relevant channels
-        broadcast_message_to_all_channels(message, temp_id)
+        # Let the model callback handle broadcasting
         
         transmit({
           type: 'message_sent',
           success: true,
-          message: format_message_for_broadcast(message),
+          message_id: message.id,
           temp_id: temp_id,
           timestamp: Time.current.iso8601
         })
+        
+        Rails.logger.info "Message #{message.id} created successfully"
       else
         transmit({
           type: 'error',
@@ -438,7 +425,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       end
       
     rescue ActiveRecord::RecordNotFound => e
-      Rails.logger.error "Conversation not found for send_message: #{e.message}"
+      Rails.logger.error "Conversation not found: #{e.message}"
       transmit({
         type: 'error',
         message: 'Conversation not found',
@@ -446,6 +433,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       })
     rescue => e
       Rails.logger.error "Failed to send message: #{e.message}"
+      Rails.logger.error e.backtrace.first(5).join("\n")
       transmit({
         type: 'error',
         message: 'Failed to send message',
@@ -469,7 +457,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
           timestamp: Time.current.iso8601
         })
         
-        Rails.logger.info "User #{current_user.id} subscribed to business #{business_id} updates"
+        Rails.logger.info "User #{current_user.id} subscribed to business #{business_id}"
       else
         transmit({
           type: 'error',
@@ -485,7 +473,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         error_code: 'BUSINESS_NOT_FOUND'
       })
     rescue => e
-      Rails.logger.error "Failed to subscribe to business updates: #{e.message}"
+      Rails.logger.error "Failed to subscribe to business: #{e.message}"
       transmit({
         type: 'error',
         message: 'Failed to subscribe to business updates',
@@ -494,44 +482,57 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # FIXED: Class method to broadcast messages from anywhere in the app
+  # CRITICAL FIX: Class method called by Message model after_create_commit
   def self.broadcast_new_message(message)
     begin
+      return unless message&.conversation_id
+      
+      # Eager load associations to avoid N+1
       conversation = message.conversation
+      return unless conversation
+      
+      user = message.user
+      return unless user
+      
+      # FIXED: Format message data to match frontend expectations EXACTLY
       message_data = {
-        id: message.id,
+        id: message.id.to_s,
         content: message.content,
-        message_type: message.message_type,
-        user_id: message.user_id,
-        user_name: message.user&.display_name || message.user&.email || 'Unknown User',
-        from_support: message.user&.support_agent? || false,
+        message_type: message.message_type || 'text',
+        user_id: user.id.to_s,
+        user_name: user.display_name.presence || user.name.presence || user.email.presence || 'Unknown User',
+        from_support: message.from_support?, # Use Message model method
+        is_system: message.is_system?,
         created_at: message.created_at.iso8601,
         sent_at: message.sent_at&.iso8601,
         delivered_at: message.delivered_at&.iso8601,
         read_at: message.read_at&.iso8601,
-        formatted_timestamp: message.created_at.strftime('%H:%M'),
-        metadata: message.metadata || {}
+        timestamp: message.created_at.strftime('%H:%M'), # Frontend expects this format
+        metadata: message.metadata || {},
+        temp_id: message.metadata&.dig('temp_id')
       }
       
       broadcast_payload = {
         type: 'new_message',
         message: message_data,
-        conversation_id: conversation.id,
-        timestamp: message.created_at.iso8601
+        conversation_id: conversation.id.to_s,
+        timestamp: Time.current.iso8601
       }
       
-      # 1. Broadcast to conversation channel (for users actively in the chat)
+      # 1. Broadcast to conversation channel (active chat users)
       ActionCable.server.broadcast(
         "conversation_#{conversation.id}",
         broadcast_payload
       )
       
-      # 2. Broadcast to each participant's user message channel (for dashboard/other screens)
-      conversation.conversation_participants.each do |participant|
-        next if participant.user_id == message.user_id # Don't send to sender
+      # 2. Broadcast to each participant's personal channel (dashboard/other screens)
+      participant_ids = conversation.conversation_participants.pluck(:user_id)
+      
+      participant_ids.each do |participant_id|
+        next if participant_id == user.id # Don't send to sender via user_messages channel
         
         ActionCable.server.broadcast(
-          "user_messages_#{participant.user_id}",
+          "user_messages_#{participant_id}",
           broadcast_payload.merge(
             notification: true,
             unread: true
@@ -539,58 +540,15 @@ class UserNotificationsChannel < ApplicationCable::Channel
         )
       end
       
-      Rails.logger.info "Broadcasted message #{message.id} to conversation #{conversation.id} and all participant channels"
+      Rails.logger.info "✅ Broadcasted message #{message.id} to conversation_#{conversation.id} and #{participant_ids.size} user channels"
       
     rescue => e
-      Rails.logger.error "Failed to broadcast message: #{e.message}"
-      Rails.logger.error e.backtrace.join("\n")
+      Rails.logger.error "❌ Failed to broadcast message #{message&.id}: #{e.message}"
+      Rails.logger.error e.backtrace.first(10).join("\n")
     end
   end
 
   private
-
-  # FIXED: Comprehensive message broadcasting to all channels
-  def broadcast_message_to_all_channels(message, temp_id = nil)
-    begin
-      conversation = message.conversation
-      message_data = format_message_for_broadcast(message)
-      message_data[:temp_id] = temp_id if temp_id
-      
-      broadcast_payload = {
-        type: 'new_message',
-        message: message_data,
-        conversation_id: conversation.id,
-        timestamp: message.created_at.iso8601
-      }
-      
-      # 1. Broadcast to conversation channel (for users actively in the chat)
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        broadcast_payload
-      )
-      Rails.logger.debug "Broadcasted to conversation_#{conversation.id}"
-      
-      # 2. Broadcast to each participant's user message channel
-      conversation.conversation_participants.each do |participant|
-        next if participant.user_id == current_user.id # Don't send to self
-        
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.user_id}",
-          broadcast_payload.merge(
-            notification: true,
-            unread: true
-          )
-        )
-        Rails.logger.debug "Broadcasted to user_messages_#{participant.user_id}"
-      end
-      
-      Rails.logger.info "Successfully broadcasted message #{message.id} to all channels"
-      
-    rescue => e
-      Rails.logger.error "Failed to broadcast message to all channels: #{e.message}"
-      Rails.logger.error e.backtrace.join("\n")
-    end
-  end
 
   def retry_undelivered_messages_to_user
     begin
@@ -606,37 +564,21 @@ class UserNotificationsChannel < ApplicationCable::Channel
                                     .limit(100)
       
       if undelivered_messages.any?
-        Rails.logger.info "Retrying delivery of #{undelivered_messages.count} undelivered messages DIRECTLY to user #{current_user.id}"
+        Rails.logger.info "Retrying #{undelivered_messages.count} undelivered messages to user #{current_user.id}"
         
         undelivered_messages.each do |message|
           begin
             message_data = format_message_for_broadcast(message)
             
-            # Send directly to user via transmit
             transmit({
               type: 'new_message',
               message: message_data,
               conversation_id: message.conversation_id,
               timestamp: message.created_at.iso8601,
-              retry: true,
-              retry_reason: 'undelivered_on_reconnect'
+              retry: true
             })
             
-            # Also broadcast to conversation channel
-            ActionCable.server.broadcast(
-              "conversation_#{message.conversation_id}",
-              {
-                type: 'new_message',
-                message: message_data,
-                conversation_id: message.conversation_id,
-                timestamp: message.created_at.iso8601,
-                retry: true
-              }
-            )
-            
             message.update_column(:delivered_at, Time.current)
-            
-            Rails.logger.debug "Retried message #{message.id} directly to user #{current_user.id}"
             
           rescue => e
             Rails.logger.error "Failed to retry message #{message.id}: #{e.message}"
@@ -644,31 +586,28 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
         
         broadcast_message_counts
-        
-        Rails.logger.info "Completed retry of #{undelivered_messages.count} messages to user #{current_user.id}"
-      else
-        Rails.logger.debug "No undelivered messages found for user #{current_user.id}"
       end
       
     rescue => e
-      Rails.logger.error "Failed to retry undelivered messages to user: #{e.message}"
-      Rails.logger.error e.backtrace.join("\n")
+      Rails.logger.error "Failed to retry undelivered messages: #{e.message}"
     end
   end
 
   def format_message_for_broadcast(message)
+    user = message.user
     {
-      id: message.id,
+      id: message.id.to_s,
       content: message.content,
-      message_type: message.message_type,
-      user_id: message.user_id,
-      user_name: message.user&.display_name || message.user&.email || 'Unknown User',
-      from_support: message.user&.support_agent? || false,
+      message_type: message.message_type || 'text',
+      user_id: user&.id&.to_s || '',
+      user_name: user&.display_name.presence || user&.name.presence || user&.email.presence || 'Unknown User',
+      from_support: message.from_support?,
+      is_system: message.is_system?,
       created_at: message.created_at.iso8601,
       sent_at: message.sent_at&.iso8601,
       delivered_at: message.delivered_at&.iso8601,
       read_at: message.read_at&.iso8601,
-      formatted_timestamp: message.created_at.strftime('%H:%M'),
+      timestamp: message.created_at.strftime('%H:%M'),
       metadata: message.metadata || {}
     }
   end
@@ -702,10 +641,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         current_user.mark_online! unless current_user.online?
       end
       
-      Rails.logger.debug "Presence updated for user #{current_user.id}: #{status} (DB online: #{current_user.reload.online?})"
-      
     rescue => e
-      Rails.logger.error "Failed to update user presence status: #{e.message}"
+      Rails.logger.error "Failed to update presence: #{e.message}"
     end
   end
 
@@ -764,7 +701,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       }
       
     rescue => e
-      Rails.logger.error "Failed to get user presence data: #{e.message}"
+      Rails.logger.error "Failed to get presence: #{e.message}"
       {
         user_id: user_id,
         status: 'offline',
@@ -787,7 +724,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       get_users_presence_data(participant_ids)
     rescue => e
-      Rails.logger.error "Failed to get conversation participants presence: #{e.message}"
+      Rails.logger.error "Failed to get participants presence: #{e.message}"
       []
     end
   end
@@ -819,7 +756,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       if current_user.respond_to?(:conversations)
         active_conversation_ids = current_user.conversations
-                                             .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                                             .where("conversations.metadata->>'status' IN (?)", ['pending', 'in_progress'])
                                              .pluck(:id)
         
         active_conversation_ids.each do |conversation_id|
@@ -833,10 +770,8 @@ class UserNotificationsChannel < ApplicationCable::Channel
         end
       end
       
-      Rails.logger.debug "Broadcasted presence update for user #{current_user.id}: #{status}"
-      
     rescue => e
-      Rails.logger.error "Failed to broadcast presence update: #{e.message}"
+      Rails.logger.error "Failed to broadcast presence: #{e.message}"
     end
   end
 
@@ -875,13 +810,9 @@ class UserNotificationsChannel < ApplicationCable::Channel
         
         initial_state_data[:dashboard_stats] = dashboard_stats
         initial_state_data[:agent_stats] = agent_stats
-        
-        Rails.logger.info "Initial state sent to support user #{current_user.id} with dashboard stats"
       end
       
       transmit(initial_state_data)
-      
-      Rails.logger.info "Initial state sent to user #{current_user.id}: notifications=#{notification_count}, cart=#{cart_count}, messages=#{unread_messages_count}"
       
     rescue => e
       Rails.logger.error "Failed to send initial state: #{e.message}"
@@ -908,8 +839,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         timestamp: Time.current.iso8601,
         user_id: current_user.id
       })
-      
-      Rails.logger.info "Initial counts sent to user #{current_user.id}: notifications=#{notification_count}, cart=#{cart_count}, messages=#{unread_messages_count}"
       
     rescue => e
       Rails.logger.error "Failed to send initial counts: #{e.message}"
@@ -940,8 +869,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       
       stream_from "user_businesses_#{current_user.id}"
       
-      Rails.logger.info "User #{current_user.id} subscribed to #{business_ids.count} business channels"
-      
     rescue => e
       Rails.logger.error "Failed to subscribe to business channels: #{e.message}"
     end
@@ -952,20 +879,16 @@ class UserNotificationsChannel < ApplicationCable::Channel
       if is_support_user?
         stream_from "support_dashboard"
         stream_from "support_tickets"
-        
-        Rails.logger.info "User #{current_user.id} subscribed to support dashboard and tickets channels"
       end
       
       if current_user.respond_to?(:conversations)
         active_conversation_ids = current_user.conversations
-                                             .where("metadata->>'status' IN (?)", ['pending', 'in_progress'])
+                                             .where("conversations.metadata->>'status' IN (?)", ['pending', 'in_progress'])
                                              .pluck(:id)
         
         active_conversation_ids.each do |conversation_id|
           stream_from "conversation_#{conversation_id}"
         end
-        
-        Rails.logger.info "User #{current_user.id} subscribed to #{active_conversation_ids.count} active conversations"
       end
       
     rescue => e
@@ -987,8 +910,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      Rails.logger.debug "Broadcasted notification count update: #{notification_count}"
-      
     rescue => e
       Rails.logger.error "Failed to broadcast notification counts: #{e.message}"
     end
@@ -1007,8 +928,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
           timestamp: Time.current.iso8601
         }
       )
-      
-      Rails.logger.debug "Broadcasted message count update: #{unread_messages_count}"
       
     rescue => e
       Rails.logger.error "Failed to broadcast message counts: #{e.message}"
@@ -1029,7 +948,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     unread_count = 0
     current_user.conversations.includes(:messages, :conversation_participants).each do |conversation|
       begin
-        last_read_at = conversation.last_read_at_for(current_user)
+        last_read_at = conversation.last_read_at_for(current_user) if conversation.respond_to?(:last_read_at_for)
         
         if last_read_at
           unread_count += conversation.messages.where('created_at > ?', last_read_at).count
@@ -1159,7 +1078,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         businesses += staff
       end
     rescue => e
-      Rails.logger.error "Failed to get user businesses info: #{e.message}"
+      Rails.logger.error "Failed to get user businesses: #{e.message}"
     end
     
     businesses
