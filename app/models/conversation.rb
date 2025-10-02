@@ -1,4 +1,4 @@
-# app/models/conversation.rb
+# app/models/conversation.rb - FIXED: Load-balanced assignment & ticket state management
 class Conversation < ApplicationRecord
   has_many :conversation_participants, dependent: :destroy
   has_many :users, through: :conversation_participants
@@ -20,7 +20,6 @@ class Conversation < ApplicationRecord
   def self.find_or_create_support_conversation(customer:)
     Rails.logger.info "🔍 Looking for existing support conversation for user #{customer.id}"
     
-    # Find existing support conversation for this user
     conversation = support_tickets.find_by(customer_id: customer.id)
     
     if conversation
@@ -42,7 +41,6 @@ class Conversation < ApplicationRecord
         }
       )
       
-      # Add customer as participant
       conversation.conversation_participants.create!(
         user: customer,
         role: 'customer',
@@ -54,19 +52,16 @@ class Conversation < ApplicationRecord
     end
   end
   
-  # FIXED: Create a new ticket within existing conversation
+  # FIXED: Create ticket with load-balanced agent assignment
   def self.create_support_ticket(customer:, category: 'general', package: nil)
     Rails.logger.info "🎫 Creating support ticket for customer #{customer.id} with category: #{category}"
     
     transaction do
-      # Find or create master conversation
       conversation = find_or_create_support_conversation(customer: customer)
       
-      # Generate new ticket
       ticket_id = generate_ticket_id
       Rails.logger.info "🔢 Generated ticket ID: #{ticket_id}"
       
-      # Build ticket data
       ticket_data = {
         ticket_id: ticket_id,
         category: category,
@@ -78,13 +73,11 @@ class Conversation < ApplicationRecord
         package_code: package&.code
       }.compact
       
-      # Add ticket to conversation
       conversation.tickets ||= []
       conversation.tickets << ticket_data
       conversation.current_ticket_id = ticket_id
       conversation.title = "Support Ticket #{ticket_id}"
       
-      # Update metadata
       conversation.metadata ||= {}
       conversation.metadata['total_tickets'] = conversation.tickets.size
       conversation.metadata['status'] = 'created'
@@ -92,7 +85,6 @@ class Conversation < ApplicationRecord
       conversation.metadata['priority'] = ticket_data[:priority]
       conversation.metadata['ticket_id'] = ticket_id
       
-      # Add package info to metadata for backward compatibility
       if package
         conversation.metadata['package_id'] = package.id
         conversation.metadata['package_code'] = package.code
@@ -102,11 +94,10 @@ class Conversation < ApplicationRecord
       
       Rails.logger.info "💬 Added ticket #{ticket_id} to conversation #{conversation.id}"
       
-      # Create system message for new ticket
       create_new_ticket_message(conversation, ticket_data)
       
-      # Auto-assign agent silently
-      agent = assign_support_agent_silently(conversation)
+      # FIXED: Load-balanced agent assignment
+      agent = assign_support_agent_with_load_balancing(conversation)
       
       Rails.logger.info "✅ Ticket creation completed"
       
@@ -129,13 +120,12 @@ class Conversation < ApplicationRecord
     tickets || []
   end
   
-  # Close current ticket (not entire conversation)
+  # FIXED: Close current ticket properly
   def close_current_ticket
     return unless current_ticket_id
     
     Rails.logger.info "🔒 Closing ticket #{current_ticket_id} in conversation #{id}"
     
-    # Update ticket status in tickets array
     if tickets.present?
       ticket = tickets.find { |t| t['ticket_id'] == current_ticket_id }
       if ticket
@@ -144,21 +134,21 @@ class Conversation < ApplicationRecord
       end
     end
     
-    # Update metadata for backward compatibility
-    metadata['status'] = 'closed'
-    
-    # Clear current ticket (ready for new ticket)
+    # Clear current ticket ID to indicate no active ticket
     self.current_ticket_id = nil
     
+    # Update metadata to reflect closed state
+    metadata['status'] = 'closed'
+    metadata['closed_at'] = Time.current.iso8601
+    
     save!
-    Rails.logger.info "✅ Ticket closed, conversation remains open"
+    Rails.logger.info "✅ Ticket closed, conversation remains open for new tickets"
   end
   
-  # Reopen ticket or create new one
+  # FIXED: Reopen with load-balanced assignment
   def reopen_or_create_ticket(category: 'general', package: nil)
-    Rails.logger.info "🔄 Reopening or creating new ticket in conversation #{id}"
+    Rails.logger.info "🔄 Creating new ticket in conversation #{id}"
     
-    # Generate new ticket
     ticket_id = self.class.generate_ticket_id
     
     ticket_data = {
@@ -172,13 +162,11 @@ class Conversation < ApplicationRecord
       package_code: package&.code
     }.compact
     
-    # Add ticket to array
     self.tickets ||= []
     self.tickets << ticket_data
     self.current_ticket_id = ticket_id
     self.title = "Support Ticket #{ticket_id}"
     
-    # Update metadata
     metadata['total_tickets'] = tickets.size
     metadata['status'] = 'created'
     metadata['category'] = category
@@ -192,15 +180,16 @@ class Conversation < ApplicationRecord
     
     save!
     
-    # Create system message
     self.class.create_new_ticket_message(self, ticket_data)
     
-    Rails.logger.info "✅ New ticket #{ticket_id} created"
+    # FIXED: Load-balanced agent assignment for new ticket
+    self.class.assign_support_agent_with_load_balancing(self)
+    
+    Rails.logger.info "✅ New ticket #{ticket_id} created with load-balanced agent"
     
     self
   end
   
-  # Support ticket methods
   def support_ticket?
     conversation_type == 'support_ticket'
   end
@@ -213,8 +202,13 @@ class Conversation < ApplicationRecord
     current_ticket_id || metadata&.dig('ticket_id')
   end
   
+  # FIXED: Better status checking
   def status
-    metadata&.dig('status') || 'unknown'
+    # If no current ticket, conversation is closed
+    return 'closed' if current_ticket_id.nil?
+    
+    # Check current ticket status
+    current_ticket&.dig('status') || metadata&.dig('status') || 'unknown'
   end
   
   def category
@@ -261,20 +255,19 @@ class Conversation < ApplicationRecord
     
     Rails.logger.info "🔄 Updating conversation #{id} status to '#{new_status}'"
     
-    # Update current ticket status
     if current_ticket_id && tickets.present?
       ticket = tickets.find { |t| t['ticket_id'] == current_ticket_id }
       ticket['status'] = new_status if ticket
     end
     
-    # Update metadata
     self.metadata = (metadata || {}).merge({
       'status' => new_status,
       'updated_at' => Time.current.iso8601
     })
     
-    # If closing, clear current_ticket_id
-    self.current_ticket_id = nil if new_status == 'closed'
+    if new_status == 'closed'
+      self.current_ticket_id = nil
+    end
     
     save!
   end
@@ -346,46 +339,51 @@ class Conversation < ApplicationRecord
     Rails.logger.error "❌ Failed to create ticket message: #{e.message}"
   end
   
-  def self.assign_support_agent_silently(conversation)
-    agent = find_available_agent
-    
-    if agent
-      Rails.logger.info "👩‍💼 Assigning agent #{agent.id} to conversation #{conversation.id}"
+  # FIXED: Load-balanced agent assignment
+  def self.assign_support_agent_with_load_balancing(conversation)
+    begin
+      available_agents = User.where("email LIKE ? OR email LIKE ?", '%@glt.co.ke', '%support@%')
+                            .where.not(id: conversation.customer_id)
       
-      unless conversation.conversation_participants.exists?(user: agent, role: 'agent')
+      if available_agents.empty?
+        Rails.logger.warn "⚠️ No support agents available"
+        return nil
+      end
+      
+      # Count active tickets per agent for load balancing
+      agent_loads = available_agents.map do |agent|
+        active_ticket_count = Conversation.support_tickets
+                                         .joins(:conversation_participants)
+                                         .where(conversation_participants: { user_id: agent.id, role: 'agent' })
+                                         .where.not(current_ticket_id: nil)
+                                         .distinct
+                                         .count
+        
+        { agent: agent, load: active_ticket_count }
+      end
+      
+      # Select agent with least active tickets
+      selected_agent_data = agent_loads.min_by { |data| data[:load] }
+      selected_agent = selected_agent_data[:agent]
+      
+      Rails.logger.info "👩‍💼 Assigning agent #{selected_agent.id} (load: #{selected_agent_data[:load]}) to conversation #{conversation.id}"
+      
+      # Check if agent already assigned
+      unless conversation.conversation_participants.exists?(user: selected_agent, role: 'agent')
         conversation.conversation_participants.create!(
-          user: agent,
+          user: selected_agent,
           role: 'agent',
           joined_at: Time.current
         )
       end
       
       conversation.update_support_status('pending')
-    else
-      Rails.logger.warn "⚠️ No available agent found"
+      
+      selected_agent
+    rescue => e
+      Rails.logger.error "❌ Failed to assign agent: #{e.message}"
+      nil
     end
-    
-    agent
-  rescue => e
-    Rails.logger.error "❌ Failed to assign agent: #{e.message}"
-    nil
-  end
-  
-  def self.find_available_agent
-    agents_found = []
-    
-    begin
-      agents_found.concat(User.with_role(:support).limit(10).to_a)
-    rescue
-    end
-    
-    begin
-      agents_found.concat(User.where("email LIKE ? OR email LIKE ?", '%support@%', '%@glt.co.ke').limit(10).to_a)
-    rescue
-    end
-    
-    unique_agents = agents_found.uniq(&:id)
-    unique_agents.first
   end
   
   def self.find_support_user_for_system_messages
