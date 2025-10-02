@@ -71,6 +71,16 @@ create_user_safely(
   phone_number: "+254712293377",
   role: :support
 )
+
+# Add this after your existing admin users
+create_user_safely(
+  email: "glen@gltsupport.co.ke",
+  password: "Leviathan@Xcode",
+  first_name: "Glen",
+  last_name: "Support",
+  phone_number: "+254712293377",
+  role: :support
+)
     
     # Create main application users
     create_user_safely(
