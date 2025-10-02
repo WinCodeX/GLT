@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb - FIXED: Instant broadcasting
+# app/controllers/api/v1/conversations_controller.rb - FIXED: Load-balanced assignment & conversation reuse
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
   
@@ -88,16 +88,19 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # POST /api/v1/conversations/support_ticket
+  # POST /api/v1/conversations/support_ticket - FIXED: Load-balanced assignment & conversation reuse
   def create_support_ticket
     Rails.logger.info "Creating support ticket for user #{current_user.id}"
     
     begin
       package = safely_find_package_for_ticket
+      category = params[:category] || 'general'
       
+      # FIXED: Find existing conversation for this customer
       existing_conversation = Conversation.support_tickets.find_by(customer_id: current_user.id)
       
       if existing_conversation
+        # Check if there's an active ticket
         if existing_conversation.current_ticket_id.present?
           Rails.logger.info "User has active ticket: #{existing_conversation.current_ticket_id}"
           return render json: {
@@ -109,13 +112,16 @@ class Api::V1::ConversationsController < ApplicationController
           }
         end
         
+        # FIXED: Create new ticket in existing conversation after previous was closed
         Rails.logger.info "Creating new ticket in existing conversation #{existing_conversation.id}"
         existing_conversation.reopen_or_create_ticket(
-          category: params[:category] || 'general',
+          category: category,
           package: package
         )
         
-        # FIXED: Broadcast to support dashboard
+        # FIXED: Assign agent with load balancing for new ticket
+        assign_agent_to_ticket(existing_conversation)
+        
         broadcast_new_support_ticket_to_dashboard(existing_conversation)
         
         return render json: {
@@ -123,20 +129,23 @@ class Api::V1::ConversationsController < ApplicationController
           conversation: efficiently_format_conversation_detail(existing_conversation),
           conversation_id: existing_conversation.id,
           ticket_id: existing_conversation.current_ticket_id,
-          message: 'New support ticket created'
+          message: 'New support ticket created in existing conversation'
         }, status: :created
       end
 
+      # Create first conversation for this customer
       @conversation = Conversation.create_support_ticket(
         customer: current_user,
-        category: params[:category] || 'general',
+        category: category,
         package: package
       )
 
       if @conversation&.persisted?
         Rails.logger.info "Created first support conversation: #{@conversation.id}"
         
-        # FIXED: Broadcast to support dashboard
+        # FIXED: Assign agent with load balancing for first ticket
+        assign_agent_to_ticket(@conversation)
+        
         broadcast_new_support_ticket_to_dashboard(@conversation)
         
         render json: {
@@ -161,59 +170,55 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
-  # POST /api/v1/conversations/:id/send_message - FIXED: Instant broadcasting
+  # POST /api/v1/conversations/:id/send_message
   def send_message
-  Rails.logger.info "Sending message to conversation #{params[:id]}"
+    Rails.logger.info "Sending message to conversation #{params[:id]}"
 
-  begin
-    unless @conversation
-      return render json: { success: false, message: 'Conversation not found' }, status: :not_found
-    end
-
-    @message = @conversation.messages.build(
-      content: params[:content],
-      message_type: params[:message_type] || 'text',
-      user: current_user,
-      metadata: parse_lightweight_metadata
-    )
-
-    if @message.save
-      Rails.logger.info "Message saved: #{@message.id} - broadcasting handled by model callback"
-
-      @conversation.touch(:last_activity_at)
-      update_support_ticket_status_if_needed
-
-      # REMOVED: broadcast_message_immediately - now handled by Message model callback
-      # REMOVED: broadcast_message_to_support_dashboard - should be added to model callback
-
-      # Keep notifications - they're separate from broadcasting
-      if @conversation.support_ticket? && !@message.is_system?
-        send_support_notifications_immediate(@message)
+    begin
+      unless @conversation
+        return render json: { success: false, message: 'Conversation not found' }, status: :not_found
       end
 
-      render json: {
-        success: true,
-        message: efficiently_format_message(@message),
-        conversation: {
-          id: @conversation.id,
-          last_activity_at: @conversation.last_activity_at,
-          status: @conversation.status,
-          current_ticket_id: @conversation.current_ticket_id
-        }
-      }
-    else
-      render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
-    end
+      @message = @conversation.messages.build(
+        content: params[:content],
+        message_type: params[:message_type] || 'text',
+        user: current_user,
+        metadata: parse_lightweight_metadata
+      )
 
-  rescue => e
-    Rails.logger.error "Error sending message: #{e.message}"
-    render json: { 
-      success: false, 
-      message: 'Failed to send message',
-      error: Rails.env.development? ? e.message : 'Internal server error'
-    }, status: :internal_server_error
+      if @message.save
+        Rails.logger.info "Message saved: #{@message.id} - broadcasting handled by model callback"
+
+        @conversation.touch(:last_activity_at)
+        update_support_ticket_status_if_needed
+
+        if @conversation.support_ticket? && !@message.is_system?
+          send_support_notifications_immediate(@message)
+        end
+
+        render json: {
+          success: true,
+          message: efficiently_format_message(@message),
+          conversation: {
+            id: @conversation.id,
+            last_activity_at: @conversation.last_activity_at,
+            status: @conversation.status,
+            current_ticket_id: @conversation.current_ticket_id
+          }
+        }
+      else
+        render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
+      end
+
+    rescue => e
+      Rails.logger.error "Error sending message: #{e.message}"
+      render json: { 
+        success: false, 
+        message: 'Failed to send message',
+        error: Rails.env.development? ? e.message : 'Internal server error'
+      }, status: :internal_server_error
+    end
   end
-end
 
   # GET /api/v1/conversations/active_support
   def active_support
@@ -316,7 +321,7 @@ end
     end
   end
 
-  # PATCH /api/v1/conversations/:id/reopen
+  # PATCH /api/v1/conversations/:id/reopen - FIXED: Assigns agent on reopen
   def reopen
     unless @conversation&.support_ticket?
       return render json: { success: false, message: 'Only support tickets can be reopened' }, status: :unprocessable_entity
@@ -324,11 +329,15 @@ end
 
     begin
       package = safely_find_package_for_ticket
+      category = params[:category] || 'general'
       
       @conversation.reopen_or_create_ticket(
-        category: params[:category] || 'general',
+        category: category,
         package: package
       )
+      
+      # FIXED: Assign agent with load balancing on reopen
+      assign_agent_to_ticket(@conversation)
       
       system_message = create_system_message(
         "New support ticket #{@conversation.current_ticket_id} created.",
@@ -358,6 +367,70 @@ end
     @conversation = current_user.conversations.find(params[:id])
   rescue ActiveRecord::RecordNotFound
     @conversation = nil
+  end
+
+  # FIXED: Load-balanced agent assignment
+  def assign_agent_to_ticket(conversation)
+    return unless conversation&.support_ticket?
+    
+    begin
+      # Find all available support agents
+      available_agents = User.where("email LIKE ? OR email LIKE ?", '%@glt.co.ke', '%support@%')
+                            .where.not(id: conversation.customer_id)
+      
+      if available_agents.empty?
+        Rails.logger.warn "No support agents available for assignment"
+        return
+      end
+      
+      # Count active tickets per agent for load balancing
+      agent_loads = available_agents.map do |agent|
+        active_ticket_count = Conversation.support_tickets
+                                         .joins(:conversation_participants)
+                                         .where(conversation_participants: { user_id: agent.id, role: 'agent' })
+                                         .where(status: ['pending', 'in_progress'])
+                                         .distinct
+                                         .count
+        
+        { agent: agent, load: active_ticket_count }
+      end
+      
+      # Select agent with least active tickets
+      selected_agent_data = agent_loads.min_by { |data| data[:load] }
+      selected_agent = selected_agent_data[:agent]
+      
+      # Check if agent is already assigned
+      existing_participant = conversation.conversation_participants.find_by(user: selected_agent)
+      
+      if existing_participant
+        Rails.logger.info "Agent #{selected_agent.id} already assigned to conversation #{conversation.id}"
+      else
+        # Assign agent to conversation
+        conversation.conversation_participants.create!(
+          user: selected_agent,
+          role: 'agent',
+          joined_at: Time.current
+        )
+        
+        Rails.logger.info "✅ Assigned agent #{selected_agent.id} (load: #{selected_agent_data[:load]}) to conversation #{conversation.id}"
+        
+        # Broadcast assignment
+        ActionCable.server.broadcast(
+          "support_dashboard",
+          {
+            type: 'ticket_assigned',
+            conversation_id: conversation.id,
+            ticket_id: conversation.current_ticket_id || conversation.ticket_id,
+            agent_id: selected_agent.id,
+            agent_name: selected_agent.display_name || selected_agent.email,
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+      
+    rescue => e
+      Rails.logger.error "❌ Error assigning agent: #{e.message}"
+    end
   end
 
   def parse_message_limit
@@ -421,96 +494,6 @@ end
     @conversation.update_support_status('pending')
   end
 
-  # FIXED: Instant message broadcasting (no job queue)
-  def broadcast_message_immediately(conversation, message)
-    begin
-      sender = message.user
-      
-      message_payload = {
-        id: message.id,
-        content: message.content,
-        message_type: message.message_type || 'text',
-        created_at: message.created_at.iso8601,
-        timestamp: message.created_at.strftime('%H:%M'),
-        from_support: message.from_support?,
-        is_system: message.message_type == 'system',
-        delivered_at: message.delivered_at&.iso8601,
-        read_at: message.read_at&.iso8601,
-        user: {
-          id: sender.id,
-          name: sender.display_name || sender.email || 'Unknown User',
-          role: message.from_support? ? 'support' : 'customer',
-          avatar_url: get_avatar_url_safely(sender)
-        },
-        metadata: message.metadata || {}
-      }
-      
-      # Broadcast to conversation channel
-      ActionCable.server.broadcast(
-        "conversation_#{conversation.id}",
-        {
-          type: 'new_message',
-          conversation_id: conversation.id,
-          message: message_payload,
-          conversation: {
-            id: conversation.id,
-            title: conversation.title,
-            type: conversation.conversation_type,
-            status: conversation.respond_to?(:status) ? conversation.status : 'active',
-            last_activity_at: conversation.last_activity_at&.iso8601
-          },
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      # Broadcast to individual participant channels
-      conversation.conversation_participants.where.not(user_id: sender.id).each do |participant|
-        ActionCable.server.broadcast(
-          "user_messages_#{participant.user_id}",
-          {
-            type: 'new_message_notification',
-            conversation_id: conversation.id,
-            message: message_payload,
-            sender_name: sender.display_name || sender.email || 'Unknown User',
-            preview: message.content.to_s.truncate(50),
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-      
-      Rails.logger.info "✅ Message broadcast completed instantly for conversation #{conversation.id}"
-      
-    rescue => e
-      Rails.logger.error "❌ Error broadcasting message immediately: #{e.message}"
-    end
-  end
-
-  # FIXED: Broadcast new messages to support dashboard
-  def broadcast_message_to_support_dashboard(conversation, message)
-    begin
-      ActionCable.server.broadcast(
-        "support_dashboard",
-        {
-          type: 'new_message',
-          conversation_id: conversation.id,
-          ticket_id: conversation.current_ticket_id || conversation.ticket_id,
-          message: {
-            content: message.content.to_s.truncate(50),
-            created_at: message.created_at.iso8601,
-            from_support: message.from_support?
-          },
-          last_activity_at: conversation.last_activity_at&.iso8601,
-          timestamp: Time.current.iso8601
-        }
-      )
-      
-      Rails.logger.info "✅ Message broadcast to support dashboard for conversation #{conversation.id}"
-    rescue => e
-      Rails.logger.error "❌ Error broadcasting to support dashboard: #{e.message}"
-    end
-  end
-
-  # FIXED: Broadcast new ticket to support dashboard
   def broadcast_new_support_ticket_to_dashboard(conversation)
     begin
       ticket_data = efficiently_format_conversation_summary(conversation)
@@ -790,7 +773,6 @@ end
       timestamp: Time.current.iso8601
     })
     
-    # FIXED: Also broadcast to support dashboard
     ActionCable.server.broadcast("support_dashboard", {
       type: 'ticket_status_update',
       ticket_id: conversation.id,
