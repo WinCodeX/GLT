@@ -81,6 +81,24 @@ create_user_safely(
   phone_number: "+254712293377",
   role: :support
 )
+
+create_user_safely(
+  email: "glen@gltagent.co.ke",
+  password: "Leviathan@Xcode",
+  first_name: "Glen",
+  last_name: "Agent",
+  phone_number: "+254712293377",
+  role: :agent
+)
+
+create_user_safely(
+  email: "glen@gltrider.co.ke",
+  password: "Leviathan@Xcode",
+  first_name: "Glen",
+  last_name: "Rider",
+  phone_number: "+254712293377",
+  role: :rider
+)
     
     # Create main application users
     create_user_safely(
