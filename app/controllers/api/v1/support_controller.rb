@@ -1,4 +1,4 @@
-# app/controllers/api/v1/support_controller.rb - FIXED: Dashboard broadcasting
+# app/controllers/api/v1/support_controller.rb - FIXED: Ticket filtering for support staff
 class Api::V1::SupportController < ApplicationController
   include AvatarHelper
   
@@ -428,11 +428,15 @@ class Api::V1::SupportController < ApplicationController
     end
   end
 
+  # FIXED: Support staff now only see their assigned tickets
   def accessible_conversations
     if current_user.admin?
       Conversation.support_tickets
     else
-      current_user.accessible_conversations.support_tickets
+      # Support staff only see tickets assigned to them
+      Conversation.support_tickets
+                  .joins(:conversation_participants)
+                  .where(conversation_participants: { role: 'agent', user_id: current_user.id })
     end
   end
 
@@ -701,7 +705,7 @@ class Api::V1::SupportController < ApplicationController
                                  .where("metadata->>'status' IN (?)", ['assigned', 'in_progress'])
                                  .count,
       satisfaction_rating: calculate_agent_satisfaction(target_agent)
-    }
+    end
   end
 
   def get_agent_personal_stats
