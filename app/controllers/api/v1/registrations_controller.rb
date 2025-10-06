@@ -1,4 +1,4 @@
-# app/controllers/api/v1/registrations_controller.rb - API-only version
+# app/controllers/api/v1/registrations_controller.rb - FIXED: Returns token like sessions controller
 
 module Api
   module V1
@@ -8,7 +8,7 @@ module Api
       before_action :configure_account_update_params, only: [:update]
 
       # ===========================================
-      # 🔐 USER REGISTRATION
+      # 🔐 USER REGISTRATION (FIXED - Returns token)
       # ===========================================
 
       def create
@@ -37,12 +37,19 @@ module Api
             # Auto-confirm for API (adjust as needed)
             resource.update!(confirmed_at: Time.current) unless resource.confirmed_at
             
-            # Let devise-jwt handle sign in and token generation
+            # CRITICAL: Let devise-jwt handle sign in and token generation
             sign_up(resource_name, resource)
+            resource.mark_online! if resource.respond_to?(:mark_online!)
+            
+            # FIXED: Extract the JWT token like sessions controller does
+            token = request.env['warden-jwt_auth.token']
+            
+            Rails.logger.info "User registration successful: #{resource.email}"
             
             render json: {
               status: 'success',
               message: 'Registration successful',
+              token: token,  # 👈 Now explicitly returning token
               user: serialize_user(resource)
             }, status: :created
           else
@@ -413,14 +420,18 @@ module Api
       end
 
       # ===========================================
-      # 🔧 DEVISE OVERRIDES
+      # 🔧 DEVISE OVERRIDES (FIXED - Returns token)
       # ===========================================
 
       def respond_with(resource, _opts = {})
         if resource.persisted?
+          # FIXED: Extract token for respond_with override
+          token = request.env['warden-jwt_auth.token']
+          
           render json: {
             status: 'success',
             message: 'Registration successful',
+            token: token,  # 👈 Token included here too
             user: serialize_user(resource)
           }, status: :created
         else
