@@ -1,4 +1,4 @@
-class AddCollectionFieldsToPackages < ActiveRecord::Migration[7.0]
+class AddPaymentFieldsToPackages < ActiveRecord::Migration[7.0]
   def change
     add_column :packages, :payment_type, :string, default: 'prepaid', null: false
     add_column :packages, :collection_amount, :decimal, precision: 15, scale: 2
