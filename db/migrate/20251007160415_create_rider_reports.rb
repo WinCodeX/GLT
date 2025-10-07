@@ -2,7 +2,8 @@
 class CreateRiderReports < ActiveRecord::Migration[7.0]
   def change
     create_table :rider_reports do |t|
-      t.references :user, null: false, foreign_key: true 
+      t.references :user, null: false, foreign_key: true                     # The user submitting the report
+      t.references :rider, null: true, foreign_key: { to_table: :users }     # The rider being reported (also a User)
       t.string :issue_type, null: false
       t.text :description, null: false
       t.decimal :location_latitude, precision: 10, scale: 6
