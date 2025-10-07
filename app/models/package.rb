@@ -46,7 +46,7 @@ class Package < ApplicationRecord
     prepaid: 'prepaid',                    # Paid upfront (default)
     pay_on_delivery: 'pay_on_delivery',   # POD - rider collects from receiver
     collect_payment: 'collect_payment'     # Sender expects payment from receiver
-  }, 
+  } 
 
   # NEW: Payment status enum
   enum payment_status: {
