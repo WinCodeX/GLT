@@ -820,13 +820,6 @@ def wallet_callback
       private
 
 
-def extract_callback_value(callback_items, key)
-  return nil unless callback_items.is_a?(Array)
-  
-  item = callback_items.find { |i| i[:Name] == key }
-  item&.dig(:Value)
-end
-
       def extract_reference_from_callback(callback_data)
         # Try to get from AccountReference
         account_ref = callback_data.dig(:CallbackMetadata, :Item)&.find { |item| 
