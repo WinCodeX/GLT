@@ -144,6 +144,23 @@ get '/logout', to: 'sessions#destroy'
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
+
+
+        # Rider routes
+      resources :riders, only: [] do
+        collection do
+          get :active_deliveries
+          post :location
+          post :offline
+          get :stats
+          get :areas
+          
+          # Reports
+          post 'reports', to: 'riders#create_report'
+          get 'reports', to: 'riders#reports'
+        end
+      end
+
       scope :support, controller: :support do
         # Dashboard and overview
         get :dashboard, to: 'support#dashboard'
