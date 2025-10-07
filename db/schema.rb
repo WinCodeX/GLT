@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
+ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -176,10 +176,17 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.datetime "last_activity_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.jsonb "tickets", default: []
+    t.string "current_ticket_id"
+    t.bigint "customer_id"
     t.index "((metadata ->> 'status'::text))", name: "index_conversations_on_status"
     t.index "((metadata ->> 'ticket_id'::text))", name: "index_conversations_on_ticket_id"
+    t.index ["conversation_type", "current_ticket_id"], name: "index_conversations_on_conversation_type_and_current_ticket_id"
     t.index ["conversation_type"], name: "index_conversations_on_conversation_type"
+    t.index ["current_ticket_id"], name: "index_conversations_on_current_ticket_id"
+    t.index ["customer_id", "conversation_type"], name: "index_conversations_on_customer_id_and_conversation_type"
     t.index ["last_activity_at"], name: "index_conversations_on_last_activity_at"
+    t.index ["tickets"], name: "index_conversations_on_tickets", using: :gin
   end
 
   create_table "locations", force: :cascade do |t|
@@ -200,10 +207,16 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.datetime "edited_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "delivered_at"
+    t.datetime "read_at"
+    t.datetime "sent_at"
     t.index ["conversation_id"], name: "index_messages_on_conversation_id"
     t.index ["created_at"], name: "index_messages_on_created_at"
+    t.index ["delivered_at"], name: "index_messages_on_delivered_at"
     t.index ["is_system"], name: "index_messages_on_is_system"
     t.index ["message_type"], name: "index_messages_on_message_type"
+    t.index ["read_at"], name: "index_messages_on_read_at"
+    t.index ["sent_at"], name: "index_messages_on_sent_at"
     t.index ["user_id"], name: "index_messages_on_user_id"
   end
 
@@ -348,11 +361,24 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.bigint "business_id"
     t.string "business_name"
     t.string "business_phone"
+    t.string "payment_type", default: "prepaid", null: false
+    t.decimal "collection_amount", precision: 15, scale: 2
+    t.decimal "actual_collected_amount", precision: 15, scale: 2
+    t.bigint "collected_by_id"
+    t.jsonb "collection_metadata", default: {}
+    t.string "payment_request_id"
+    t.string "payment_merchant_request_id"
+    t.datetime "payment_initiated_at"
+    t.datetime "payment_completed_at"
+    t.datetime "payment_failed_at"
+    t.text "payment_failure_reason"
+    t.jsonb "payment_metadata", default: {}
     t.index ["auto_rejected"], name: "index_packages_on_auto_rejected"
     t.index ["business_id", "created_at"], name: "index_packages_on_business_id_and_created_at", order: { created_at: :desc }
     t.index ["business_id"], name: "index_packages_on_business_id"
     t.index ["business_name"], name: "index_packages_on_business_name"
     t.index ["code"], name: "idx_packages_code", unique: true
+    t.index ["collected_by_id"], name: "index_packages_on_collected_by_id"
     t.index ["collection_scheduled_at"], name: "index_packages_on_collection_scheduled_at"
     t.index ["collection_type"], name: "index_packages_on_collection_type"
     t.index ["delivery_type", "state"], name: "index_packages_on_delivery_type_and_state"
@@ -365,6 +391,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.index ["origin_area_id"], name: "index_packages_on_origin_area_id"
     t.index ["payment_status", "state"], name: "index_packages_on_payment_status_and_state"
     t.index ["payment_status"], name: "index_packages_on_payment_status"
+    t.index ["payment_type", "payment_status"], name: "index_packages_on_payment_type_and_payment_status"
+    t.index ["payment_type"], name: "index_packages_on_payment_type"
     t.index ["priority_level"], name: "index_packages_on_priority_level"
     t.index ["rejected_at"], name: "index_packages_on_rejected_at"
     t.index ["resubmission_count"], name: "index_packages_on_resubmission_count"
@@ -404,6 +432,31 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.index ["token"], name: "index_push_tokens_on_token", unique: true
     t.index ["user_id", "platform"], name: "index_push_tokens_on_user_id_and_platform"
     t.index ["user_id"], name: "index_push_tokens_on_user_id"
+  end
+
+  create_table "rider_reports", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "rider_id"
+    t.string "issue_type", null: false
+    t.text "description", null: false
+    t.decimal "location_latitude", precision: 10, scale: 6
+    t.decimal "location_longitude", precision: 10, scale: 6
+    t.datetime "reported_at", null: false
+    t.string "status", default: "pending", null: false
+    t.datetime "acknowledged_at"
+    t.datetime "started_at"
+    t.datetime "resolved_at"
+    t.text "resolution_notes"
+    t.jsonb "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["issue_type"], name: "index_rider_reports_on_issue_type"
+    t.index ["reported_at"], name: "index_rider_reports_on_reported_at"
+    t.index ["rider_id", "status"], name: "index_rider_reports_on_rider_id_and_status"
+    t.index ["rider_id"], name: "index_rider_reports_on_rider_id"
+    t.index ["status"], name: "index_rider_reports_on_status"
+    t.index ["user_id", "status"], name: "index_rider_reports_on_user_id_and_status"
+    t.index ["user_id"], name: "index_rider_reports_on_user_id"
   end
 
   create_table "roles", force: :cascade do |t|
@@ -458,6 +511,8 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.string "uid"
     t.string "google_image_url"
     t.datetime "confirmed_at"
+    t.boolean "wallet_enabled", default: true
+    t.datetime "wallet_setup_completed_at"
     t.index ["confirmed_at"], name: "index_users_on_confirmed_at"
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["online"], name: "index_users_on_online"
@@ -473,6 +528,75 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
     t.index ["role_id"], name: "index_users_roles_on_role_id"
     t.index ["user_id", "role_id"], name: "index_users_roles_on_user_id_and_role_id"
     t.index ["user_id"], name: "index_users_roles_on_user_id"
+  end
+
+  create_table "wallet_transactions", force: :cascade do |t|
+    t.bigint "wallet_id", null: false
+    t.bigint "package_id"
+    t.bigint "withdrawal_id"
+    t.string "transaction_type", null: false
+    t.decimal "amount", precision: 15, scale: 2, null: false
+    t.decimal "balance_before", precision: 15, scale: 2, null: false
+    t.decimal "balance_after", precision: 15, scale: 2, null: false
+    t.string "status", default: "completed", null: false
+    t.text "description"
+    t.string "reference"
+    t.jsonb "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_at"], name: "index_wallet_transactions_on_created_at"
+    t.index ["package_id"], name: "index_wallet_transactions_on_package_id"
+    t.index ["reference"], name: "index_wallet_transactions_on_reference"
+    t.index ["status"], name: "index_wallet_transactions_on_status"
+    t.index ["transaction_type"], name: "index_wallet_transactions_on_transaction_type"
+    t.index ["wallet_id", "created_at"], name: "index_wallet_transactions_on_wallet_id_and_created_at"
+    t.index ["wallet_id"], name: "index_wallet_transactions_on_wallet_id"
+    t.index ["withdrawal_id"], name: "index_wallet_transactions_on_withdrawal_id"
+  end
+
+  create_table "wallets", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "wallet_type", default: "client", null: false
+    t.decimal "balance", precision: 15, scale: 2, default: "0.0", null: false
+    t.decimal "pending_balance", precision: 15, scale: 2, default: "0.0", null: false
+    t.decimal "total_credited", precision: 15, scale: 2, default: "0.0", null: false
+    t.decimal "total_debited", precision: 15, scale: 2, default: "0.0", null: false
+    t.boolean "is_active", default: true, null: false
+    t.datetime "suspended_at"
+    t.string "suspension_reason"
+    t.jsonb "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["balance"], name: "index_wallets_on_balance"
+    t.index ["is_active"], name: "index_wallets_on_is_active"
+    t.index ["user_id"], name: "index_wallets_on_user_id", unique: true
+    t.index ["wallet_type"], name: "index_wallets_on_wallet_type"
+  end
+
+  create_table "withdrawals", force: :cascade do |t|
+    t.bigint "wallet_id", null: false
+    t.decimal "amount", precision: 15, scale: 2, null: false
+    t.string "phone_number", null: false
+    t.string "status", default: "pending", null: false
+    t.string "withdrawal_method", default: "mpesa", null: false
+    t.string "reference_number", null: false
+    t.string "mpesa_receipt_number"
+    t.string "mpesa_request_id"
+    t.string "mpesa_conversation_id"
+    t.datetime "processed_at"
+    t.datetime "completed_at"
+    t.datetime "failed_at"
+    t.text "failure_reason"
+    t.jsonb "metadata", default: {}
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["created_at"], name: "index_withdrawals_on_created_at"
+    t.index ["mpesa_receipt_number"], name: "index_withdrawals_on_mpesa_receipt_number"
+    t.index ["mpesa_request_id"], name: "index_withdrawals_on_mpesa_request_id"
+    t.index ["reference_number"], name: "index_withdrawals_on_reference_number", unique: true
+    t.index ["status"], name: "index_withdrawals_on_status"
+    t.index ["wallet_id", "status"], name: "index_withdrawals_on_wallet_id_and_status"
+    t.index ["wallet_id"], name: "index_withdrawals_on_wallet_id"
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
@@ -491,6 +615,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
   add_foreign_key "businesses", "users", column: "owner_id"
   add_foreign_key "conversation_participants", "conversations"
   add_foreign_key "conversation_participants", "users"
+  add_foreign_key "conversations", "users", column: "customer_id"
   add_foreign_key "messages", "conversations"
   add_foreign_key "messages", "users"
   add_foreign_key "mpesa_transactions", "packages"
@@ -507,11 +632,19 @@ ActiveRecord::Schema[7.1].define(version: 2025_09_20_192310) do
   add_foreign_key "packages", "areas", column: "origin_area_id"
   add_foreign_key "packages", "businesses"
   add_foreign_key "packages", "users"
+  add_foreign_key "packages", "users", column: "collected_by_id"
   add_foreign_key "prices", "agents", column: "destination_agent_id"
   add_foreign_key "prices", "agents", column: "origin_agent_id"
   add_foreign_key "prices", "areas", column: "destination_area_id"
   add_foreign_key "prices", "areas", column: "origin_area_id"
   add_foreign_key "push_tokens", "users"
+  add_foreign_key "rider_reports", "users"
+  add_foreign_key "rider_reports", "users", column: "rider_id"
   add_foreign_key "user_businesses", "businesses"
   add_foreign_key "user_businesses", "users"
+  add_foreign_key "wallet_transactions", "packages"
+  add_foreign_key "wallet_transactions", "wallets"
+  add_foreign_key "wallet_transactions", "withdrawals"
+  add_foreign_key "wallets", "users"
+  add_foreign_key "withdrawals", "wallets"
 end
