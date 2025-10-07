@@ -3,7 +3,7 @@ module Api
   module V1
     class WalletsController < ApplicationController
       before_action :authenticate_user!
-      before_action :set_wallet, only: [:show, :transactions, :withdraw]
+      before_action :set_wallet, only: [:show, :transactions, :withdraw, :topup]
       before_action :force_json_format
 
       # GET /api/v1/wallet
@@ -51,6 +51,84 @@ module Api
             total_pages: (total_count / per_page.to_f).ceil
           }
         }
+      end
+
+      # POST /api/v1/wallet/topup
+      def topup
+        amount = params[:amount].to_f
+        phone_number = params[:phone_number]
+
+        # Validate amount
+        if amount <= 0
+          return render json: {
+            success: false,
+            message: 'Invalid top-up amount'
+          }, status: :unprocessable_entity
+        end
+
+        if amount < 10
+          return render json: {
+            success: false,
+            message: 'Minimum top-up amount is KES 10'
+          }, status: :unprocessable_entity
+        end
+
+        if amount > 150000
+          return render json: {
+            success: false,
+            message: 'Maximum top-up amount is KES 150,000'
+          }, status: :unprocessable_entity
+        end
+
+        # Validate phone number
+        unless phone_number.present? && phone_number.match?(/^254\d{9}$/)
+          return render json: {
+            success: false,
+            message: 'Invalid phone number format. Use 254XXXXXXXXX'
+          }, status: :unprocessable_entity
+        end
+
+        # Only clients can top up their wallet
+        unless @wallet.client?
+          return render json: {
+            success: false,
+            message: 'Only client wallets can be topped up directly'
+          }, status: :forbidden
+        end
+
+        begin
+          # Initiate M-Pesa STK Push
+          result = @wallet.initiate_topup!(
+            amount: amount,
+            phone_number: phone_number
+          )
+
+          if result[:success]
+            render json: {
+              status: 'success',
+              message: 'Top-up initiated successfully',
+              data: {
+                checkout_request_id: result[:checkout_request_id],
+                amount: amount,
+                phone_number: phone_number,
+                reference: result[:reference]
+              }
+            }
+          else
+            render json: {
+              status: 'failed',
+              message: result[:message] || 'Failed to initiate top-up',
+              error: result[:error]
+            }, status: :unprocessable_entity
+          end
+        rescue => e
+          Rails.logger.error "Wallet top-up failed: #{e.message}\n#{e.backtrace.join("\n")}"
+          render json: {
+            status: 'failed',
+            message: 'An error occurred while processing top-up',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
       end
 
       # POST /api/v1/wallet/withdraw
