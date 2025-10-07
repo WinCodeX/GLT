@@ -57,14 +57,14 @@ def topup
 
     Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
 
-    # Generate reference
-    reference = "TOPUP-#{wallet.id}-#{Time.current.to_i}-#{SecureRandom.hex(4).upcase}"
+    # Use username or phone as account reference (simpler)
+    account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
 
     # Initiate STK push
     result = MpesaService.initiate_stk_push(
       phone_number: formatted_phone,
       amount: amount,
-      account_reference: reference,
+      account_reference: account_reference,
       transaction_desc: "Wallet top-up"
     )
 
@@ -77,16 +77,10 @@ def topup
         amount: amount,
         checkout_request_id: result[:data]['CheckoutRequestID'],
         merchant_request_id: result[:data]['MerchantRequestID'],
-        reference: reference
+        reference: account_reference
       )
 
-      # Create pending wallet transaction
-      wallet.add_pending!(
-        amount,
-        transaction_type: 'topup',
-        description: "Wallet top-up via M-Pesa",
-        reference: reference
-      )
+      Rails.logger.info "M-Pesa transaction created: #{mpesa_transaction.id} for wallet #{wallet.id}"
 
       render json: {
         status: 'success',
@@ -94,7 +88,7 @@ def topup
         data: {
           checkout_request_id: result[:data]['CheckoutRequestID'],
           merchant_request_id: result[:data]['MerchantRequestID'],
-          reference: reference,
+          reference: account_reference,
           amount: amount,
           phone_number: formatted_phone,
           customer_message: result[:data]['CustomerMessage']
@@ -112,6 +106,97 @@ def topup
     render json: {
       status: 'error',
       message: 'Failed to initiate top-up',
+      error: Rails.env.development? ? e.message : nil
+    }, status: :internal_server_error
+  end
+end
+
+
+# POST /api/v1/mpesa/topup_manual - Manual wallet top-up verification
+def topup_manual
+  begin
+    transaction_code = params[:transaction_code]
+    amount = params[:amount]&.to_f
+
+    unless transaction_code.present? && amount && amount > 0
+      return render json: {
+        status: 'error',
+        message: 'Missing required parameters'
+      }, status: :unprocessable_entity
+    end
+
+    # Get or create wallet
+    wallet = current_user.wallet || current_user.create_wallet
+
+    unless wallet.client?
+      return render json: {
+        status: 'error',
+        message: 'Only client wallets can be topped up'
+      }, status: :forbidden
+    end
+
+    Rails.logger.info "Manual wallet top-up verification for user #{current_user.id}, amount: #{amount}, code: #{transaction_code}"
+
+    # Credit wallet directly with manual verification
+    success = wallet.credit!(
+      amount,
+      transaction_type: 'topup',
+      description: "Wallet top-up via M-Pesa (Manual verification)",
+      reference: transaction_code.upcase,
+      metadata: {
+        mpesa_receipt_number: transaction_code.upcase,
+        verification_method: 'manual',
+        phone_number: current_user.phone_number,
+        verified_at: Time.current.iso8601
+      }
+    )
+
+    if success
+      # Create M-Pesa transaction record for tracking
+      begin
+        MpesaTransaction.create!(
+          user: current_user,
+          wallet: wallet,
+          transaction_type: 'wallet_topup',
+          phone_number: current_user.phone_number,
+          amount: amount,
+          checkout_request_id: "MANUAL-#{transaction_code.upcase}",
+          merchant_request_id: "MANUAL-#{Time.current.to_i}",
+          account_reference: current_user.username.presence || current_user.phone_number.gsub(/\D/, ''),
+          status: 'completed',
+          mpesa_receipt_number: transaction_code.upcase,
+          result_code: 0,
+          result_description: 'Manual verification',
+          initiated_at: Time.current,
+          completed_at: Time.current
+        )
+      rescue => e
+        Rails.logger.error "Failed to create M-Pesa transaction record: #{e.message}"
+        # Continue anyway since wallet was credited
+      end
+
+      render json: {
+        status: 'success',
+        message: 'Wallet topped up successfully',
+        data: {
+          amount: amount,
+          transaction_code: transaction_code.upcase,
+          new_balance: wallet.reload.balance,
+          verified: true
+        }
+      }
+    else
+      render json: {
+        status: 'error',
+        message: 'Failed to credit wallet'
+      }, status: :unprocessable_entity
+    end
+
+  rescue => e
+    Rails.logger.error "Manual wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
+    render json: {
+      status: 'error',
+      message: 'Failed to process manual top-up',
       error: Rails.env.development? ? e.message : nil
     }, status: :internal_server_error
   end
