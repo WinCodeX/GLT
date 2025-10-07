@@ -144,9 +144,22 @@ get '/logout', to: 'sessions#destroy'
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
+       # ==========================================
+      # 👛 Wallet Routes
+      # ==========================================
 
+       resource :wallet, only: [] do
+        get '/', to: 'wallets#show', as: :show
+        get :transactions
+        get :withdrawals
+        get :summary
+        post :withdraw
+        post 'withdrawals/:id/cancel', to: 'wallets#cancel_withdrawal', as: :cancel_withdrawal
+      end
 
-        # Rider routes
+       # ==========================================
+      # 🏍 Rider Routes
+      # ==========================================
       resources :riders, only: [] do
         collection do
           get :active_deliveries
@@ -160,6 +173,11 @@ get '/logout', to: 'sessions#destroy'
           get 'reports', to: 'riders#reports'
         end
       end
+
+
+      # ==========================================
+      #  🆘️ Support Routes
+      # ==========================================
 
       scope :support, controller: :support do
         # Dashboard and overview
@@ -235,6 +253,8 @@ get '/logout', to: 'sessions#destroy'
         post 'verify_manual_bulk', to: 'mpesa#verify_manual_bulk'
         post 'callback', to: 'mpesa#callback'
         post 'timeout', to: 'mpesa#timeout'
+        post 'verify_callback', to: 'mpesa#verify_callback'
+        post 'verify_timeout', to: 'mpesa#verify_timeout'
       end
 
       # ==========================================
