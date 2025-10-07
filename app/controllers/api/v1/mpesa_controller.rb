@@ -542,7 +542,103 @@ module Api
         end
       end
 
+def wallet_callback
+        callback_data = params[:Body][:stkCallback] rescue params
+
+        checkout_request_id = callback_data[:CheckoutRequestID]
+        result_code = callback_data[:ResultCode]
+        result_desc = callback_data[:ResultDesc]
+
+        Rails.logger.info "Wallet top-up callback received: #{checkout_request_id} - #{result_code}"
+
+        # Find the pending transaction by reference
+        # The reference should be in the format: TOPUP-{wallet_id}-{timestamp}-{random}
+        reference = extract_reference_from_callback(callback_data)
+
+        unless reference
+          Rails.logger.error "Could not extract reference from callback: #{callback_data}"
+          return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
+        end
+
+        # Find the wallet transaction
+        transaction = WalletTransaction.find_by(
+          reference: reference,
+          transaction_type: 'topup',
+          status: 'pending'
+        )
+
+        unless transaction
+          Rails.logger.warn "No pending top-up transaction found for reference: #{reference}"
+          return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
+        end
+
+        wallet = transaction.wallet
+
+        if result_code.to_i == 0
+          # Payment successful
+          callback_metadata = callback_data[:CallbackMetadata][:Item] rescue []
+          
+          mpesa_receipt = extract_callback_value(callback_metadata, 'MpesaReceiptNumber')
+          phone_number = extract_callback_value(callback_metadata, 'PhoneNumber')
+          amount = extract_callback_value(callback_metadata, 'Amount')
+
+          metadata = {
+            mpesa_receipt_number: mpesa_receipt,
+            phone_number: phone_number,
+            amount: amount,
+            transaction_date: Time.current.to_s
+          }
+
+          wallet.complete_topup!(
+            reference: reference,
+            mpesa_receipt: mpesa_receipt,
+            metadata: metadata
+          )
+
+          Rails.logger.info "Wallet top-up completed: #{wallet.id} - #{amount} KES (Receipt: #{mpesa_receipt})"
+        else
+          # Payment failed
+          failure_reason = result_desc || 'Payment cancelled or failed'
+          
+          wallet.fail_topup!(
+            reference: reference,
+            reason: failure_reason
+          )
+
+          Rails.logger.info "Wallet top-up failed: #{wallet.id} - #{failure_reason}"
+        end
+
+        render json: { ResultCode: 0, ResultDesc: 'Accepted' }
+      rescue => e
+        Rails.logger.error "Error processing wallet top-up callback: #{e.message}\n#{e.backtrace.join("\n")}"
+        render json: { ResultCode: 0, ResultDesc: 'Accepted' }
+      end
+
       private
+
+      def extract_reference_from_callback(callback_data)
+        # Try to get from AccountReference
+        account_ref = callback_data.dig(:CallbackMetadata, :Item)&.find { |item| 
+          item[:Name] == 'AccountReference' 
+        }&.dig(:Value)
+        
+        return account_ref if account_ref.present?
+
+        # Fallback: try to find from transaction metadata
+        checkout_id = callback_data[:CheckoutRequestID]
+        return nil unless checkout_id
+
+        # You might need to store checkout_request_id when creating the transaction
+        # and query by that instead
+        nil
+      end
+
+      def extract_callback_value(callback_items, key)
+        return nil unless callback_items.is_a?(Array)
+        
+        item = callback_items.find { |i| i[:Name] == key }
+        item&.dig(:Value)
+      end
 
       def force_json_format
         request.format = :json
