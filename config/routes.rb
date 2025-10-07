@@ -256,8 +256,9 @@ get '/logout', to: 'sessions#destroy'
         post 'timeout', to: 'mpesa#timeout'
         post 'verify_callback', to: 'mpesa#verify_callback'
         post 'verify_timeout', to: 'mpesa#verify_timeout'
+        post 'mpesa/wallet_callback', to: 'mpesa#wallet_callback'
       end
-
+      
       # ==========================================
       # 📄 TERMS AND CONDITIONS
       # ==========================================
