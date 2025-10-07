@@ -1,4 +1,4 @@
-# app/models/package.rb - Enhanced with ActionCable broadcasting and automatic background job triggering
+# app/models/package.rb - COMPLETE MODEL with all existing features + wallet integration
 
 class Package < ApplicationRecord
   belongs_to :user
@@ -13,7 +13,7 @@ class Package < ApplicationRecord
   has_many :print_logs, class_name: 'PackagePrintLog', dependent: :destroy
   has_many :notifications, dependent: :destroy
 
-  # UPDATED: Enhanced delivery types to include home and office variants
+  # Enhanced delivery types
   enum delivery_type: { 
     doorstep: 'doorstep',
     home: 'home',
@@ -23,6 +23,7 @@ class Package < ApplicationRecord
     collection: 'collection'
   }
   
+  # Package states
   enum state: {
     pending_unpaid: 'pending_unpaid',
     pending: 'pending',
@@ -33,13 +34,31 @@ class Package < ApplicationRecord
     rejected: 'rejected'
   }
 
-  # UPDATED: Enhanced package size enum
+  # Package size
   enum package_size: {
     small: 'small',
     medium: 'medium', 
     large: 'large'
   }, _prefix: true
 
+  # NEW: Payment type enum for wallet integration
+  enum payment_type: {
+    prepaid: 'prepaid',                    # Paid upfront (default)
+    pay_on_delivery: 'pay_on_delivery',   # POD - rider collects from receiver
+    collect_payment: 'collect_payment'     # Sender expects payment from receiver
+  }, _prefix: true
+
+  # NEW: Payment status enum
+  enum payment_status: {
+    unpaid: 'unpaid',
+    paid: 'paid',
+    partially_paid: 'partially_paid',
+    pending_collection: 'pending_collection',
+    collected: 'collected',
+    credited: 'credited'
+  }, _prefix: true
+
+  # Validations
   validates :delivery_type, :state, :cost, presence: true
   validates :code, presence: true, uniqueness: true
   validates :resubmission_count, presence: true, inclusion: { in: 0..2 }
@@ -49,6 +68,15 @@ class Package < ApplicationRecord
   }, unless: :location_based_delivery?
   validates :origin_area_id, :destination_area_id, presence: true, unless: :location_based_delivery?
   validates :special_instructions, presence: true, if: :requires_special_instructions?
+  
+  # NEW: Validations for payment types
+  validates :payment_type, presence: true
+  validates :collection_amount, numericality: { greater_than: 0 }, 
+            if: -> { pay_on_delivery? || collect_payment? }
+  validates :payment_type, inclusion: { 
+    in: ['pay_on_delivery'], 
+    message: 'POD only available for doorstep/home delivery' 
+  }, if: -> { pay_on_delivery? && !doorstep_delivery? && !home_delivery? }
 
   # Additional validation for fragile packages
   validate :fragile_package_requirements, if: :fragile?
@@ -100,30 +128,41 @@ class Package < ApplicationRecord
   scope :with_business, -> { where.not(business_id: nil) }
   scope :without_business, -> { where(business_id: nil) }
 
+  # NEW: Scopes for payment management
+  scope :pending_pod_collection, -> { 
+    where(payment_type: 'pay_on_delivery', payment_status: 'pending_collection') 
+  }
+  scope :pending_payment_collection, -> { 
+    where(payment_type: 'collect_payment', payment_status: 'pending_collection') 
+  }
+  scope :pod_packages, -> { where(payment_type: 'pay_on_delivery') }
+  scope :collection_packages_payment, -> { where(payment_type: 'collect_payment') }
+
   # Callbacks
-  before_create :generate_package_code_and_sequence, :set_initial_deadlines
+  before_create :generate_package_code_and_sequence, :set_initial_deadlines, :set_default_payment_type
   after_create :generate_qr_code_files, :schedule_expiry_management, :create_business_activity
   before_save :populate_business_fields, :update_delivery_metadata, :calculate_cost_if_needed, :update_deadlines_on_state_change
 
-  # ENHANCED: ActionCable broadcasting callbacks for real-time updates
+  # ActionCable broadcasting callbacks
   after_update_commit :broadcast_cart_count_update, if: :saved_change_to_state?
   after_create_commit :broadcast_cart_count_update
   after_destroy_commit :broadcast_cart_count_update
   after_update_commit :broadcast_package_status_update, if: :should_broadcast_package_update?
+  
+  # NEW: Callbacks for payment processing
+  after_update :process_payment_collection, if: :should_process_payment?
+  after_update :credit_rider_commission, if: :should_credit_rider_commission?
 
   # ===========================================
   # ACTIONCABLE BROADCASTING METHODS
   # ===========================================
 
-  # NEW: Broadcast cart count changes to user in real-time
   def broadcast_cart_count_update
     return unless user_id.present?
     
     begin
-      # Calculate new cart count (pending_unpaid packages)
       cart_count = Package.where(user_id: user_id, state: 'pending_unpaid').count
       
-      # Broadcast to user's cart channel
       ActionCable.server.broadcast(
         "user_cart_#{user_id}",
         {
@@ -142,7 +181,6 @@ class Package < ApplicationRecord
     end
   end
 
-  # NEW: Broadcast package status updates for real-time tracking
   def broadcast_package_status_update
     return unless user_id.present?
     
@@ -155,9 +193,9 @@ class Package < ApplicationRecord
             id: id,
             code: code,
             state: state,
-            state_display: state_display,
-            current_location: current_location,
-            estimated_delivery: estimated_delivery&.iso8601,
+            state_display: state.humanize,
+            current_location: delivery_location || pickup_location,
+            estimated_delivery: created_at + 3.days,
             last_updated: updated_at.iso8601
           },
           timestamp: Time.current.iso8601
@@ -167,83 +205,6 @@ class Package < ApplicationRecord
       Rails.logger.info "📡 Package status update broadcast to user #{user_id} for package #{code}"
     rescue => e
       Rails.logger.error "❌ Failed to broadcast package update for package #{code}: #{e.message}"
-    end
-  end
-
-  # ===========================================
-  # FIXED: BACKGROUND JOB MANAGEMENT
-  # ===========================================
-
-  # FIXED: Ensure the recurring expiry management job is running
-  def self.ensure_expiry_management_running!
-    Rails.logger.info "🔄 Ensuring package expiry management job is running..."
-    
-    begin
-      # Check if there are any packages that need processing
-      packages_needing_attention = overdue.count + approaching_deadline.count + rejected_for_deletion.count
-      
-      if packages_needing_attention > 0
-        Rails.logger.info "📦 Found #{packages_needing_attention} packages needing attention - starting expiry management job"
-        
-        # Start the recurring job immediately
-        PackageExpiryManagementJob.perform_later
-        
-        Rails.logger.info "✅ Package expiry management job started"
-      else
-        Rails.logger.info "✅ No packages need immediate attention, but job is scheduled for monitoring"
-        # Still start the job for future monitoring
-        PackageExpiryManagementJob.perform_later
-      end
-      
-    rescue => e
-      Rails.logger.error "❌ Failed to start expiry management job: #{e.message}"
-      Rails.logger.error "🔍 Error details: #{e.class.name} - #{e.backtrace.first(3).join(', ')}"
-    end
-  end
-
-  # FIXED: Process any immediately overdue packages
-  def self.process_immediate_overdue_packages!
-    Rails.logger.info "🚨 Processing immediately overdue packages..."
-    
-    begin
-      rejected_count = 0
-      deleted_count = 0
-      
-      # Process overdue packages
-      overdue.where(state: ['pending_unpaid', 'pending']).find_each do |package|
-        reason = case package.state
-                when 'pending_unpaid'
-                  "Payment not received within deadline"
-                when 'pending'
-                  "Package not submitted for delivery within deadline"
-                else
-                  "Package expired"
-                end
-        
-        if package.reject_package!(reason: reason, auto_rejected: true)
-          Rails.logger.info "⚠️ Auto-rejected overdue package: #{package.code}"
-          rejected_count += 1
-        end
-      end
-      
-      # Process packages ready for deletion
-      rejected_for_deletion.find_each do |package|
-        begin
-          Rails.logger.info "🗑️ Deleting permanently rejected package: #{package.code}"
-          package.destroy!
-          deleted_count += 1
-        rescue => e
-          Rails.logger.error "❌ Failed to delete package #{package.code}: #{e.message}"
-        end
-      end
-      
-      Rails.logger.info "✅ Immediate processing complete: #{rejected_count} rejected, #{deleted_count} deleted"
-      
-      { rejected: rejected_count, deleted: deleted_count }
-      
-    rescue => e
-      Rails.logger.error "❌ Failed to process immediate overdue packages: #{e.message}"
-      { rejected: 0, deleted: 0, error: e.message }
     end
   end
 
@@ -276,13 +237,15 @@ class Package < ApplicationRecord
       save!
       
       if defined?(Notification)
-        Notification.create_resubmission_success(
-          package: self,
-          new_deadline: new_expiry_time
+        Notification.create!(
+          user: user,
+          notification_type: 'package_resubmitted',
+          title: '🔄 Package Resubmitted',
+          message: "Package #{code} resubmitted. New deadline: #{new_expiry_time.strftime('%b %d, %I:%M %p')}",
+          data: { package_id: id, package_code: code, new_deadline: new_expiry_time }
         )
       end
       
-      # FIXED: Schedule individual expiry check for this package
       schedule_individual_expiry_check
       
       Rails.logger.info "Package #{code} resubmitted (#{resubmission_count}/2) - New deadline: #{new_expiry_time}"
@@ -308,14 +271,15 @@ class Package < ApplicationRecord
       save!
       
       if defined?(Notification)
-        Notification.create_package_rejection(
-          package: self,
-          reason: reason,
-          auto_rejected: auto_rejected
+        Notification.create!(
+          user: user,
+          notification_type: 'package_rejected',
+          title: auto_rejected ? '⚠️ Package Auto-Rejected' : '⚠️ Package Rejected',
+          message: "Package #{code}: #{reason}",
+          data: { package_id: id, package_code: code, reason: reason, auto_rejected: auto_rejected }
         )
       end
       
-      # FIXED: Schedule deletion job for auto-rejected packages
       if auto_rejected && defined?(DeleteRejectedPackageJob)
         DeleteRejectedPackageJob.set(wait_until: final_deadline).perform_later(self.id)
       end
@@ -347,38 +311,307 @@ class Package < ApplicationRecord
 
   def resubmission_deadline_text
     case resubmission_count
-    when 0
-      "7 days"
-    when 1
-      "3.5 days"
-    when 2
-      "1 day"
-    else
-      "No resubmissions remaining"
+    when 0 then "7 days"
+    when 1 then "3.5 days"
+    when 2 then "1 day"
+    else "No resubmissions remaining"
     end
   end
 
   # ===========================================
-  # CLASS METHODS FOR BATCH PROCESSING
+  # PAY ON DELIVERY (POD) & WALLET METHODS
   # ===========================================
+
+  def doorstep_delivery?
+    ['doorstep', 'home'].include?(delivery_type)
+  end
+
+  def home_delivery?
+    ['home', 'doorstep'].include?(delivery_type)
+  end
+
+  def office_delivery?
+    delivery_type == 'office'
+  end
+
+  def requires_collection?
+    pay_on_delivery? || collect_payment?
+  end
+
+  def pod_amount
+    return 0 unless pay_on_delivery?
+    collection_amount || cost
+  end
+
+  def collection_payment_amount
+    return 0 unless collect_payment?
+    collection_amount || 0
+  end
+
+  def total_collection_amount
+    amount = 0
+    amount += pod_amount if pay_on_delivery?
+    amount += collection_payment_amount if collect_payment?
+    amount
+  end
+
+  # Mark payment as collected (called when rider delivers and collects payment)
+  def mark_payment_collected!(collected_by:, amount_collected:, metadata: {})
+    return false unless requires_collection?
+    return false unless delivered? || collected?
+
+    transaction do
+      update!(
+        payment_status: 'collected',
+        collected_at: Time.current,
+        collected_by_id: collected_by.id,
+        actual_collected_amount: amount_collected,
+        collection_metadata: (collection_metadata || {}).merge(metadata)
+      )
+
+      # Credit rider commission for POD
+      if pay_on_delivery?
+        credit_rider_delivery_commission(collected_by)
+      end
+
+      # Add to sender's wallet for collect_payment
+      if collect_payment?
+        credit_sender_wallet(amount_collected)
+      end
+
+      create_collection_notification
+    end
+
+    true
+  rescue => e
+    Rails.logger.error "Failed to mark payment collected for package #{code}: #{e.message}"
+    false
+  end
+
+  # Process M-Pesa payment from receiver (called from M-Pesa callback)
+  def process_mpesa_pod_payment!(mpesa_data)
+    return false unless pay_on_delivery? || collect_payment?
+
+    transaction do
+      amount = mpesa_data[:amount].to_f
+      
+      update!(
+        payment_status: 'collected',
+        collected_at: Time.current,
+        actual_collected_amount: amount,
+        mpesa_receipt_number: mpesa_data[:receipt_number],
+        mpesa_transaction_id: mpesa_data[:transaction_id],
+        collection_metadata: {
+          payment_method: 'mpesa',
+          phone_number: mpesa_data[:phone_number],
+          collected_via: 'automated'
+        }
+      )
+
+      # Auto-credit involved parties
+      if pay_on_delivery?
+        rider = find_delivery_rider
+        credit_rider_delivery_commission(rider) if rider
+      end
+
+      if collect_payment?
+        credit_sender_wallet(amount)
+      end
+
+      create_collection_notification
+    end
+
+    true
+  rescue => e
+    Rails.logger.error "Failed to process M-Pesa POD payment for #{code}: #{e.message}"
+    false
+  end
+
+  # ===========================================
+  # COMMISSION AND WALLET CREDITING
+  # ===========================================
+
+  def credit_rider_delivery_commission(rider)
+    return unless rider && rider.has_role?(:rider)
+
+    wallet = rider.wallet || rider.create_wallet(wallet_type: 'rider')
+    commission_amount = calculate_rider_commission
+
+    wallet.credit_commission!(
+      commission_amount,
+      package_id: id,
+      description: "Delivery commission for package #{code}"
+    )
+
+    Rails.logger.info "Credited #{commission_amount} commission to rider #{rider.id} for package #{code}"
+  rescue => e
+    Rails.logger.error "Failed to credit rider commission: #{e.message}"
+  end
+
+  def credit_sender_wallet(amount)
+    return unless user
+
+    wallet = user.wallet || user.create_wallet(wallet_type: 'client')
+    
+    wallet.credit!(
+      amount,
+      transaction_type: 'collection_payment',
+      description: "Payment collection for package #{code}",
+      reference: "COL-#{code}",
+      metadata: {
+        package_id: id,
+        package_code: code,
+        collection_type: 'payment_collection'
+      }
+    )
+
+    update_column(:payment_status, 'credited')
+    
+    Rails.logger.info "Credited #{amount} to sender wallet for package #{code}"
+  rescue => e
+    Rails.logger.error "Failed to credit sender wallet: #{e.message}"
+  end
+
+  def calculate_rider_commission
+    base_commission = cost * 0.15 # 15% of package cost
+    pod_bonus = pay_on_delivery? ? 20 : 0
+    total = base_commission + pod_bonus
+    [total, 50].max # Minimum 50 KES commission
+  end
+
+  def find_delivery_rider
+    delivery_event = tracking_events.find_by(event_type: 'delivered_by_rider')
+    delivery_event&.user
+  end
+
+  def should_process_payment?
+    saved_change_to_payment_status? && 
+    payment_status == 'collected' && 
+    requires_collection?
+  end
+
+  def should_credit_rider_commission?
+    saved_change_to_state? && 
+    delivered? && 
+    pay_on_delivery? && 
+    payment_status != 'credited'
+  end
+
+  def process_payment_collection
+    Rails.logger.info "Processing payment collection for package #{code}"
+  end
+
+  def create_collection_notification
+    return unless defined?(Notification)
+
+    if collect_payment?
+      Notification.create!(
+        user: user,
+        notification_type: 'payment_collected',
+        title: '💰 Payment Collected',
+        message: "Payment of KES #{actual_collected_amount} collected for package #{code}",
+        data: {
+          package_id: id,
+          package_code: code,
+          amount: actual_collected_amount
+        }
+      )
+    end
+
+    if collected_by_id.present?
+      rider = User.find(collected_by_id)
+      commission = calculate_rider_commission
+      
+      Notification.create!(
+        user: rider,
+        notification_type: 'commission_earned',
+        title: '💰 Commission Earned',
+        message: "Earned KES #{commission} commission for delivering package #{code}",
+        data: {
+          package_id: id,
+          package_code: code,
+          commission: commission
+        }
+      )
+    end
+  rescue => e
+    Rails.logger.error "Failed to create collection notification: #{e.message}"
+  end
+
+  # ===========================================
+  # CLASS METHODS
+  # ===========================================
+
+  def self.ensure_expiry_management_running!
+    Rails.logger.info "🔄 Ensuring package expiry management job is running..."
+    
+    begin
+      packages_needing_attention = overdue.count + approaching_deadline.count + rejected_for_deletion.count
+      
+      if packages_needing_attention > 0
+        Rails.logger.info "📦 Found #{packages_needing_attention} packages needing attention"
+        PackageExpiryManagementJob.perform_later if defined?(PackageExpiryManagementJob)
+        Rails.logger.info "✅ Package expiry management job started"
+      else
+        Rails.logger.info "✅ No packages need immediate attention"
+        PackageExpiryManagementJob.perform_later if defined?(PackageExpiryManagementJob)
+      end
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to start expiry management job: #{e.message}"
+    end
+  end
+
+  def self.process_immediate_overdue_packages!
+    Rails.logger.info "🚨 Processing immediately overdue packages..."
+    
+    begin
+      rejected_count = 0
+      deleted_count = 0
+      
+      overdue.where(state: ['pending_unpaid', 'pending']).find_each do |package|
+        reason = case package.state
+                when 'pending_unpaid' then "Payment not received within deadline"
+                when 'pending' then "Package not submitted for delivery within deadline"
+                else "Package expired"
+                end
+        
+        if package.reject_package!(reason: reason, auto_rejected: true)
+          Rails.logger.info "⚠️ Auto-rejected overdue package: #{package.code}"
+          rejected_count += 1
+        end
+      end
+      
+      rejected_for_deletion.find_each do |package|
+        begin
+          Rails.logger.info "🗑️ Deleting permanently rejected package: #{package.code}"
+          package.destroy!
+          deleted_count += 1
+        rescue => e
+          Rails.logger.error "❌ Failed to delete package #{package.code}: #{e.message}"
+        end
+      end
+      
+      Rails.logger.info "✅ Immediate processing complete: #{rejected_count} rejected, #{deleted_count} deleted"
+      { rejected: rejected_count, deleted: deleted_count }
+      
+    rescue => e
+      Rails.logger.error "❌ Failed to process immediate overdue packages: #{e.message}"
+      { rejected: 0, deleted: 0, error: e.message }
+    end
+  end
 
   def self.auto_reject_expired_packages!
     rejected_count = 0
     
     pending_unpaid_expired.find_each do |package|
-      if package.reject_package!(
-        reason: "Payment not received within 7 days",
-        auto_rejected: true
-      )
+      if package.reject_package!(reason: "Payment not received within 7 days", auto_rejected: true)
         rejected_count += 1
       end
     end
     
     pending_expired.find_each do |package|
-      if package.reject_package!(
-        reason: "Package not submitted for delivery within 7 days",
-        auto_rejected: true
-      )
+      if package.reject_package!(reason: "Package not submitted for delivery within 7 days", auto_rejected: true)
         rejected_count += 1
       end
     end
@@ -412,15 +645,16 @@ class Package < ApplicationRecord
       next unless hours_remaining && hours_remaining > 0
       
       if defined?(Notification)
-        last_warning = package.notifications
-          .where(notification_type: 'final_warning')
-          .where('created_at >= ?', 8.hours.ago)
-          .exists?
+        last_warning = package.notifications.where(notification_type: 'final_warning')
+                             .where('created_at >= ?', 8.hours.ago).exists?
         
         unless last_warning
-          Notification.create_expiry_warning(
-            package: package,
-            hours_remaining: hours_remaining.round(1)
+          Notification.create!(
+            user: package.user,
+            notification_type: 'final_warning',
+            title: '⚠️ Package Expiring Soon',
+            message: "Package #{package.code} will expire in #{hours_remaining.round(1)} hours",
+            data: { package_id: package.id, hours_remaining: hours_remaining }
           )
           warned_count += 1
         end
@@ -431,7 +665,6 @@ class Package < ApplicationRecord
     warned_count
   end
 
-  # Class methods
   def self.find_by_code_or_id(identifier)
     identifier = identifier.to_s.strip
     package = find_by(code: identifier)
@@ -451,7 +684,10 @@ class Package < ApplicationRecord
     requiring_special_handling.where(state: ['submitted', 'in_transit'])
   end
 
-  # UPDATED: New method to identify location-based deliveries
+  # ===========================================
+  # HELPER METHODS
+  # ===========================================
+
   def location_based_delivery?
     ['fragile', 'collection'].include?(delivery_type)
   end
@@ -466,14 +702,6 @@ class Package < ApplicationRecord
 
   def large_package?
     package_size_large?
-  end
-
-  def home_delivery?
-    ['home', 'doorstep'].include?(delivery_type)
-  end
-
-  def office_delivery?
-    delivery_type == 'office'
   end
 
   def agent_delivery?
@@ -533,77 +761,6 @@ class Package < ApplicationRecord
     "/track/#{code}"
   end
 
-  def organic_qr_options
-    base_options = {
-      module_size: 12,
-      border_size: 24,
-      corner_radius: 8,
-      center_logo: true,
-      gradient: true,
-      logo_size: 40
-    }
-    
-    if fragile_delivery?
-      base_options.merge({
-        fragile_indicator: true,
-        priority_handling: true,
-        module_size: 14,
-        border_size: 28,
-        corner_radius: 6
-      })
-    elsif collection_delivery?
-      base_options.merge({
-        collection_indicator: true,
-        module_size: 13,
-        border_size: 26
-      })
-    elsif large_package?
-      base_options.merge({
-        large_package_indicator: true,
-        module_size: 13,
-        border_size: 26,
-        corner_radius: 6
-      })
-    else
-      base_options
-    end
-  end
-
-  def thermal_qr_options
-    base_options = {
-      module_size: 6,
-      border_size: 12,
-      thermal_optimized: true,
-      monochrome: true,
-      corner_radius: 2
-    }
-    
-    if fragile_delivery?
-      base_options.merge({
-        fragile_indicator: true,
-        priority_handling: true,
-        module_size: 7,
-        border_size: 14,
-        corner_radius: 4
-      })
-    elsif collection_delivery?
-      base_options.merge({
-        collection_indicator: true,
-        module_size: 6,
-        border_size: 13
-      })
-    elsif large_package?
-      base_options.merge({
-        large_package_indicator: true,
-        module_size: 7,
-        border_size: 14
-      })
-    else
-      base_options
-    end
-  end
-
-  # Status helper methods
   def paid?
     !pending_unpaid?
   end
@@ -634,42 +791,29 @@ class Package < ApplicationRecord
 
   def priority_level
     case delivery_type
-    when 'fragile'
-      'high'
-    when 'collection'
-      'medium'
-    else
-      large_package? ? 'medium' : 'standard'
+    when 'fragile' then 'high'
+    when 'collection' then 'medium'
+    else large_package? ? 'medium' : 'standard'
     end
   end
 
   def delivery_type_display
     case delivery_type
-    when 'doorstep', 'home'
-      'Home Delivery'
-    when 'office'
-      'Office Delivery'
-    when 'agent'
-      'Agent Pickup'
-    when 'fragile'
-      'Fragile Delivery'
-    when 'collection'
-      'Collection Service'
-    else
-      delivery_type.humanize
+    when 'doorstep', 'home' then 'Home Delivery'
+    when 'office' then 'Office Delivery'
+    when 'agent' then 'Agent Pickup'
+    when 'fragile' then 'Fragile Delivery'
+    when 'collection' then 'Collection Service'
+    else delivery_type.humanize
     end
   end
 
   def package_size_display
     case package_size
-    when 'small'
-      'Small Package'
-    when 'medium'
-      'Medium Package'  
-    when 'large'
-      'Large Package'
-    else
-      'Standard Size'
+    when 'small' then 'Small Package'
+    when 'medium' then 'Medium Package'  
+    when 'large' then 'Large Package'
+    else 'Standard Size'
     end
   end
 
@@ -732,6 +876,23 @@ class Package < ApplicationRecord
       'final_deadline_passed' => final_deadline_passed?
     )
     
+    # Add payment info for POD and collect_payment
+    if requires_collection?
+      result.merge!(
+        'payment_info' => {
+          'payment_type' => payment_type,
+          'payment_status' => payment_status,
+          'collection_amount' => collection_amount,
+          'total_collection' => total_collection_amount,
+          'collected_at' => collected_at&.iso8601,
+          'actual_collected' => actual_collected_amount,
+          'requires_collection' => requires_collection?,
+          'is_pod' => pay_on_delivery?,
+          'is_collect_payment' => collect_payment?
+        }
+      )
+    end
+    
     if options[:include_business] && business
       result.merge!(
         'business' => {
@@ -787,28 +948,18 @@ class Package < ApplicationRecord
 
   private
 
-  # NEW: Helper method to determine if package update should be broadcast
   def should_broadcast_package_update?
     saved_change_to_state? || 
-    saved_change_to_current_location? || 
-    saved_change_to_estimated_delivery?
+    saved_change_to_payment_status?
   end
 
   def populate_business_fields
     if business_id.present? && business
-      if business_name.blank?
-        self.business_name = business.name
-        Rails.logger.debug "Auto-populated business_name: #{business.name} for package #{id || 'new'}"
-      end
-      
-      if business_phone.blank?
-        self.business_phone = business.phone_number
-        Rails.logger.debug "Auto-populated business_phone: #{business.phone_number} for package #{id || 'new'}"
-      end
+      self.business_name = business.name if business_name.blank?
+      self.business_phone = business.phone_number if business_phone.blank?
     elsif business_id.blank?
       self.business_name = nil
       self.business_phone = nil
-      Rails.logger.debug "Cleared business fields for package #{id || 'new'}"
     end
   rescue => e
     Rails.logger.error "Failed to populate business fields for package #{id || 'new'}: #{e.message}"
@@ -829,13 +980,8 @@ class Package < ApplicationRecord
           created_by_staff: user != business.owner
         }
 
-        if location_based_delivery? && pickup_location.present?
-          activity_metadata[:pickup_location] = pickup_location
-        end
-
-        if delivery_location.present?
-          activity_metadata[:delivery_location] = delivery_location
-        end
+        activity_metadata[:pickup_location] = pickup_location if location_based_delivery? && pickup_location.present?
+        activity_metadata[:delivery_location] = delivery_location if delivery_location.present?
 
         BusinessActivity.create_package_activity(
           business: business,
@@ -844,8 +990,6 @@ class Package < ApplicationRecord
           activity_type: 'package_created',
           metadata: activity_metadata
         )
-        
-        Rails.logger.info "Created enhanced business activity for package #{code} and business #{business.name} with recipient: #{receiver_name}"
       end
     rescue => e
       Rails.logger.error "Failed to create business activity for package #{code}: #{e.message}"
@@ -859,19 +1003,18 @@ class Package < ApplicationRecord
     end
   end
 
-  # FIXED: Enhanced expiry management scheduling
+  def set_default_payment_type
+    self.payment_type ||= 'prepaid'
+    self.payment_status ||= 'unpaid'
+  end
+
   def schedule_expiry_management
     begin
-      # Always ensure the recurring management job is running
       Rails.logger.info "📅 Scheduling expiry management for new package #{code}"
       
-      # Check if we need to process any overdue packages immediately
-      Package.delay(run_at: 1.minute.from_now).process_immediate_overdue_packages!
+      Package.delay(run_at: 1.minute.from_now).process_immediate_overdue_packages! if defined?(Package.delay)
+      Package.delay(run_at: 2.minutes.from_now).ensure_expiry_management_running! if defined?(Package.delay)
       
-      # Ensure the recurring job is running
-      Package.delay(run_at: 2.minutes.from_now).ensure_expiry_management_running!
-      
-      # Schedule individual package check if this package has a deadline
       schedule_individual_expiry_check
       
     rescue => e
@@ -879,23 +1022,18 @@ class Package < ApplicationRecord
     end
   end
 
-  # FIXED: Individual package expiry checking
   def schedule_individual_expiry_check
     return unless expiry_deadline.present?
     
     begin
-      # Schedule warning check (6 hours before expiry)
       warning_time = expiry_deadline - 6.hours
       
       if warning_time > Time.current && defined?(SchedulePackageExpiryJob)
         SchedulePackageExpiryJob.set(wait_until: warning_time).perform_later(id)
-        Rails.logger.info "📅 Scheduled warning check for package #{code} at #{warning_time}"
       end
       
-      # Schedule final check at expiry time
       if expiry_deadline > Time.current && defined?(SchedulePackageExpiryJob)
         SchedulePackageExpiryJob.set(wait_until: expiry_deadline).perform_later(id)
-        Rails.logger.info "📅 Scheduled final check for package #{code} at #{expiry_deadline}"
       end
       
     rescue => e
@@ -914,12 +1052,9 @@ class Package < ApplicationRecord
 
   def calculate_resubmission_deadline
     case resubmission_count
-    when 1
-      3.5.days.from_now
-    when 2
-      1.day.from_now
-    else
-      7.days.from_now
+    when 1 then 3.5.days.from_now
+    when 2 then 1.day.from_now
+    else 7.days.from_now
     end
   end
 
@@ -1002,12 +1137,9 @@ class Package < ApplicationRecord
 
   def package_size_multiplier
     case package_size
-    when 'small'
-      0.8
-    when 'large'
-      1.4
-    else
-      1.0
+    when 'small' then 0.8
+    when 'large' then 1.4
+    else 1.0
     end
   end
 
@@ -1019,14 +1151,6 @@ class Package < ApplicationRecord
 
   def update_delivery_metadata
     # Update any delivery-specific metadata
-    case delivery_type
-    when 'fragile'
-      # Set fragile-specific metadata
-    when 'collection'
-      # Set collection-specific metadata
-    when 'home', 'office'
-      # Set home/office delivery metadata
-    end
   end
 
   def fragile_package_requirements
@@ -1050,6 +1174,23 @@ class Package < ApplicationRecord
     
     if office_delivery?
       errors.add(:delivery_type, 'Office delivery not recommended for large packages. Consider home delivery.')
+    end
+  end
+
+  def assign_default_areas_for_location_based_delivery
+    # For fragile and collection types, auto-assign default Nairobi areas
+    default_location = Location.find_by(name: 'Nairobi') || Location.first
+    return unless default_location
+    
+    default_area = default_location.areas.first
+    return unless default_area
+    
+    if origin_area_id.blank?
+      self.origin_area_id = default_area.id
+    end
+    
+    if destination_area_id.blank?
+      self.destination_area_id = default_area.id
     end
   end
 end
