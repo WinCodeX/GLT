@@ -5,6 +5,7 @@ class WalletTransaction < ApplicationRecord
   belongs_to :withdrawal, optional: true
 
   enum transaction_type: {
+    topup: 'topup',
     commission: 'commission',
     pod_collection: 'pod_collection',
     collection_payment: 'collection_payment',
@@ -54,6 +55,8 @@ class WalletTransaction < ApplicationRecord
 
   def transaction_icon
     case transaction_type
+    when 'topup'
+      '💳'
     when 'commission'
       '💰'
     when 'pod_collection', 'collection_payment'
@@ -112,7 +115,7 @@ class WalletTransaction < ApplicationRecord
     )
 
     # Create notification for significant transactions
-    if defined?(Notification) && (absolute_amount >= 100 || transaction_type.in?(['commission', 'pod_collection']))
+    if defined?(Notification) && (absolute_amount >= 100 || transaction_type.in?(['commission', 'pod_collection', 'topup']))
       create_transaction_notification
     end
   rescue => e
@@ -123,6 +126,8 @@ class WalletTransaction < ApplicationRecord
     return unless wallet&.user
 
     title = case transaction_type
+            when 'topup'
+              "💳 Wallet Topped Up"
             when 'commission'
               "💰 Commission Earned"
             when 'pod_collection'
