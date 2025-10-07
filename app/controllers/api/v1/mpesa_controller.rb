@@ -2,166 +2,177 @@
 module Api
   module V1
     class MpesaController < ApplicationController
-      before_action :authenticate_user!, except: [:callback, :timeout]
+      before_action :authenticate_user!, except: [:callback, :timeout, :b2c_callback, :verify_callback, :verify_timeout]
+      skip_before_action :verify_authenticity_token, only: [:callback, :timeout, :b2c_callback, :verify_callback, :verify_timeout]
+      before_action :force_json_format
 
-      # POST /api/v1/mpesa/stk_push
+      # POST /api/v1/mpesa/stk_push - Single package payment
       def stk_push
         begin
-          phone_number = normalize_phone_number(params[:phone_number])
-          amount = params[:amount].to_f
           package_id = params[:package_id]
-          
-          # Validate parameters
-          if phone_number.blank? || amount <= 0 || package_id.blank?
-            return error_response('Invalid parameters provided', 'validation_error', :bad_request)
+          phone_number = params[:phone_number]
+          amount = params[:amount]&.to_f
+
+          # Validate inputs
+          unless package_id.present? && phone_number.present? && amount && amount > 0
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters: package_id, phone_number, or amount'
+            }, status: :unprocessable_entity
           end
 
-          # Find package to ensure it exists
-          package = Package.find_by(id: package_id, user: current_user)
+          # Find package
+          package = current_user.packages.find_by(id: package_id)
           unless package
-            return error_response('Package not found', 'package_not_found', :not_found)
+            return render json: {
+              status: 'error',
+              message: 'Package not found or access denied'
+            }, status: :not_found
           end
 
-          # Check if package can be paid
-          unless ['pending_unpaid', 'pending'].include?(package.state)
-            return error_response('Package cannot be paid at this time', 'invalid_state', :unprocessable_entity)
+          # Check if already paid
+          if package.state != 'pending_unpaid'
+            return render json: {
+              status: 'error',
+              message: 'Package has already been paid for'
+            }, status: :unprocessable_entity
           end
 
-          # Build API callback URL
-          api_callback_url = "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/callback"
+          # Format phone number
+          formatted_phone = MpesaService.format_phone_number(phone_number)
+          unless MpesaService.validate_phone_number(formatted_phone)
+            return render json: {
+              status: 'error',
+              message: 'Invalid phone number format'
+            }, status: :unprocessable_entity
+          end
 
-          # Initiate STK push with API callback URL
+          Rails.logger.info "Initiating STK push for package #{package.code}"
+
+          # Initiate STK push
           result = MpesaService.initiate_stk_push(
-            phone_number: phone_number,
+            phone_number: formatted_phone,
             amount: amount,
             account_reference: package.code,
-            transaction_desc: "Payment for package #{package.code}",
-            callback_url: api_callback_url
+            transaction_desc: "Payment for package #{package.code}"
           )
 
           if result[:success]
-            # Store transaction reference
-            MpesaTransaction.create!(
-              checkout_request_id: result[:data][:CheckoutRequestID],
-              merchant_request_id: result[:data][:MerchantRequestID],
-              package_id: package.id,
-              user_id: current_user.id,
-              phone_number: phone_number,
-              amount: amount,
-              status: 'pending'
+            # Store payment request details
+            package.update_columns(
+              payment_request_id: result[:data]['CheckoutRequestID'],
+              payment_merchant_request_id: result[:data]['MerchantRequestID'],
+              payment_initiated_at: Time.current
             )
 
-            success_response(
-              {
-                checkout_request_id: result[:data][:CheckoutRequestID],
-                merchant_request_id: result[:data][:MerchantRequestID]
-              },
-              'STK push initiated successfully. Please check your phone.'
-            )
+            render json: {
+              status: 'success',
+              message: 'STK push sent successfully',
+              data: {
+                checkout_request_id: result[:data]['CheckoutRequestID'],
+                merchant_request_id: result[:data]['MerchantRequestID'],
+                customer_message: result[:data]['CustomerMessage']
+              }
+            }
           else
-            error_response(
-              result[:message] || 'Failed to initiate payment',
-              'stk_push_failed',
-              :unprocessable_entity
-            )
+            render json: {
+              status: 'error',
+              message: result[:message]
+            }, status: :unprocessable_entity
           end
 
         rescue => e
-          Rails.logger.error "API M-Pesa STK Push error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          error_response(
-            'Payment initiation failed',
-            'internal_error',
-            :internal_server_error
-          )
+          Rails.logger.error "STK push error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Failed to initiate payment'
+          }, status: :internal_server_error
         end
       end
 
-      # POST /api/v1/mpesa/stk_push_bulk
+      # POST /api/v1/mpesa/stk_push_bulk - Multiple packages payment
       def stk_push_bulk
         begin
-          phone_number = normalize_phone_number(params[:phone_number])
-          amount = params[:amount].to_f
           package_ids = params[:package_ids]
+          phone_number = params[:phone_number]
+          amount = params[:amount]&.to_f
+
+          unless package_ids.is_a?(Array) && package_ids.any? && phone_number.present? && amount && amount > 0
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters'
+            }, status: :unprocessable_entity
+          end
+
+          # Find packages
+          packages = current_user.packages.where(id: package_ids, state: 'pending_unpaid')
           
-          # Validate parameters
-          if phone_number.blank? || amount <= 0 || package_ids.blank? || !package_ids.is_a?(Array)
-            return error_response('Invalid parameters provided', 'validation_error', :bad_request)
+          unless packages.count == package_ids.count
+            return render json: {
+              status: 'error',
+              message: 'Some packages not found or already paid'
+            }, status: :not_found
           end
 
-          # Find packages to ensure they exist and belong to user
-          packages = Package.where(id: package_ids, user: current_user)
-          unless packages.count == package_ids.length
-            return error_response('One or more packages not found', 'packages_not_found', :not_found)
+          # Validate total amount
+          expected_total = packages.sum(:cost)
+          if (amount - expected_total).abs > 1 # Allow 1 KES difference for rounding
+            return render json: {
+              status: 'error',
+              message: "Amount mismatch. Expected: #{expected_total}, Got: #{amount}"
+            }, status: :unprocessable_entity
           end
 
-          # Check if all packages can be paid
-          unpayable_packages = packages.reject { |pkg| ['pending_unpaid', 'pending'].include?(pkg.state) }
-          unless unpayable_packages.empty?
-            unpayable_codes = unpayable_packages.map(&:code).join(', ')
-            return error_response("Packages #{unpayable_codes} cannot be paid at this time", 'invalid_state', :unprocessable_entity)
+          formatted_phone = MpesaService.format_phone_number(phone_number)
+          unless MpesaService.validate_phone_number(formatted_phone)
+            return render json: {
+              status: 'error',
+              message: 'Invalid phone number format'
+            }, status: :unprocessable_entity
           end
 
-          # Verify total amount matches package costs
-          total_cost = packages.sum(&:cost)
-          unless (amount - total_cost).abs < 0.01 # Allow for floating point precision
-            return error_response('Amount does not match total package cost', 'amount_mismatch', :unprocessable_entity)
-          end
+          package_codes = packages.pluck(:code).join(', ')
+          Rails.logger.info "Initiating bulk STK push for packages: #{package_codes}"
 
-          # Build API callback URL
-          api_callback_url = "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/callback"
-
-          # Create combined reference and description
-          package_codes = packages.map(&:code).join(', ')
-          account_reference = packages.count == 1 ? packages.first.code : "BULK_#{packages.count}_PKGS"
-          transaction_desc = "Payment for #{packages.count} packages: #{package_codes.truncate(50)}"
-
-          # Initiate STK push with API callback URL
+          # Initiate STK push
           result = MpesaService.initiate_stk_push(
-            phone_number: phone_number,
+            phone_number: formatted_phone,
             amount: amount,
-            account_reference: account_reference,
-            transaction_desc: transaction_desc,
-            callback_url: api_callback_url
+            account_reference: "BULK-#{packages.first.code}",
+            transaction_desc: "Payment for #{packages.count} packages"
           )
 
           if result[:success]
-            # Store bulk transaction reference
-            MpesaTransaction.create!(
-              checkout_request_id: result[:data][:CheckoutRequestID],
-              merchant_request_id: result[:data][:MerchantRequestID],
-              package_ids: package_ids, # Store as array for bulk transactions
-              user_id: current_user.id,
-              phone_number: phone_number,
-              amount: amount,
-              status: 'pending',
-              transaction_type: 'bulk' # Mark as bulk transaction
+            # Store payment request details for all packages
+            packages.update_all(
+              payment_request_id: result[:data]['CheckoutRequestID'],
+              payment_merchant_request_id: result[:data]['MerchantRequestID'],
+              payment_initiated_at: Time.current
             )
 
-            success_response(
-              {
-                checkout_request_id: result[:data][:CheckoutRequestID],
-                merchant_request_id: result[:data][:MerchantRequestID],
+            render json: {
+              status: 'success',
+              message: 'STK push sent successfully',
+              data: {
+                checkout_request_id: result[:data]['CheckoutRequestID'],
+                merchant_request_id: result[:data]['MerchantRequestID'],
+                customer_message: result[:data]['CustomerMessage'],
                 package_count: packages.count
-              },
-              'Bulk STK push initiated successfully. Please check your phone.'
-            )
+              }
+            }
           else
-            error_response(
-              result[:message] || 'Failed to initiate bulk payment',
-              'stk_push_failed',
-              :unprocessable_entity
-            )
+            render json: {
+              status: 'error',
+              message: result[:message]
+            }, status: :unprocessable_entity
           end
 
         rescue => e
-          Rails.logger.error "API M-Pesa Bulk STK Push error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          error_response(
-            'Bulk payment initiation failed',
-            'internal_error',
-            :internal_server_error
-          )
+          Rails.logger.error "Bulk STK push error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Failed to initiate payment'
+          }, status: :internal_server_error
         end
       end
 
@@ -169,359 +180,372 @@ module Api
       def query_status
         begin
           checkout_request_id = params[:checkout_request_id]
-          
+
           unless checkout_request_id.present?
-            return error_response('Checkout request ID required', 'validation_error', :bad_request)
+            return render json: {
+              status: 'error',
+              message: 'checkout_request_id is required'
+            }, status: :unprocessable_entity
           end
 
-          transaction = MpesaTransaction.find_by(
-            checkout_request_id: checkout_request_id,
-            user_id: current_user.id
-          )
-
-          unless transaction
-            return error_response('Transaction not found', 'transaction_not_found', :not_found)
-          end
-
-          # Query transaction status
+          # Query M-Pesa
           result = MpesaService.query_stk_status(checkout_request_id)
 
           if result[:success]
-            # Update transaction status
-            status = result[:data][:ResultCode] == '0' ? 'completed' : 'failed'
-            transaction.update!(
-              status: status,
-              result_code: result[:data][:ResultCode],
-              result_desc: result[:data][:ResultDesc]
-            )
+            response_data = result[:data]
+            result_code = response_data['ResultCode'].to_i
 
-            # Update package status if payment successful
-            if status == 'completed'
-              if transaction.transaction_type == 'bulk' && transaction.package_ids.present?
-                # Handle bulk transaction
-                packages = Package.where(id: transaction.package_ids, user: current_user)
-                packages.each do |package|
-                  package.update!(state: 'pending') if package.state == 'pending_unpaid'
-                end
-              elsif transaction.package_id.present?
-                # Handle single package transaction
-                package = transaction.package
-                package.update!(state: 'pending') if package.state == 'pending_unpaid'
-              end
-            end
+            transaction_status = case result_code
+                                when 0 then 'completed'
+                                when 1032 then 'cancelled'
+                                when 1037 then 'timeout'
+                                else 'pending'
+                                end
 
-            success_response(
-              {
-                transaction_status: status,
-                result_code: result[:data][:ResultCode],
-                result_desc: result[:data][:ResultDesc]
-              },
-              'Transaction status retrieved successfully'
-            )
+            render json: {
+              status: 'success',
+              data: {
+                transaction_status: transaction_status,
+                result_code: result_code,
+                result_desc: response_data['ResultDesc']
+              }
+            }
           else
-            error_response(
-              result[:message] || 'Failed to query transaction status',
-              'query_failed',
-              :unprocessable_entity
-            )
+            render json: {
+              status: 'error',
+              message: result[:message]
+            }, status: :unprocessable_entity
           end
 
         rescue => e
-          Rails.logger.error "API M-Pesa query error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          error_response(
-            'Failed to query transaction status',
-            'internal_error',
-            :internal_server_error
-          )
+          Rails.logger.error "Query status error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Failed to query payment status'
+          }, status: :internal_server_error
         end
       end
 
-      # POST /api/v1/mpesa/verify_manual
+      # POST /api/v1/mpesa/verify_manual - Manual verification for single package
       def verify_manual
         begin
           transaction_code = params[:transaction_code]
           package_id = params[:package_id]
-          amount = params[:amount].to_f
-          
-          # Validate parameters
-          if transaction_code.blank? || package_id.blank? || amount <= 0
-            return error_response('Invalid parameters provided', 'validation_error', :bad_request)
+          amount = params[:amount]&.to_f
+
+          unless transaction_code.present? && package_id.present? && amount
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters'
+            }, status: :unprocessable_entity
           end
 
-          # Find package to ensure it exists
-          package = Package.find_by(id: package_id, user: current_user)
+          # Find package
+          package = current_user.packages.find_by(id: package_id)
           unless package
-            return error_response('Package not found', 'package_not_found', :not_found)
+            return render json: {
+              status: 'error',
+              message: 'Package not found or access denied'
+            }, status: :not_found
           end
 
-          # Check if package can be paid
-          unless ['pending_unpaid', 'pending'].include?(package.state)
-            return error_response('Package cannot be paid at this time', 'invalid_state', :unprocessable_entity)
+          # Check if already paid
+          if package.state != 'pending_unpaid'
+            return render json: {
+              status: 'error',
+              message: 'Package has already been paid for'
+            }, status: :unprocessable_entity
           end
 
-          # Check if transaction code already exists
-          existing_transaction = MpesaTransaction.find_by(mpesa_receipt_number: transaction_code)
-          if existing_transaction
-            return error_response('Transaction code already used', 'duplicate_transaction', :unprocessable_entity)
-          end
+          Rails.logger.info "Manual verification for package #{package.code} with transaction: #{transaction_code}"
 
-          # Create manual transaction record
-          MpesaTransaction.create!(
-            package_id: package.id,
-            user_id: current_user.id,
+          # Use simplified verification for sandbox/development
+          result = MpesaService.verify_transaction_simple(
+            transaction_code: transaction_code,
             amount: amount,
-            status: 'completed',
-            mpesa_receipt_number: transaction_code,
-            transaction_type: 'manual',
-            result_desc: 'Manual verification'
+            phone_number: current_user.phone_number
           )
 
-          # Update package status
-          package.update!(state: 'pending') if package.state == 'pending_unpaid'
+          if result[:success]
+            # Update package
+            package.update!(
+              state: 'pending',
+              mpesa_receipt_number: transaction_code.upcase,
+              payment_completed_at: Time.current,
+              payment_method: 'manual_verification',
+              payment_metadata: result[:data]
+            )
 
-          success_response(
-            { package_code: package.code },
-            'Payment verified successfully'
-          )
+            render json: {
+              status: 'success',
+              message: 'Payment verified successfully',
+              data: {
+                package_code: package.code,
+                transaction_code: transaction_code.upcase,
+                verified: true
+              }
+            }
+          else
+            render json: {
+              status: 'error',
+              message: result[:message]
+            }, status: :unprocessable_entity
+          end
 
         rescue => e
-          Rails.logger.error "API M-Pesa manual verification error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          error_response(
-            'Manual verification failed',
-            'internal_error',
-            :internal_server_error
-          )
+          Rails.logger.error "Manual verification error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Verification failed'
+          }, status: :internal_server_error
         end
       end
 
-      # POST /api/v1/mpesa/verify_manual_bulk
+      # POST /api/v1/mpesa/verify_manual_bulk - Manual verification for multiple packages
       def verify_manual_bulk
         begin
           transaction_code = params[:transaction_code]
           package_ids = params[:package_ids]
-          amount = params[:amount].to_f
+          amount = params[:amount]&.to_f
+
+          unless transaction_code.present? && package_ids.is_a?(Array) && package_ids.any? && amount
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters'
+            }, status: :unprocessable_entity
+          end
+
+          # Find packages
+          packages = current_user.packages.where(id: package_ids, state: 'pending_unpaid')
           
-          # Validate parameters
-          if transaction_code.blank? || package_ids.blank? || !package_ids.is_a?(Array) || amount <= 0
-            return error_response('Invalid parameters provided', 'validation_error', :bad_request)
+          unless packages.count == package_ids.count
+            return render json: {
+              status: 'error',
+              message: 'Some packages not found or already paid'
+            }, status: :not_found
           end
 
-          # Find packages to ensure they exist and belong to user
-          packages = Package.where(id: package_ids, user: current_user)
-          unless packages.count == package_ids.length
-            return error_response('One or more packages not found', 'packages_not_found', :not_found)
+          # Validate total amount
+          expected_total = packages.sum(:cost)
+          if (amount - expected_total).abs > 1
+            return render json: {
+              status: 'error',
+              message: "Amount mismatch. Expected: #{expected_total}, Got: #{amount}"
+            }, status: :unprocessable_entity
           end
 
-          # Check if all packages can be paid
-          unpayable_packages = packages.reject { |pkg| ['pending_unpaid', 'pending'].include?(pkg.state) }
-          unless unpayable_packages.empty?
-            unpayable_codes = unpayable_packages.map(&:code).join(', ')
-            return error_response("Packages #{unpayable_codes} cannot be paid at this time", 'invalid_state', :unprocessable_entity)
-          end
+          package_codes = packages.pluck(:code).join(', ')
+          Rails.logger.info "Bulk manual verification for packages: #{package_codes} with transaction: #{transaction_code}"
 
-          # Verify total amount matches package costs
-          total_cost = packages.sum(&:cost)
-          unless (amount - total_cost).abs < 0.01 # Allow for floating point precision
-            return error_response('Amount does not match total package cost', 'amount_mismatch', :unprocessable_entity)
-          end
-
-          # Check if transaction code already exists
-          existing_transaction = MpesaTransaction.find_by(mpesa_receipt_number: transaction_code)
-          if existing_transaction
-            return error_response('Transaction code already used', 'duplicate_transaction', :unprocessable_entity)
-          end
-
-          # Create manual bulk transaction record
-          MpesaTransaction.create!(
-            package_ids: package_ids, # Store as array for bulk transactions
-            user_id: current_user.id,
+          # Verify transaction
+          result = MpesaService.verify_transaction_simple(
+            transaction_code: transaction_code,
             amount: amount,
-            status: 'completed',
-            mpesa_receipt_number: transaction_code,
-            transaction_type: 'manual_bulk',
-            result_desc: 'Manual bulk verification'
+            phone_number: current_user.phone_number
           )
 
-          # Update all package statuses
-          packages.each do |package|
-            package.update!(state: 'pending') if package.state == 'pending_unpaid'
+          if result[:success]
+            # Update all packages
+            packages.update_all(
+              state: 'pending',
+              mpesa_receipt_number: transaction_code.upcase,
+              payment_completed_at: Time.current,
+              payment_method: 'manual_verification_bulk'
+            )
+
+            render json: {
+              status: 'success',
+              message: 'Payments verified successfully',
+              data: {
+                package_codes: packages.pluck(:code),
+                transaction_code: transaction_code.upcase,
+                verified: true,
+                package_count: packages.count
+              }
+            }
+          else
+            render json: {
+              status: 'error',
+              message: result[:message]
+            }, status: :unprocessable_entity
           end
-
-          package_codes = packages.map(&:code).join(', ')
-          success_response(
-            { 
-              package_codes: package_codes,
-              package_count: packages.count
-            },
-            'Bulk payment verified successfully'
-          )
 
         rescue => e
-          Rails.logger.error "API M-Pesa manual bulk verification error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          error_response(
-            'Manual bulk verification failed',
-            'internal_error',
-            :internal_server_error
-          )
+          Rails.logger.error "Bulk manual verification error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Verification failed'
+          }, status: :internal_server_error
         end
       end
 
-      # POST /api/v1/mpesa/callback (from Safaricom)
+      # POST /mpesa/callback - M-Pesa STK Push callback
       def callback
         begin
-          Rails.logger.info "API M-Pesa callback received: #{params.inspect}"
+          Rails.logger.info "M-Pesa callback received: #{params.to_json}"
 
-          # Extract callback data
-          body = params[:Body] || params
-          stk_callback = body[:stkCallback] || body[:STKCallback]
+          callback_data = params.to_unsafe_h
+          result = MpesaService.process_stk_callback(callback_data)
 
-          unless stk_callback
-            return render json: { ResultCode: 1, ResultDesc: 'Invalid callback format' }
-          end
+          if result[:success]
+            # Find package(s) by checkout_request_id
+            packages = Package.where(payment_request_id: result[:checkout_request_id])
 
-          checkout_request_id = stk_callback[:CheckoutRequestID]
-          result_code = stk_callback[:ResultCode]
-          result_desc = stk_callback[:ResultDesc]
+            if packages.any?
+              packages.each do |package|
+                package.update!(
+                  state: 'pending',
+                  mpesa_receipt_number: result[:mpesa_receipt_number],
+                  payment_completed_at: Time.current,
+                  payment_metadata: result
+                )
 
-          # Find transaction
-          transaction = MpesaTransaction.find_by(checkout_request_id: checkout_request_id)
-
-          if transaction
-            # Update transaction
-            if result_code == 0
-              # Success - extract callback metadata
-              callback_metadata = stk_callback[:CallbackMetadata]
-              mpesa_receipt_number = nil
-              phone_number = nil
-              amount = nil
-
-              if callback_metadata && callback_metadata[:Item]
-                callback_metadata[:Item].each do |item|
-                  case item[:Name]
-                  when 'MpesaReceiptNumber'
-                    mpesa_receipt_number = item[:Value]
-                  when 'PhoneNumber'
-                    phone_number = item[:Value]
-                  when 'Amount'
-                    amount = item[:Value]
-                  end
-                end
+                Rails.logger.info "Package #{package.code} payment completed via M-Pesa"
               end
-
-              transaction.update!(
-                status: 'completed',
-                result_code: result_code,
-                result_desc: result_desc,
-                mpesa_receipt_number: mpesa_receipt_number,
-                callback_phone_number: phone_number,
-                callback_amount: amount
-              )
-
-              # Update package status(es)
-              if transaction.transaction_type == 'bulk' && transaction.package_ids.present?
-                # Handle bulk transaction
-                packages = Package.where(id: transaction.package_ids)
-                packages.each do |package|
-                  if package.state == 'pending_unpaid'
-                    package.update!(state: 'pending')
-                    Rails.logger.info "Package #{package.code} status updated to pending after successful bulk payment"
-                  end
-                end
-              elsif transaction.package_id.present?
-                # Handle single package transaction
-                package = transaction.package
-                if package && package.state == 'pending_unpaid'
-                  package.update!(state: 'pending')
-                  Rails.logger.info "Package #{package.code} status updated to pending after successful payment"
-                end
-              end
-
             else
-              # Failed
-              transaction.update!(
-                status: 'failed',
-                result_code: result_code,
-                result_desc: result_desc
-              )
+              Rails.logger.warn "No packages found for checkout_request_id: #{result[:checkout_request_id]}"
             end
-
-            Rails.logger.info "Transaction #{checkout_request_id} updated: #{transaction.status}"
           else
-            Rails.logger.warn "Transaction not found for checkout_request_id: #{checkout_request_id}"
+            Rails.logger.warn "Payment failed: #{result[:result_desc]}"
+            
+            # Update packages to show payment failed
+            packages = Package.where(payment_request_id: result[:checkout_request_id])
+            packages.update_all(
+              payment_failed_at: Time.current,
+              payment_failure_reason: result[:result_desc]
+            )
           end
 
-          # Always respond with success to Safaricom
-          render json: { ResultCode: 0, ResultDesc: 'Success' }
+          # Always return success to M-Pesa
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
 
         rescue => e
-          Rails.logger.error "API M-Pesa callback error: #{e.message}"
-          render json: { ResultCode: 1, ResultDesc: 'Internal error' }
+          Rails.logger.error "Callback processing error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
+          
+          # Still return success to M-Pesa to avoid retries
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
         end
       end
 
-      # POST /api/v1/mpesa/timeout (from Safaricom)
+      # POST /mpesa/timeout - M-Pesa timeout callback
       def timeout
         begin
-          Rails.logger.info "API M-Pesa timeout received: #{params.inspect}"
-
-          checkout_request_id = params[:CheckoutRequestID]
+          Rails.logger.info "M-Pesa timeout received: #{params.to_json}"
           
+          # Mark payment as timeout
+          checkout_request_id = params.dig(:Body, :stkCallback, :CheckoutRequestID)
           if checkout_request_id
-            transaction = MpesaTransaction.find_by(checkout_request_id: checkout_request_id)
-            if transaction
-              transaction.update!(
-                status: 'timeout',
-                result_desc: 'Transaction timeout'
-              )
-              Rails.logger.info "Transaction #{checkout_request_id} marked as timeout"
-            end
+            packages = Package.where(payment_request_id: checkout_request_id)
+            packages.update_all(
+              payment_failed_at: Time.current,
+              payment_failure_reason: 'Payment request timeout'
+            )
           end
 
-          render json: { ResultCode: 0, ResultDesc: 'Success' }
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
 
         rescue => e
-          Rails.logger.error "API M-Pesa timeout error: #{e.message}"
-          render json: { ResultCode: 1, ResultDesc: 'Internal error' }
+          Rails.logger.error "Timeout processing error: #{e.message}"
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+        end
+      end
+
+      # POST /mpesa/b2c_callback - M-Pesa B2C callback (for withdrawals)
+      def b2c_callback
+        begin
+          Rails.logger.info "M-Pesa B2C callback received: #{params.to_json}"
+
+          callback_data = params.to_unsafe_h
+          result = MpesaService.process_b2c_callback(callback_data)
+
+          if result[:success]
+            # Find withdrawal by originator_conversation_id
+            withdrawal = Withdrawal.find_by(mpesa_request_id: result[:originator_conversation_id])
+
+            if withdrawal
+              withdrawal.mark_completed!(receipt_number: result[:transaction_receipt])
+              Rails.logger.info "Withdrawal #{withdrawal.id} completed via B2C"
+            else
+              Rails.logger.warn "No withdrawal found for conversation_id: #{result[:originator_conversation_id]}"
+            end
+          else
+            Rails.logger.warn "B2C payment failed: #{result[:result_desc]}"
+            
+            # Update withdrawal to failed
+            withdrawal = Withdrawal.find_by(mpesa_request_id: result[:originator_conversation_id])
+            withdrawal&.handle_failure!(result[:result_desc])
+          end
+
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+
+        rescue => e
+          Rails.logger.error "B2C callback processing error: #{e.message}"
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+        end
+      end
+
+      # POST /mpesa/verify_callback - Transaction verification callback
+      def verify_callback
+        begin
+          Rails.logger.info "M-Pesa verification callback received: #{params.to_json}"
+          
+          # Process verification results if needed
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+
+        rescue => e
+          Rails.logger.error "Verification callback error: #{e.message}"
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+        end
+      end
+
+      # POST /mpesa/verify_timeout
+      def verify_timeout
+        begin
+          Rails.logger.info "M-Pesa verification timeout received: #{params.to_json}"
+          
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
+
+        rescue => e
+          Rails.logger.error "Verification timeout error: #{e.message}"
+          render json: {
+            ResultCode: 0,
+            ResultDesc: 'Success'
+          }
         end
       end
 
       private
 
-      def success_response(data, message = 'Success')
-        render json: {
-          status: 'success',
-          message: message,
-          data: data
-        }
-      end
-
-      def error_response(message, code, status)
-        render json: {
-          status: 'error',
-          message: message,
-          code: code
-        }, status: status
-      end
-
-      def normalize_phone_number(phone)
-        return nil if phone.blank?
-        
-        # Remove any non-digit characters
-        clean_phone = phone.gsub(/\D/, '')
-        
-        # Handle different formats
-        if clean_phone.start_with?('254')
-          clean_phone
-        elsif clean_phone.start_with?('0')
-          "254#{clean_phone[1..-1]}"
-        elsif clean_phone.length == 9
-          "254#{clean_phone}"
-        else
-          clean_phone
-        end
+      def force_json_format
+        request.format = :json
       end
     end
   end
