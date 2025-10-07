@@ -153,6 +153,7 @@ get '/logout', to: 'sessions#destroy'
         get :transactions
         get :withdrawals
         get :summary
+        post 'topup', to: 'wallets#topup'
         post :withdraw
         post 'withdrawals/:id/cancel', to: 'wallets#cancel_withdrawal', as: :cancel_withdrawal
       end
