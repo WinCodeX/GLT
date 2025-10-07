@@ -1,4 +1,4 @@
-# app/controllers/api/v1/support_controller.rb - FIXED: Syntax error resolved
+# app/controllers/api/v1/support_controller.rb
 class Api::V1::SupportController < ApplicationController
   include AvatarHelper
   
@@ -24,6 +24,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error loading support dashboard: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to load dashboard data'
@@ -61,6 +62,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error loading support tickets: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to load support tickets'
@@ -71,12 +73,11 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/my_tickets
   def my_tickets
     begin
-      my_tickets = current_user.conversations
-                              .support_tickets
+      my_tickets = Conversation.support_tickets
                               .joins(:conversation_participants)
-                              .where(conversation_participants: { role: 'agent', user: current_user })
+                              .where(conversation_participants: { role: 'agent', user_id: current_user.id })
                               .includes(:users, :messages)
-                              .recent
+                              .order(updated_at: :desc)
                               .limit(50)
 
       render json: {
@@ -88,6 +89,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error loading agent tickets: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to load your tickets'
@@ -151,6 +153,7 @@ class Api::V1::SupportController < ApplicationController
       }, status: :not_found
     rescue => e
       Rails.logger.error "Error assigning ticket: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to assign ticket'
@@ -165,14 +168,14 @@ class Api::V1::SupportController < ApplicationController
       escalate_to = params[:escalate_to]
       
       current_metadata = @conversation.metadata || {}
-      @conversation.metadata = current_metadata.merge({
+      @conversation.metadata = current_metadata.merge(
         'priority' => 'high',
         'escalated' => true,
         'escalation_reason' => escalation_reason,
         'escalated_to' => escalate_to,
         'escalated_by' => current_user.id,
         'escalated_at' => Time.current.iso8601
-      })
+      )
       @conversation.save!
 
       system_message = @conversation.messages.create!(
@@ -203,6 +206,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error escalating ticket: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to escalate ticket'
@@ -247,6 +251,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error adding note: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to add note'
@@ -268,11 +273,11 @@ class Api::V1::SupportController < ApplicationController
 
       old_priority = @conversation.priority
       current_metadata = @conversation.metadata || {}
-      @conversation.metadata = current_metadata.merge({
+      @conversation.metadata = current_metadata.merge(
         'priority' => new_priority,
         'priority_updated_by' => current_user.id,
         'priority_updated_at' => Time.current.iso8601
-      })
+      )
       @conversation.save!
 
       system_message = @conversation.messages.create!(
@@ -301,6 +306,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error updating priority: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to update priority'
@@ -316,13 +322,14 @@ class Api::V1::SupportController < ApplicationController
                   .order(:first_name, :last_name)
 
       agents_data = agents.map do |agent|
-        format_agent_info(agent).merge({
-          current_workload: agent.conversations
-                                 .support_tickets
-                                 .where("metadata->>'status' IN (?)", ['assigned', 'in_progress'])
-                                 .count,
+        agent_tickets = Conversation.support_tickets
+                                   .joins(:conversation_participants)
+                                   .where(conversation_participants: { role: 'agent', user_id: agent.id })
+        
+        format_agent_info(agent).merge(
+          current_workload: agent_tickets.where("conversations.metadata->>'status' IN (?)", ['assigned', 'in_progress']).count,
           performance_stats: get_agent_performance_stats(agent)
-        })
+        )
       end
 
       render json: {
@@ -333,6 +340,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error loading agents: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to load agents'
@@ -363,6 +371,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error performing bulk action: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to perform bulk action'
@@ -382,6 +391,7 @@ class Api::V1::SupportController < ApplicationController
       }
     rescue => e
       Rails.logger.error "Error loading stats: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
         message: 'Failed to load statistics'
@@ -416,26 +426,18 @@ class Api::V1::SupportController < ApplicationController
       Conversation.support_tickets
                   .joins(:conversation_participants)
                   .where(conversation_participants: { role: 'agent', user_id: current_user.id })
+                  .distinct
     end
   end
 
   def build_tickets_query
-    query = accessible_conversations.includes(:conversation_participants, :users, :messages)
-    query.recent
+    accessible_conversations.includes(:conversation_participants, :users, :messages).order(updated_at: :desc)
   end
 
   def apply_ticket_filters(query)
-    if params[:status].present?
-      query = query.where("metadata->>'status' = ?", params[:status])
-    end
-
-    if params[:priority].present?
-      query = query.where("metadata->>'priority' = ?", params[:priority])
-    end
-
-    if params[:category].present?
-      query = query.where("metadata->>'category' = ?", params[:category])
-    end
+    query = query.where("conversations.metadata->>'status' = ?", params[:status]) if params[:status].present?
+    query = query.where("conversations.metadata->>'priority' = ?", params[:priority]) if params[:priority].present?
+    query = query.where("conversations.metadata->>'category' = ?", params[:category]) if params[:category].present?
 
     if params[:agent_id].present?
       query = query.joins(:conversation_participants)
@@ -444,17 +446,11 @@ class Api::V1::SupportController < ApplicationController
 
     if params[:unassigned] == 'true'
       query = query.left_joins(:conversation_participants)
-                  .where(conversation_participants: { role: 'agent' })
-                  .where(conversation_participants: { id: nil })
+                  .where("conversation_participants.role = 'agent' AND conversation_participants.id IS NULL")
     end
 
-    if params[:created_after].present?
-      query = query.where('created_at >= ?', params[:created_after])
-    end
-
-    if params[:created_before].present?
-      query = query.where('created_at <= ?', params[:created_before])
-    end
+    query = query.where('conversations.created_at >= ?', params[:created_after]) if params[:created_after].present?
+    query = query.where('conversations.created_at <= ?', params[:created_before]) if params[:created_before].present?
 
     if params[:search].present?
       search_term = "%#{params[:search]}%"
@@ -469,23 +465,21 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def extract_applied_filters
-    filters = {
-      status: params[:status],
-      priority: params[:priority],
-      category: params[:category],
-      agent_id: params[:agent_id],
-      unassigned: params[:unassigned],
-      search: params[:search]
-    }
+    filters = {}
+    filters[:status] = params[:status] if params[:status].present?
+    filters[:priority] = params[:priority] if params[:priority].present?
+    filters[:category] = params[:category] if params[:category].present?
+    filters[:agent_id] = params[:agent_id] if params[:agent_id].present?
+    filters[:unassigned] = params[:unassigned] if params[:unassigned].present?
+    filters[:search] = params[:search] if params[:search].present?
     
     if params[:created_after].present? || params[:created_before].present?
-      filters[:date_range] = {
-        after: params[:created_after],
-        before: params[:created_before]
-      }
+      filters[:date_range] = {}
+      filters[:date_range][:after] = params[:created_after] if params[:created_after].present?
+      filters[:date_range][:before] = params[:created_before] if params[:created_before].present?
     end
     
-    filters.compact
+    filters
   end
 
   def broadcast_agent_assignment(agent)
@@ -614,7 +608,7 @@ class Api::V1::SupportController < ApplicationController
       }
     )
     
-    Rails.logger.info "✅ Dashboard stats broadcast: #{stats.inspect}"
+    Rails.logger.info "✅ Dashboard stats broadcast"
   end
 
   def calculate_dashboard_stats
@@ -622,16 +616,16 @@ class Api::V1::SupportController < ApplicationController
 
     {
       total_tickets: base_tickets.count,
-      pending_tickets: base_tickets.where("metadata->>'status' = 'pending'").count,
-      in_progress_tickets: base_tickets.where("metadata->>'status' = 'in_progress'").count,
-      resolved_today: base_tickets.where("metadata->>'status' = 'resolved'")
-                                 .where('updated_at >= ?', Date.current.beginning_of_day).count,
+      pending_tickets: base_tickets.where("conversations.metadata->>'status' = ?", 'pending').count,
+      in_progress_tickets: base_tickets.where("conversations.metadata->>'status' = ?", 'in_progress').count,
+      resolved_today: base_tickets.where("conversations.metadata->>'status' = ?", 'resolved')
+                                 .where('conversations.updated_at >= ?', Time.current.beginning_of_day).count,
       avg_response_time: calculate_avg_response_time,
       satisfaction_score: calculate_satisfaction_score,
       tickets_by_priority: {
-        high: base_tickets.where("metadata->>'priority' = 'high'").count,
-        normal: base_tickets.where("metadata->>'priority' = 'normal'").count,
-        low: base_tickets.where("metadata->>'priority' = 'low'").count
+        high: base_tickets.where("conversations.metadata->>'priority' = ?", 'high').count,
+        normal: base_tickets.where("conversations.metadata->>'priority' = ?", 'normal').count,
+        low: base_tickets.where("conversations.metadata->>'priority' = ?", 'low').count
       },
       tickets_by_category: calculate_tickets_by_category,
       trends: calculate_ticket_trends
@@ -641,8 +635,8 @@ class Api::V1::SupportController < ApplicationController
   def get_recent_activity
     recent_tickets = accessible_conversations
                     .includes(:users, :messages)
-                    .where('updated_at >= ?', 24.hours.ago)
-                    .order(updated_at: :desc)
+                    .where('conversations.updated_at >= ?', 24.hours.ago)
+                    .order('conversations.updated_at DESC')
                     .limit(10)
 
     recent_tickets.map do |ticket|
@@ -659,17 +653,16 @@ class Api::V1::SupportController < ApplicationController
   def get_agent_performance_stats(agent = nil)
     target_agent = agent || current_user
     
+    agent_tickets = Conversation.support_tickets
+                                .joins(:conversation_participants)
+                                .where(conversation_participants: { role: 'agent', user_id: target_agent.id })
+    
     {
-      tickets_resolved_today: target_agent.conversations
-                                         .support_tickets
-                                         .where("metadata->>'status' = 'resolved'")
-                                         .where('updated_at >= ?', Date.current.beginning_of_day)
-                                         .count,
+      tickets_resolved_today: agent_tickets.where("conversations.metadata->>'status' = ?", 'resolved')
+                                          .where('conversations.updated_at >= ?', Time.current.beginning_of_day)
+                                          .count,
       avg_resolution_time: calculate_agent_avg_resolution_time(target_agent),
-      active_tickets: target_agent.conversations
-                                 .support_tickets
-                                 .where("metadata->>'status' IN (?)", ['assigned', 'in_progress'])
-                                 .count,
+      active_tickets: agent_tickets.where("conversations.metadata->>'status' IN (?)", ['assigned', 'in_progress']).count,
       satisfaction_rating: calculate_agent_satisfaction(target_agent)
     }
   end
@@ -809,11 +802,11 @@ class Api::V1::SupportController < ApplicationController
 
   def update_conversation_priority(conversation, priority)
     current_metadata = conversation.metadata || {}
-    conversation.metadata = current_metadata.merge({
+    conversation.metadata = current_metadata.merge(
       'priority' => priority,
       'priority_updated_by' => current_user.id,
       'priority_updated_at' => Time.current.iso8601
-    })
+    )
     conversation.save!
   end
 
@@ -826,7 +819,7 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_tickets_by_category
-    accessible_conversations.group("metadata->>'category'").count
+    accessible_conversations.group("conversations.metadata->>'category'").count
   end
 
   def calculate_ticket_trends
