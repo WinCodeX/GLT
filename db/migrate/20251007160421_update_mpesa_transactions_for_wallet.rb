@@ -1,6 +1,3 @@
-# db/migrate/YYYYMMDDHHMMSS_update_mpesa_transactions_for_wallet.rb
-# Run this migration: rails g migration UpdateMpesaTransactionsForWallet
-
 class UpdateMpesaTransactionsForWallet < ActiveRecord::Migration[7.0]
   def change
     # Add wallet reference (if not exists)
