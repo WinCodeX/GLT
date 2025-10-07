@@ -135,6 +135,140 @@ class Wallet < ApplicationRecord
     true
   end
 
+  # Top-Up Management (for clients)
+  def initiate_topup!(amount:, phone_number:)
+    raise ArgumentError, "Amount must be positive" if amount <= 0
+    raise ArgumentError, "Only client wallets can be topped up" unless client?
+
+    reference = generate_topup_reference
+    
+    # Create pending transaction
+    add_pending!(
+      amount,
+      transaction_type: 'topup',
+      description: "Wallet top-up via M-Pesa",
+      reference: reference
+    )
+
+    # Initiate M-Pesa STK Push
+    mpesa_service = MpesaService.new
+    result = mpesa_service.stk_push(
+      phone_number: phone_number,
+      amount: amount,
+      account_reference: reference,
+      transaction_desc: "Wallet top-up for #{user.email}"
+    )
+
+    if result[:success]
+      {
+        success: true,
+        checkout_request_id: result[:checkout_request_id],
+        reference: reference,
+        merchant_request_id: result[:merchant_request_id]
+      }
+    else
+      # Cancel the pending transaction if STK push failed
+      cancel_pending!(amount, reference: reference)
+      
+      {
+        success: false,
+        message: result[:message] || 'Failed to initiate M-Pesa payment',
+        error: result[:error]
+      }
+    end
+  rescue => e
+    Rails.logger.error "Top-up initiation failed for wallet #{id}: #{e.message}"
+    
+    # Try to cancel pending transaction
+    begin
+      cancel_pending!(amount, reference: reference) if reference
+    rescue => cancel_error
+      Rails.logger.error "Failed to cancel pending transaction: #{cancel_error.message}"
+    end
+    
+    {
+      success: false,
+      message: 'Failed to initiate top-up',
+      error: e.message
+    }
+  end
+
+  # Process completed top-up (called by M-Pesa callback)
+  def complete_topup!(reference:, mpesa_receipt:, metadata: {})
+    pending_txn = transactions.find_by(
+      reference: reference, 
+      transaction_type: 'topup',
+      status: 'pending'
+    )
+
+    unless pending_txn
+      Rails.logger.error "No pending top-up found for reference: #{reference}"
+      return false
+    end
+
+    amount = pending_txn.amount
+
+    begin
+      transaction do
+        # Release pending amount to actual balance
+        release_pending!(amount, reference: reference)
+        
+        # Update transaction metadata
+        pending_txn.update!(
+          metadata: metadata.merge(mpesa_receipt: mpesa_receipt),
+          reference: "#{reference}-#{mpesa_receipt}"
+        )
+      end
+
+      Rails.logger.info "Top-up completed for wallet #{id}: #{amount} KES (Receipt: #{mpesa_receipt})"
+      
+      # Broadcast update
+      broadcast_balance_update
+      
+      # Send notification
+      notify_topup_success(amount, mpesa_receipt)
+      
+      true
+    rescue => e
+      Rails.logger.error "Failed to complete top-up for wallet #{id}: #{e.message}"
+      false
+    end
+  end
+
+  # Cancel failed top-up (called by M-Pesa callback)
+  def fail_topup!(reference:, reason:)
+    pending_txn = transactions.find_by(
+      reference: reference,
+      transaction_type: 'topup',
+      status: 'pending'
+    )
+
+    unless pending_txn
+      Rails.logger.warn "No pending top-up found for reference: #{reference}"
+      return false
+    end
+
+    amount = pending_txn.amount
+
+    begin
+      cancel_pending!(amount, reference: reference)
+      
+      pending_txn.update!(
+        metadata: (pending_txn.metadata || {}).merge(failure_reason: reason)
+      )
+
+      Rails.logger.info "Top-up cancelled for wallet #{id}: #{amount} KES (Reason: #{reason})"
+      
+      # Send notification
+      notify_topup_failure(amount, reason)
+      
+      true
+    rescue => e
+      Rails.logger.error "Failed to cancel top-up for wallet #{id}: #{e.message}"
+      false
+    end
+  end
+
   # Commission Management (for riders)
   def credit_commission!(amount, package_id:, description: nil)
     return false unless rider?
@@ -177,6 +311,7 @@ class Wallet < ApplicationRecord
       transaction_count: txns.count,
       commission_earned: rider? ? txns.where(transaction_type: 'commission').sum(:amount) : 0,
       pod_collected: client? ? txns.where(transaction_type: 'pod_collection').sum(:amount) : 0,
+      topups: client? ? txns.where(transaction_type: 'topup', status: 'completed').sum(:amount) : 0,
       period: period
     }
   end
@@ -223,6 +358,10 @@ class Wallet < ApplicationRecord
                       end
   end
 
+  def generate_topup_reference
+    "TOPUP-#{id}-#{Time.current.to_i}-#{SecureRandom.hex(4).upcase}"
+  end
+
   def broadcast_balance_update
     return unless user_id.present?
 
@@ -254,6 +393,43 @@ class Wallet < ApplicationRecord
     )
   rescue => e
     Rails.logger.error "Failed to broadcast wallet status: #{e.message}"
+  end
+
+  def notify_topup_success(amount, receipt)
+    return unless user_id.present? && defined?(Notification)
+
+    Notification.create!(
+      user: user,
+      notification_type: 'wallet_topup',
+      title: '💰 Wallet Top-Up Successful',
+      message: "KES #{amount.to_f.round(2)} has been added to your wallet",
+      data: {
+        amount: amount,
+        mpesa_receipt: receipt,
+        balance: balance,
+        transaction_type: 'topup'
+      }
+    )
+  rescue => e
+    Rails.logger.error "Failed to create top-up notification: #{e.message}"
+  end
+
+  def notify_topup_failure(amount, reason)
+    return unless user_id.present? && defined?(Notification)
+
+    Notification.create!(
+      user: user,
+      notification_type: 'wallet_topup_failed',
+      title: '❌ Wallet Top-Up Failed',
+      message: "Top-up of KES #{amount.to_f.round(2)} failed: #{reason}",
+      data: {
+        amount: amount,
+        failure_reason: reason,
+        transaction_type: 'topup'
+      }
+    )
+  rescue => e
+    Rails.logger.error "Failed to create top-up failure notification: #{e.message}"
   end
 end
 
