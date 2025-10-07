@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - FIXED: Message read broadcast with individual acknowledgments
+# app/channels/user_notifications_channel.rb - FIXED: Message read broadcast with individual acknowledgments + Wallet Broadcasting
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -6,6 +6,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     stream_from "user_cart_#{current_user.id}"
     stream_from "user_messages_#{current_user.id}"
     stream_from "user_packages_#{current_user.id}"
+    stream_from "user_wallet_#{current_user.id}"
     stream_from "user_profile_updates"
     stream_from "user_avatar_updates"
     stream_from "app_updates"
@@ -13,7 +14,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
     subscribe_to_business_channels
     subscribe_to_support_channels
     
-    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates"
+    Rails.logger.info "User #{current_user.id} subscribed to comprehensive real-time updates including wallet"
     
     update_user_presence_status('online')
     send_initial_state
@@ -504,6 +505,78 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
+  # WALLET METHODS START
+  def request_wallet_balance(data)
+    begin
+      wallet = get_user_wallet
+      
+      unless wallet
+        transmit({
+          type: 'error',
+          message: 'Wallet not found',
+          error_code: 'WALLET_NOT_FOUND'
+        })
+        return
+      end
+      
+      transmit({
+        type: 'wallet_balance',
+        balance: wallet.balance,
+        pending_balance: wallet.respond_to?(:pending_balance) ? wallet.pending_balance : 0,
+        available_balance: wallet.respond_to?(:available_balance) ? wallet.available_balance : wallet.balance,
+        currency: wallet.respond_to?(:currency) ? wallet.currency : 'KES',
+        timestamp: Time.current.iso8601
+      })
+      
+    rescue => e
+      Rails.logger.error "Failed to get wallet balance: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to get wallet balance',
+        error_code: 'WALLET_BALANCE_FAILED'
+      })
+    end
+  end
+
+  def request_wallet_transactions(data)
+    begin
+      wallet = get_user_wallet
+      
+      unless wallet
+        transmit({
+          type: 'error',
+          message: 'Wallet not found',
+          error_code: 'WALLET_NOT_FOUND'
+        })
+        return
+      end
+      
+      limit = data['limit'] || 20
+      offset = data['offset'] || 0
+      
+      transactions = wallet.transactions
+                          .order(created_at: :desc)
+                          .limit(limit)
+                          .offset(offset)
+      
+      transmit({
+        type: 'wallet_transactions',
+        transactions: transactions.map { |t| format_transaction(t) },
+        has_more: wallet.transactions.count > (offset + limit),
+        timestamp: Time.current.iso8601
+      })
+      
+    rescue => e
+      Rails.logger.error "Failed to get wallet transactions: #{e.message}"
+      transmit({
+        type: 'error',
+        message: 'Failed to get wallet transactions',
+        error_code: 'WALLET_TRANSACTIONS_FAILED'
+      })
+    end
+  end
+  # WALLET METHODS END
+
   def self.broadcast_new_message(message)
     begin
       return unless message&.conversation_id
@@ -564,6 +637,122 @@ class UserNotificationsChannel < ApplicationCable::Channel
       Rails.logger.error e.backtrace.first(10).join("\n")
     end
   end
+
+  # WALLET BROADCASTING METHODS START
+  def self.broadcast_balance_update(user_id, wallet_data)
+    begin
+      ActionCable.server.broadcast(
+        "user_wallet_#{user_id}",
+        {
+          type: 'balance_update',
+          balance: wallet_data[:balance],
+          pending_balance: wallet_data[:pending_balance] || 0,
+          available_balance: wallet_data[:available_balance] || wallet_data[:balance],
+          currency: wallet_data[:currency] || 'KES',
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "Broadcasted balance update to user #{user_id}"
+    rescue => e
+      Rails.logger.error "Failed to broadcast balance update: #{e.message}"
+    end
+  end
+
+  def self.broadcast_new_transaction(user_id, transaction)
+    begin
+      ActionCable.server.broadcast(
+        "user_wallet_#{user_id}",
+        {
+          type: 'new_transaction',
+          transaction: format_transaction_data(transaction),
+          balance: transaction.wallet&.balance,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "Broadcasted new transaction to user #{user_id}"
+    rescue => e
+      Rails.logger.error "Failed to broadcast new transaction: #{e.message}"
+    end
+  end
+
+  def self.broadcast_withdrawal_status(user_id, withdrawal, status)
+    begin
+      event_type = case status
+                   when 'completed'
+                     'withdrawal_completed'
+                   when 'failed'
+                     'withdrawal_failed'
+                   when 'cancelled'
+                     'withdrawal_cancelled'
+                   else
+                     'withdrawal_status_update'
+                   end
+      
+      ActionCable.server.broadcast(
+        "user_wallet_#{user_id}",
+        {
+          type: event_type,
+          withdrawal: format_withdrawal_data(withdrawal),
+          status: status,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "Broadcasted withdrawal #{status} to user #{user_id}"
+    rescue => e
+      Rails.logger.error "Failed to broadcast withdrawal status: #{e.message}"
+    end
+  end
+
+  def self.broadcast_wallet_status(user_id, status, message = nil)
+    begin
+      ActionCable.server.broadcast(
+        "user_wallet_#{user_id}",
+        {
+          type: 'status_update',
+          status: status,
+          message: message,
+          timestamp: Time.current.iso8601
+        }
+      )
+      
+      Rails.logger.info "Broadcasted wallet status to user #{user_id}: #{status}"
+    rescue => e
+      Rails.logger.error "Failed to broadcast wallet status: #{e.message}"
+    end
+  end
+
+  private_class_method def self.format_transaction_data(transaction)
+    {
+      id: transaction.id,
+      transaction_type: transaction.transaction_type,
+      amount: transaction.amount,
+      balance_after: transaction.balance_after,
+      description: transaction.description,
+      reference: transaction.reference,
+      status: transaction.status,
+      created_at: transaction.created_at.iso8601,
+      metadata: transaction.metadata || {}
+    }
+  end
+
+  private_class_method def self.format_withdrawal_data(withdrawal)
+    {
+      id: withdrawal.id,
+      amount: withdrawal.amount,
+      status: withdrawal.status,
+      reference: withdrawal.reference,
+      account_number: withdrawal.account_number,
+      account_name: withdrawal.account_name,
+      bank_name: withdrawal.bank_name,
+      reason: withdrawal.respond_to?(:reason) ? withdrawal.reason : nil,
+      created_at: withdrawal.created_at.iso8601,
+      completed_at: withdrawal.completed_at&.iso8601
+    }
+  end
+  # WALLET BROADCASTING METHODS END
 
   private
 
@@ -802,6 +991,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
       recent_conversations = get_recent_conversations
       business_info = get_user_businesses_info
       user_presence = get_user_presence_data(current_user.id)
+      wallet_info = get_wallet_info
       
       initial_state_data = {
         type: 'initial_state',
@@ -819,6 +1009,7 @@ class UserNotificationsChannel < ApplicationCable::Channel
         },
         recent_conversations: recent_conversations,
         businesses: business_info,
+        wallet: wallet_info,
         timestamp: Time.current.iso8601
       }
       
@@ -1132,6 +1323,48 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
     
     business_ids.uniq
+  end
+
+  def get_user_wallet
+    return nil unless current_user.respond_to?(:wallet)
+    current_user.wallet
+  rescue => e
+    Rails.logger.error "Failed to get user wallet: #{e.message}"
+    nil
+  end
+
+  def get_wallet_info
+    begin
+      wallet = get_user_wallet
+      return nil unless wallet
+      
+      {
+        balance: wallet.balance,
+        pending_balance: wallet.respond_to?(:pending_balance) ? wallet.pending_balance : 0,
+        available_balance: wallet.respond_to?(:available_balance) ? wallet.available_balance : wallet.balance,
+        currency: wallet.respond_to?(:currency) ? wallet.currency : 'KES'
+      }
+    rescue => e
+      Rails.logger.error "Failed to get wallet info: #{e.message}"
+      nil
+    end
+  end
+
+  def format_transaction(transaction)
+    {
+      id: transaction.id,
+      transaction_type: transaction.transaction_type,
+      amount: transaction.amount,
+      balance_after: transaction.respond_to?(:balance_after) ? transaction.balance_after : nil,
+      description: transaction.description,
+      reference: transaction.respond_to?(:reference) ? transaction.reference : nil,
+      status: transaction.respond_to?(:status) ? transaction.status : 'completed',
+      created_at: transaction.created_at.iso8601,
+      metadata: transaction.respond_to?(:metadata) ? transaction.metadata : {}
+    }
+  rescue => e
+    Rails.logger.error "Failed to format transaction: #{e.message}"
+    {}
   end
 
   def is_support_user?
