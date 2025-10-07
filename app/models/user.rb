@@ -1,4 +1,4 @@
-# app/models/user.rb - Fixed Version
+# app/models/user.rb - With Wallet Associations
 class User < ApplicationRecord
   # ===========================================
   # 🔐 DEVISE CONFIGURATION
@@ -18,7 +18,7 @@ class User < ApplicationRecord
   # ActiveStorage for avatar
   has_one_attached :avatar
 
-  # Business relationships - FIXED: Added proper associations
+  # Business relationships
   has_many :owned_businesses, class_name: "Business", foreign_key: "owner_id", dependent: :destroy
   has_many :user_businesses, dependent: :destroy
   has_many :businesses, through: :user_businesses
@@ -40,13 +40,19 @@ class User < ApplicationRecord
   has_many :conversations, through: :conversation_participants
   has_many :messages, dependent: :destroy
 
+  # Wallet relationships - NEW
+  has_one :wallet, dependent: :destroy
+  has_many :wallet_transactions, through: :wallet, source: :transactions
+  has_many :withdrawals, through: :wallet
 
+  # Rider reports - NEW
+  has_many :rider_reports, dependent: :destroy
 
   # Rolify for roles
   rolify
 
   # ===========================================
-  # 🔍 VALIDATIONS - FIXED
+  # 🔍 VALIDATIONS
   # ===========================================
   
   validates :email, presence: true, uniqueness: { case_sensitive: false }
@@ -63,10 +69,11 @@ class User < ApplicationRecord
   validate :valid_normalized_phone_number
 
   # ===========================================
-  # 🔄 CALLBACKS - FIXED
+  # 🔄 CALLBACKS
   # ===========================================
   
   after_create :assign_default_role
+  after_create :create_user_wallet
   before_validation :normalize_phone
   before_validation :normalize_email
 
@@ -80,9 +87,12 @@ class User < ApplicationRecord
   scope :recent_scanners, -> { joins(:package_tracking_events).where(package_tracking_events: { created_at: 1.week.ago.. }).distinct }
   scope :google_users, -> { where(provider: 'google_oauth2') }
   scope :regular_users, -> { where(provider: nil) }
+  scope :without_wallet, -> { left_outer_joins(:wallet).where(wallets: { id: nil }) }
 
+  # ===========================================
+  # 🎭 PUSH NOTIFICATION METHODS
+  # ===========================================
 
-# ADD THESE METHODS
   def active_push_tokens
     push_tokens.active
   end
@@ -112,7 +122,7 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 🔐 GOOGLE OAUTH METHODS - FIXED
+  # 🔐 GOOGLE OAUTH METHODS
   # ===========================================
 
   def self.from_omniauth(auth)
@@ -225,11 +235,10 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 👤 USER STATUS METHODS - FIXED
+  # 👤 USER STATUS METHODS
   # ===========================================
 
   def mark_online!
-    # Use update instead of update_columns to ensure validations pass
     update(online: true, last_seen_at: Time.current)
   rescue => e
     Rails.logger.error "Failed to mark user #{id} online: #{e.message}"
@@ -237,7 +246,6 @@ class User < ApplicationRecord
   end
 
   def mark_offline!
-    # Use update instead of update_columns to ensure validations pass
     update(online: false, last_seen_at: Time.current)
   rescue => e
     Rails.logger.error "Failed to mark user #{id} offline: #{e.message}"
@@ -307,9 +315,6 @@ class User < ApplicationRecord
     client?
   end
 
-
-
-
   def primary_role
     return 'admin' if has_role?(:admin)
     return 'warehouse' if has_role?(:warehouse)
@@ -332,36 +337,33 @@ class User < ApplicationRecord
     end
   end
 
-
-
-
-def support_staff?
-  has_role?(:support) || has_role?(:admin)
-end
-
-def can_handle_support?
-  support_staff?
-end
-
-# Conversation access methods
-def accessible_conversations
-  if admin? || support_staff?
-    Conversation.all
-  else
-    conversations # This will now work correctly through conversation_participants
+  def support_staff?
+    has_role?(:support) || has_role?(:admin)
   end
-end
 
-def support_conversations
-  conversations.where(conversation_type: 'support_ticket')
-end
+  def can_handle_support?
+    support_staff?
+  end
 
-def initiated_conversations
-  conversations
-end
+  # Conversation access methods
+  def accessible_conversations
+    if admin? || support_staff?
+      Conversation.all
+    else
+      conversations
+    end
+  end
+
+  def support_conversations
+    conversations.where(conversation_type: 'support_ticket')
+  end
+
+  def initiated_conversations
+    conversations
+  end
 
   # ===========================================
-  # 🏢 BUSINESS METHODS - FIXED
+  # 🏢 BUSINESS METHODS
   # ===========================================
 
   def can_create_business?
@@ -395,7 +397,38 @@ end
   end
 
   # ===========================================
-  # 📦 PACKAGE ACCESS METHODS - ENHANCED
+  # 💰 WALLET METHODS - NEW
+  # ===========================================
+
+  def ensure_wallet!
+    return wallet if wallet.present?
+    create_user_wallet
+    reload.wallet
+  end
+
+  def wallet_balance
+    wallet&.balance || 0
+  end
+
+  def pending_balance
+    wallet&.pending_balance || 0
+  end
+
+  def available_balance
+    wallet&.available_balance || 0
+  end
+
+  def can_withdraw?(amount)
+    wallet.present? && wallet.can_withdraw?(amount)
+  end
+
+  def recent_wallet_transactions(limit = 10)
+    return [] unless wallet
+    wallet.recent_transactions(limit)
+  end
+
+  # ===========================================
+  # 📦 PACKAGE ACCESS METHODS
   # ===========================================
 
   def accessible_packages
@@ -530,7 +563,7 @@ end
   end
 
   # ===========================================
-  # 📊 PACKAGE STATISTICS - ENHANCED
+  # 📊 PACKAGE STATISTICS
   # ===========================================
 
   def pending_packages_count
@@ -652,7 +685,9 @@ end
       'google_user' => google_user?,
       'needs_password' => needs_password?,
       'owned_businesses_count' => owned_businesses.count,
-      'joined_businesses_count' => businesses.count
+      'joined_businesses_count' => businesses.count,
+      'wallet_balance' => wallet_balance,
+      'has_wallet' => wallet.present?
     )
     
     result
@@ -666,6 +701,25 @@ end
     rescue => e
       Rails.logger.error "Failed to assign default role to user #{id}: #{e.message}"
       # Don't fail user creation if role assignment fails
+    end
+  end
+
+  def create_user_wallet
+    return if wallet.present?
+    
+    begin
+      Wallet.create!(
+        user: self,
+        balance: 0.0,
+        pending_balance: 0.0,
+        total_credited: 0.0,
+        total_debited: 0.0,
+        is_active: true
+      )
+      Rails.logger.info "Created wallet for user #{id}"
+    rescue => e
+      Rails.logger.error "Failed to create wallet for user #{id}: #{e.message}"
+      # Don't fail user creation if wallet creation fails
     end
   end
 
