@@ -3,7 +3,7 @@ module Api
   module V1
     class MpesaController < ApplicationController
       before_action :authenticate_user!, except: [:callback, :timeout, :b2c_callback, :verify_callback, :verify_timeout]
-      skip_before_action :verify_authenticity_token, only: [:callback, :timeout, :b2c_callback, :verify_callback, :verify_timeout]
+      
       before_action :force_json_format
 
       # POST /api/v1/mpesa/stk_push - Single package payment
