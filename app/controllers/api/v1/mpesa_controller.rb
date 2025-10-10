@@ -6,109 +6,116 @@ module Api
       
       before_action :force_json_format
 
-      # POST /api/v1/mpesa/topup - Wallet top-up
-      def topup
-        begin
-          phone_number = params[:phone_number]
-          amount = params[:amount]&.to_f
+      # Replace the topup method in mpesa_controller.rb with this fixed version
 
-          # Validate inputs
-          unless phone_number.present? && amount && amount > 0
-            return render json: {
-              status: 'error',
-              message: 'Missing required parameters: phone_number or amount'
-            }, status: :unprocessable_entity
-          end
+# POST /api/v1/mpesa/topup - Wallet top-up (FIXED)
+def topup
+  begin
+    phone_number = params[:phone_number]
+    amount = params[:amount]&.to_f
 
-          # Validate amount limits
-          if amount < 10
-            return render json: {
-              status: 'error',
-              message: 'Minimum top-up amount is KES 10'
-            }, status: :unprocessable_entity
-          end
+    # Validate inputs
+    unless phone_number.present? && amount && amount > 0
+      return render json: {
+        status: 'error',
+        message: 'Missing required parameters: phone_number or amount'
+      }, status: :unprocessable_entity
+    end
 
-          if amount > 150000
-            return render json: {
-              status: 'error',
-              message: 'Maximum top-up amount is KES 150,000'
-            }, status: :unprocessable_entity
-          end
+    # Validate amount limits
+    if amount < 10
+      return render json: {
+        status: 'error',
+        message: 'Minimum top-up amount is KES 10'
+      }, status: :unprocessable_entity
+    end
 
-          # Format phone number
-          formatted_phone = MpesaService.format_phone_number(phone_number)
-          unless MpesaService.validate_phone_number(formatted_phone)
-            return render json: {
-              status: 'error',
-              message: 'Invalid phone number format'
-            }, status: :unprocessable_entity
-          end
+    if amount > 150000
+      return render json: {
+        status: 'error',
+        message: 'Maximum top-up amount is KES 150,000'
+      }, status: :unprocessable_entity
+    end
 
-          # Get or create wallet
-          wallet = current_user.wallet || current_user.create_wallet
+    # Format phone number
+    formatted_phone = MpesaService.format_phone_number(phone_number)
+    unless MpesaService.validate_phone_number(formatted_phone)
+      return render json: {
+        status: 'error',
+        message: 'Invalid phone number format'
+      }, status: :unprocessable_entity
+    end
 
-          unless wallet.client?
-            return render json: {
-              status: 'error',
-              message: 'Only client wallets can be topped up directly'
-            }, status: :forbidden
-          end
+    # Get or create wallet
+    wallet = current_user.wallet || current_user.create_wallet
 
-          Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
+    unless wallet.client?
+      return render json: {
+        status: 'error',
+        message: 'Only client wallets can be topped up directly'
+      }, status: :forbidden
+    end
 
-          # Use username or phone as account reference (simpler)
-          account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
+    Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
 
-          # Initiate STK push
-          result = MpesaService.initiate_stk_push(
-            phone_number: formatted_phone,
-            amount: amount,
-            account_reference: account_reference,
-            transaction_desc: "Wallet top-up"
-          )
+    # Use username or phone as account reference
+    account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
 
-          if result[:success]
-            # Create M-Pesa transaction record
-            mpesa_transaction = MpesaTransaction.create_for_wallet_topup!(
-              user: current_user,
-              wallet: wallet,
-              phone_number: formatted_phone,
-              amount: amount,
-              checkout_request_id: result[:data]['CheckoutRequestID'],
-              merchant_request_id: result[:data]['MerchantRequestID'],
-              reference: account_reference
-            )
+    # FIXED: Use wallet_callback URL for wallet topups
+    wallet_callback_url = "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/wallet_callback"
 
-            Rails.logger.info "M-Pesa transaction created: #{mpesa_transaction.id} for wallet #{wallet.id}"
+    # Initiate STK push with wallet callback
+    result = MpesaService.initiate_stk_push(
+      phone_number: formatted_phone,
+      amount: amount,
+      account_reference: account_reference,
+      transaction_desc: "Wallet top-up",
+      callback_url: wallet_callback_url  # CRITICAL FIX: Use wallet callback
+    )
 
-            render json: {
-              status: 'success',
-              message: 'Top-up initiated successfully',
-              data: {
-                checkout_request_id: result[:data]['CheckoutRequestID'],
-                merchant_request_id: result[:data]['MerchantRequestID'],
-                reference: account_reference,
-                amount: amount,
-                phone_number: formatted_phone,
-                customer_message: result[:data]['CustomerMessage']
-              }
-            }
-          else
-            render json: {
-              status: 'error',
-              message: result[:message] || 'Failed to initiate top-up'
-            }, status: :unprocessable_entity
-          end
+    if result[:success]
+      # Create M-Pesa transaction record
+      mpesa_transaction = MpesaTransaction.create_for_wallet_topup!(
+        user: current_user,
+        wallet: wallet,
+        phone_number: formatted_phone,
+        amount: amount,
+        checkout_request_id: result[:data]['CheckoutRequestID'],
+        merchant_request_id: result[:data]['MerchantRequestID'],
+        reference: account_reference
+      )
 
-        rescue => e
-          Rails.logger.error "Wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
-          render json: {
-            status: 'error',
-            message: 'Failed to initiate top-up',
-            error: Rails.env.development? ? e.message : nil
-          }, status: :internal_server_error
-        end
-      end
+      Rails.logger.info "M-Pesa transaction created: #{mpesa_transaction.id} for wallet #{wallet.id}"
+      Rails.logger.info "Using wallet callback URL: #{wallet_callback_url}"
+
+      render json: {
+        status: 'success',
+        message: 'Top-up initiated successfully',
+        data: {
+          checkout_request_id: result[:data]['CheckoutRequestID'],
+          merchant_request_id: result[:data]['MerchantRequestID'],
+          reference: account_reference,
+          amount: amount,
+          phone_number: formatted_phone,
+          customer_message: result[:data]['CustomerMessage']
+        }
+      }
+    else
+      render json: {
+        status: 'error',
+        message: result[:message] || 'Failed to initiate top-up'
+      }, status: :unprocessable_entity
+    end
+
+  rescue => e
+    Rails.logger.error "Wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
+    render json: {
+      status: 'error',
+      message: 'Failed to initiate top-up',
+      error: Rails.env.development? ? e.message : nil
+    }, status: :internal_server_error
+  end
+end
 
       # POST /api/v1/mpesa/topup_manual - Manual wallet top-up verification (FIXED)
       def topup_manual
