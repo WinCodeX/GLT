@@ -3,296 +3,246 @@ module Api
   module V1
     class MpesaController < ApplicationController
       before_action :authenticate_user!, except: [:callback, :timeout, :b2c_callback, :verify_callback, :verify_timeout]
-      
       before_action :force_json_format
 
+      # POST /api/v1/mpesa/topup - Wallet top-up
+      def topup
+        begin
+          phone_number = params[:phone_number]
+          amount = params[:amount]&.to_f
 
-# POST /api/v1/mpesa/topup - Wallet top-up
-def topup
-  begin
-    phone_number = params[:phone_number]
-    amount = params[:amount]&.to_f
+          unless phone_number.present? && amount && amount > 0
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters: phone_number or amount'
+            }, status: :unprocessable_entity
+          end
 
-    # Validate inputs
-    unless phone_number.present? && amount && amount > 0
-      return render json: {
-        status: 'error',
-        message: 'Missing required parameters: phone_number or amount'
-      }, status: :unprocessable_entity
-    end
+          if amount < 10
+            return render json: {
+              status: 'error',
+              message: 'Minimum top-up amount is KES 10'
+            }, status: :unprocessable_entity
+          end
 
-    # Validate amount limits
-    if amount < 10
-      return render json: {
-        status: 'error',
-        message: 'Minimum top-up amount is KES 10'
-      }, status: :unprocessable_entity
-    end
+          if amount > 150000
+            return render json: {
+              status: 'error',
+              message: 'Maximum top-up amount is KES 150,000'
+            }, status: :unprocessable_entity
+          end
 
-    if amount > 150000
-      return render json: {
-        status: 'error',
-        message: 'Maximum top-up amount is KES 150,000'
-      }, status: :unprocessable_entity
-    end
+          formatted_phone = MpesaService.format_phone_number(phone_number)
+          unless MpesaService.validate_phone_number(formatted_phone)
+            return render json: {
+              status: 'error',
+              message: 'Invalid phone number format'
+            }, status: :unprocessable_entity
+          end
 
-    # Format phone number
-    formatted_phone = MpesaService.format_phone_number(phone_number)
-    unless MpesaService.validate_phone_number(formatted_phone)
-      return render json: {
-        status: 'error',
-        message: 'Invalid phone number format'
-      }, status: :unprocessable_entity
-    end
+          wallet = current_user.wallet || current_user.create_wallet
 
-    # Get or create wallet
-    wallet = current_user.wallet || current_user.create_wallet
+          unless wallet.client?
+            return render json: {
+              status: 'error',
+              message: 'Only client wallets can be topped up directly'
+            }, status: :forbidden
+          end
 
-    unless wallet.client?
-      return render json: {
-        status: 'error',
-        message: 'Only client wallets can be topped up directly'
-      }, status: :forbidden
-    end
+          Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
 
-    Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
+          account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
 
-    # Use username or phone as account reference (simpler)
-    account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
+          result = MpesaService.initiate_stk_push(
+            phone_number: formatted_phone,
+            amount: amount,
+            account_reference: account_reference,
+            transaction_desc: "Wallet top-up"
+          )
 
-    # Initiate STK push
-    result = MpesaService.initiate_stk_push(
-      phone_number: formatted_phone,
-      amount: amount,
-      account_reference: account_reference,
-      transaction_desc: "Wallet top-up"
-    )
+          if result[:success]
+            mpesa_transaction = MpesaTransaction.create_for_wallet_topup!(
+              user: current_user,
+              wallet: wallet,
+              phone_number: formatted_phone,
+              amount: amount,
+              checkout_request_id: result[:data]['CheckoutRequestID'],
+              merchant_request_id: result[:data]['MerchantRequestID'],
+              reference: account_reference
+            )
 
-    if result[:success]
-      # Create M-Pesa transaction record
-      mpesa_transaction = MpesaTransaction.create_for_wallet_topup!(
-        user: current_user,
-        wallet: wallet,
-        phone_number: formatted_phone,
-        amount: amount,
-        checkout_request_id: result[:data]['CheckoutRequestID'],
-        merchant_request_id: result[:data]['MerchantRequestID'],
-        reference: account_reference
-      )
+            Rails.logger.info "M-Pesa transaction created: #{mpesa_transaction.id} for wallet #{wallet.id}"
 
-      Rails.logger.info "M-Pesa transaction created: #{mpesa_transaction.id} for wallet #{wallet.id}"
+            render json: {
+              status: 'success',
+              message: 'Top-up initiated successfully',
+              data: {
+                checkout_request_id: result[:data]['CheckoutRequestID'],
+                merchant_request_id: result[:data]['MerchantRequestID'],
+                reference: account_reference,
+                amount: amount,
+                phone_number: formatted_phone,
+                customer_message: result[:data]['CustomerMessage']
+              }
+            }
+          else
+            render json: {
+              status: 'error',
+              message: result[:message] || 'Failed to initiate top-up'
+            }, status: :unprocessable_entity
+          end
 
-      render json: {
-        status: 'success',
-        message: 'Top-up initiated successfully',
-        data: {
-          checkout_request_id: result[:data]['CheckoutRequestID'],
-          merchant_request_id: result[:data]['MerchantRequestID'],
-          reference: account_reference,
-          amount: amount,
-          phone_number: formatted_phone,
-          customer_message: result[:data]['CustomerMessage']
-        }
-      }
-    else
-      render json: {
-        status: 'error',
-        message: result[:message] || 'Failed to initiate top-up'
-      }, status: :unprocessable_entity
-    end
-
-  rescue => e
-    Rails.logger.error "Wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
-    render json: {
-      status: 'error',
-      message: 'Failed to initiate top-up',
-      error: Rails.env.development? ? e.message : nil
-    }, status: :internal_server_error
-  end
-end
-
-
-# POST /api/v1/mpesa/topup_manual - Manual wallet top-up verification
-def topup_manual
-  begin
-    transaction_code = params[:transaction_code]
-    amount = params[:amount]&.to_f
-
-    unless transaction_code.present? && amount && amount > 0
-      return render json: {
-        status: 'error',
-        message: 'Missing required parameters'
-      }, status: :unprocessable_entity
-    end
-
-    # Get or create wallet
-    wallet = current_user.wallet || current_user.create_wallet
-
-    unless wallet.client?
-      return render json: {
-        status: 'error',
-        message: 'Only client wallets can be topped up'
-      }, status: :forbidden
-    end
-
-    Rails.logger.info "Manual wallet top-up verification for user #{current_user.id}, amount: #{amount}, code: #{transaction_code}"
-
-    # Credit wallet directly with manual verification
-    success = wallet.credit!(
-      amount,
-      transaction_type: 'topup',
-      description: "Wallet top-up via M-Pesa (Manual verification)",
-      reference: transaction_code.upcase,
-      metadata: {
-        mpesa_receipt_number: transaction_code.upcase,
-        verification_method: 'manual',
-        phone_number: current_user.phone_number,
-        verified_at: Time.current.iso8601
-      }
-    )
-
-    if success
-      # Create M-Pesa transaction record for tracking
-      begin
-        MpesaTransaction.create!(
-          user: current_user,
-          wallet: wallet,
-          transaction_type: 'wallet_topup',
-          phone_number: current_user.phone_number,
-          amount: amount,
-          checkout_request_id: "MANUAL-#{transaction_code.upcase}",
-          merchant_request_id: "MANUAL-#{Time.current.to_i}",
-          account_reference: current_user.username.presence || current_user.phone_number.gsub(/\D/, ''),
-          status: 'completed',
-          mpesa_receipt_number: transaction_code.upcase,
-          result_code: 0,
-          result_description: 'Manual verification',
-          initiated_at: Time.current,
-          completed_at: Time.current
-        )
-      rescue => e
-        Rails.logger.error "Failed to create M-Pesa transaction record: #{e.message}"
-        # Continue anyway since wallet was credited
+        rescue => e
+          Rails.logger.error "Wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
+          render json: {
+            status: 'error',
+            message: 'Failed to initiate top-up',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
       end
 
-      render json: {
-        status: 'success',
-        message: 'Wallet topped up successfully',
-        data: {
-          amount: amount,
-          transaction_code: transaction_code.upcase,
-          new_balance: wallet.reload.balance,
-          verified: true
-        }
-      }
-    else
-      render json: {
-        status: 'error',
-        message: 'Failed to credit wallet'
-      }, status: :unprocessable_entity
-    end
+      # POST /api/v1/mpesa/topup_manual - Manual wallet top-up verification (FIXED)
+      def topup_manual
+        begin
+          transaction_code = params[:transaction_code]&.upcase&.strip
+          amount = params[:amount]&.to_f
 
-  rescue => e
-    Rails.logger.error "Manual wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
-    render json: {
-      status: 'error',
-      message: 'Failed to process manual top-up',
-      error: Rails.env.development? ? e.message : nil
-    }, status: :internal_server_error
-  end
-end
+          unless transaction_code.present? && amount && amount > 0
+            return render json: {
+              status: 'error',
+              message: 'Missing required parameters'
+            }, status: :unprocessable_entity
+          end
 
-# POST /api/v1/mpesa/wallet_callback
-def wallet_callback
-  begin
-    Rails.logger.info "Wallet top-up callback received: #{params.to_json}"
+          # Validate transaction code format
+          unless transaction_code.match?(/^[A-Z0-9]{10}$/)
+            return render json: {
+              status: 'error',
+              message: 'Invalid transaction code format. M-Pesa codes are 10 characters (e.g., TJ7P76Q8GV)'
+            }, status: :unprocessable_entity
+          end
 
-    callback_data = params[:Body][:stkCallback] rescue params
+          wallet = current_user.wallet || current_user.create_wallet
 
-    checkout_request_id = callback_data[:CheckoutRequestID]
-    result_code = callback_data[:ResultCode].to_i
-    result_desc = callback_data[:ResultDesc]
+          unless wallet.client?
+            return render json: {
+              status: 'error',
+              message: 'Only client wallets can be topped up'
+            }, status: :forbidden
+          end
 
-    Rails.logger.info "Processing callback: #{checkout_request_id} - Result Code: #{result_code}"
+          Rails.logger.info "Manual wallet top-up verification for user #{current_user.id}, amount: #{amount}, code: #{transaction_code}"
 
-    # Find the M-Pesa transaction
-    mpesa_transaction = MpesaTransaction.find_by(
-      checkout_request_id: checkout_request_id,
-      transaction_type: 'wallet_topup'
-    )
+          # CRITICAL: Check if transaction code already used in MpesaTransaction
+          existing_mpesa = MpesaTransaction.find_by(mpesa_receipt_number: transaction_code)
+          if existing_mpesa
+            return render json: {
+              status: 'error',
+              message: 'This transaction code has already been used',
+              data: {
+                used_at: existing_mpesa.completed_at,
+                used_by: existing_mpesa.user_id == current_user.id ? 'you' : 'another user'
+              }
+            }, status: :unprocessable_entity
+          end
 
-    unless mpesa_transaction
-      Rails.logger.warn "No M-Pesa transaction found for checkout_request_id: #{checkout_request_id}"
-      return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-    end
+          # CRITICAL: Check if transaction code used in WalletTransaction
+          existing_wallet_txn = WalletTransaction.find_by(reference: transaction_code)
+          if existing_wallet_txn
+            return render json: {
+              status: 'error',
+              message: 'This transaction code has already been used for a wallet top-up',
+              data: {
+                used_at: existing_wallet_txn.created_at
+              }
+            }, status: :unprocessable_entity
+          end
 
-    wallet = mpesa_transaction.wallet
-    reference = mpesa_transaction.account_reference
+          # Verify with M-Pesa (sandbox-friendly)
+          verification_result = MpesaService.verify_transaction_simple(
+            transaction_code: transaction_code,
+            amount: amount,
+            phone_number: current_user.phone_number
+          )
 
-    if result_code == 0
-      # Payment successful
-      callback_metadata = callback_data[:CallbackMetadata][:Item] rescue []
-      
-      mpesa_receipt = extract_callback_value(callback_metadata, 'MpesaReceiptNumber')
-      phone_number = extract_callback_value(callback_metadata, 'PhoneNumber')
-      transaction_date = extract_callback_value(callback_metadata, 'TransactionDate')
-      amount = extract_callback_value(callback_metadata, 'Amount')
+          unless verification_result[:success]
+            return render json: {
+              status: 'error',
+              message: verification_result[:message] || 'Transaction verification failed'
+            }, status: :unprocessable_entity
+          end
 
-      metadata = {
-        mpesa_receipt_number: mpesa_receipt,
-        phone_number: phone_number,
-        amount: amount,
-        transaction_date: transaction_date
-      }
+          # Use transaction to ensure atomicity
+          ActiveRecord::Base.transaction do
+            # Credit wallet
+            success = wallet.credit!(
+              amount,
+              transaction_type: 'topup',
+              description: "Wallet top-up via M-Pesa (Manual verification)",
+              reference: transaction_code,
+              metadata: {
+                mpesa_receipt_number: transaction_code,
+                verification_method: 'manual',
+                phone_number: current_user.phone_number,
+                verified_at: Time.current.iso8601,
+                verification_data: verification_result[:data]
+              }
+            )
 
-      # Mark M-Pesa transaction as completed
-      mpesa_transaction.mark_completed!(
-        mpesa_receipt: mpesa_receipt,
-        result_desc: result_desc,
-        metadata: metadata
-      )
+            unless success
+              raise ActiveRecord::Rollback, "Failed to credit wallet"
+            end
 
-      # Complete wallet top-up
-      success = wallet.complete_topup!(
-        reference: reference,
-        mpesa_receipt: mpesa_receipt,
-        metadata: metadata
-      )
+            # Create M-Pesa transaction record
+            MpesaTransaction.create!(
+              user: current_user,
+              wallet: wallet,
+              transaction_type: 'wallet_topup',
+              phone_number: current_user.phone_number,
+              amount: amount,
+              checkout_request_id: "MANUAL-#{transaction_code}",
+              merchant_request_id: "MANUAL-#{Time.current.to_i}",
+              account_reference: current_user.username.presence || current_user.phone_number.gsub(/\D/, ''),
+              status: 'completed',
+              mpesa_receipt_number: transaction_code,
+              result_code: 0,
+              result_description: 'Manual verification',
+              initiated_at: Time.current,
+              completed_at: Time.current,
+              transaction_metadata: verification_result[:data] || {}
+            )
 
-      if success
-        Rails.logger.info "Wallet top-up completed: #{wallet.id} - #{amount} KES (Receipt: #{mpesa_receipt})"
-      else
-        Rails.logger.error "Failed to complete wallet top-up for #{wallet.id}"
+            Rails.logger.info "✅ Manual wallet top-up successful: #{wallet.id} - #{amount} KES (Code: #{transaction_code})"
+
+            render json: {
+              status: 'success',
+              message: 'Wallet topped up successfully',
+              data: {
+                amount: amount,
+                transaction_code: transaction_code,
+                new_balance: wallet.reload.balance,
+                verified: true
+              }
+            }
+          end
+
+        rescue ActiveRecord::RecordInvalid => e
+          Rails.logger.error "Validation error: #{e.message}"
+          render json: {
+            status: 'error',
+            message: 'Failed to process top-up',
+            error: e.message
+          }, status: :unprocessable_entity
+        rescue => e
+          Rails.logger.error "Manual wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
+          render json: {
+            status: 'error',
+            message: 'Failed to process manual top-up',
+            error: Rails.env.development? ? e.message : nil
+          }, status: :internal_server_error
+        end
       end
-    else
-      # Payment failed
-      failure_reason = result_desc || 'Payment cancelled or failed'
-      
-      # Mark M-Pesa transaction as failed
-      mpesa_transaction.mark_failed!(
-        result_code: result_code,
-        result_desc: failure_reason
-      )
-
-      # Fail wallet top-up
-      success = wallet.fail_topup!(
-        reference: reference,
-        reason: failure_reason
-      )
-
-      if success
-        Rails.logger.info "Wallet top-up failed: #{wallet.id} - #{failure_reason}"
-      else
-        Rails.logger.error "Failed to cancel wallet top-up for #{wallet.id}"
-      end
-    end
-
-    render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-  rescue => e
-    Rails.logger.error "Error processing wallet top-up callback: #{e.message}\n#{e.backtrace.join("\n")}"
-    render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-  end
-end
 
       # POST /api/v1/mpesa/stk_push - Single package payment
       def stk_push
@@ -301,7 +251,6 @@ end
           phone_number = params[:phone_number]
           amount = params[:amount]&.to_f
 
-          # Validate inputs
           unless package_id.present? && phone_number.present? && amount && amount > 0
             return render json: {
               status: 'error',
@@ -309,7 +258,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Find package
           package = current_user.packages.find_by(id: package_id)
           unless package
             return render json: {
@@ -318,7 +266,6 @@ end
             }, status: :not_found
           end
 
-          # Check if already paid
           if package.state != 'pending_unpaid'
             return render json: {
               status: 'error',
@@ -326,7 +273,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Format phone number
           formatted_phone = MpesaService.format_phone_number(phone_number)
           unless MpesaService.validate_phone_number(formatted_phone)
             return render json: {
@@ -337,7 +283,6 @@ end
 
           Rails.logger.info "Initiating STK push for package #{package.code}"
 
-          # Initiate STK push
           result = MpesaService.initiate_stk_push(
             phone_number: formatted_phone,
             amount: amount,
@@ -346,7 +291,6 @@ end
           )
 
           if result[:success]
-            # Store payment request details
             package.update_columns(
               payment_request_id: result[:data]['CheckoutRequestID'],
               payment_merchant_request_id: result[:data]['MerchantRequestID'],
@@ -392,7 +336,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Find packages
           packages = current_user.packages.where(id: package_ids, state: 'pending_unpaid')
           
           unless packages.count == package_ids.count
@@ -402,9 +345,8 @@ end
             }, status: :not_found
           end
 
-          # Validate total amount
           expected_total = packages.sum(:cost)
-          if (amount - expected_total).abs > 1 # Allow 1 KES difference for rounding
+          if (amount - expected_total).abs > 1
             return render json: {
               status: 'error',
               message: "Amount mismatch. Expected: #{expected_total}, Got: #{amount}"
@@ -422,7 +364,6 @@ end
           package_codes = packages.pluck(:code).join(', ')
           Rails.logger.info "Initiating bulk STK push for packages: #{package_codes}"
 
-          # Initiate STK push
           result = MpesaService.initiate_stk_push(
             phone_number: formatted_phone,
             amount: amount,
@@ -431,7 +372,6 @@ end
           )
 
           if result[:success]
-            # Store payment request details for all packages
             packages.update_all(
               payment_request_id: result[:data]['CheckoutRequestID'],
               payment_merchant_request_id: result[:data]['MerchantRequestID'],
@@ -476,7 +416,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Query M-Pesa
           result = MpesaService.query_stk_status(checkout_request_id)
 
           if result[:success]
@@ -528,7 +467,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Find package
           package = current_user.packages.find_by(id: package_id)
           unless package
             return render json: {
@@ -537,7 +475,6 @@ end
             }, status: :not_found
           end
 
-          # Check if already paid
           if package.state != 'pending_unpaid'
             return render json: {
               status: 'error',
@@ -547,7 +484,6 @@ end
 
           Rails.logger.info "Manual verification for package #{package.code} with transaction: #{transaction_code}"
 
-          # Use simplified verification for sandbox/development
           result = MpesaService.verify_transaction_simple(
             transaction_code: transaction_code,
             amount: amount,
@@ -555,7 +491,6 @@ end
           )
 
           if result[:success]
-            # Update package
             package.update!(
               state: 'pending',
               mpesa_receipt_number: transaction_code.upcase,
@@ -603,7 +538,6 @@ end
             }, status: :unprocessable_entity
           end
 
-          # Find packages
           packages = current_user.packages.where(id: package_ids, state: 'pending_unpaid')
           
           unless packages.count == package_ids.count
@@ -613,7 +547,6 @@ end
             }, status: :not_found
           end
 
-          # Validate total amount
           expected_total = packages.sum(:cost)
           if (amount - expected_total).abs > 1
             return render json: {
@@ -625,7 +558,6 @@ end
           package_codes = packages.pluck(:code).join(', ')
           Rails.logger.info "Bulk manual verification for packages: #{package_codes} with transaction: #{transaction_code}"
 
-          # Verify transaction
           result = MpesaService.verify_transaction_simple(
             transaction_code: transaction_code,
             amount: amount,
@@ -633,7 +565,6 @@ end
           )
 
           if result[:success]
-            # Update all packages
             packages.update_all(
               state: 'pending',
               mpesa_receipt_number: transaction_code.upcase,
@@ -676,27 +607,59 @@ end
           result = MpesaService.process_stk_callback(callback_data)
 
           if result[:success]
-            # Find package(s) by checkout_request_id
-            packages = Package.where(payment_request_id: result[:checkout_request_id])
+            # Handle wallet topups
+            mpesa_transaction = MpesaTransaction.find_by(
+              checkout_request_id: result[:checkout_request_id],
+              transaction_type: 'wallet_topup'
+            )
 
-            if packages.any?
-              packages.each do |package|
-                package.update!(
-                  state: 'pending',
-                  mpesa_receipt_number: result[:mpesa_receipt_number],
-                  payment_completed_at: Time.current,
-                  payment_metadata: result
+            if mpesa_transaction
+              wallet = mpesa_transaction.wallet
+              if wallet
+                wallet.credit!(
+                  result[:amount].to_f,
+                  transaction_type: 'topup',
+                  description: "Wallet top-up via M-Pesa",
+                  reference: result[:mpesa_receipt_number],
+                  metadata: {
+                    mpesa_receipt_number: result[:mpesa_receipt_number],
+                    phone_number: result[:phone_number],
+                    amount: result[:amount],
+                    transaction_date: Time.current.iso8601
+                  }
                 )
 
-                Rails.logger.info "Package #{package.code} payment completed via M-Pesa"
+                mpesa_transaction.mark_completed!(
+                  mpesa_receipt: result[:mpesa_receipt_number],
+                  result_desc: result[:result_desc]
+                )
+
+                Rails.logger.info "✅ Wallet #{wallet.id} credited with #{result[:amount]} KES"
               end
             else
-              Rails.logger.warn "No packages found for checkout_request_id: #{result[:checkout_request_id]}"
+              # Handle package payments
+              packages = Package.where(payment_request_id: result[:checkout_request_id])
+              if packages.any?
+                packages.each do |package|
+                  package.update!(
+                    state: 'pending',
+                    mpesa_receipt_number: result[:mpesa_receipt_number],
+                    payment_completed_at: Time.current,
+                    payment_metadata: result
+                  )
+                  Rails.logger.info "Package #{package.code} payment completed"
+                end
+              end
             end
           else
             Rails.logger.warn "Payment failed: #{result[:result_desc]}"
             
-            # Update packages to show payment failed
+            mpesa_transaction = MpesaTransaction.find_by(checkout_request_id: result[:checkout_request_id])
+            mpesa_transaction&.mark_failed!(
+              result_code: result[:result_code],
+              result_desc: result[:result_desc]
+            )
+
             packages = Package.where(payment_request_id: result[:checkout_request_id])
             packages.update_all(
               payment_failed_at: Time.current,
@@ -704,21 +667,11 @@ end
             )
           end
 
-          # Always return success to M-Pesa
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
 
         rescue => e
-          Rails.logger.error "Callback processing error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
-          
-          # Still return success to M-Pesa to avoid retries
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          Rails.logger.error "Callback processing error: #{e.message}\n#{e.backtrace.join("\n")}"
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         end
       end
 
@@ -727,7 +680,6 @@ end
         begin
           Rails.logger.info "M-Pesa timeout received: #{params.to_json}"
           
-          # Mark payment as timeout
           checkout_request_id = params.dig(:Body, :stkCallback, :CheckoutRequestID)
           if checkout_request_id
             packages = Package.where(payment_request_id: checkout_request_id)
@@ -737,17 +689,11 @@ end
             )
           end
 
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
 
         rescue => e
           Rails.logger.error "Timeout processing error: #{e.message}"
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         end
       end
 
@@ -760,7 +706,6 @@ end
           result = MpesaService.process_b2c_callback(callback_data)
 
           if result[:success]
-            # Find withdrawal by originator_conversation_id
             withdrawal = Withdrawal.find_by(mpesa_request_id: result[:originator_conversation_id])
 
             if withdrawal
@@ -772,22 +717,15 @@ end
           else
             Rails.logger.warn "B2C payment failed: #{result[:result_desc]}"
             
-            # Update withdrawal to failed
             withdrawal = Withdrawal.find_by(mpesa_request_id: result[:originator_conversation_id])
             withdrawal&.handle_failure!(result[:result_desc])
           end
 
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
 
         rescue => e
           Rails.logger.error "B2C callback processing error: #{e.message}"
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         end
       end
 
@@ -795,19 +733,10 @@ end
       def verify_callback
         begin
           Rails.logger.info "M-Pesa verification callback received: #{params.to_json}"
-          
-          # Process verification results if needed
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
-
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         rescue => e
           Rails.logger.error "Verification callback error: #{e.message}"
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         end
       end
 
@@ -815,118 +744,20 @@ end
       def verify_timeout
         begin
           Rails.logger.info "M-Pesa verification timeout received: #{params.to_json}"
-          
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
-
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         rescue => e
           Rails.logger.error "Verification timeout error: #{e.message}"
-          render json: {
-            ResultCode: 0,
-            ResultDesc: 'Success'
-          }
+          render json: { ResultCode: 0, ResultDesc: 'Success' }
         end
-      end
-
-def wallet_callback
-        callback_data = params[:Body][:stkCallback] rescue params
-
-        checkout_request_id = callback_data[:CheckoutRequestID]
-        result_code = callback_data[:ResultCode]
-        result_desc = callback_data[:ResultDesc]
-
-        Rails.logger.info "Wallet top-up callback received: #{checkout_request_id} - #{result_code}"
-
-        # Find the pending transaction by reference
-        # The reference should be in the format: TOPUP-{wallet_id}-{timestamp}-{random}
-        reference = extract_reference_from_callback(callback_data)
-
-        unless reference
-          Rails.logger.error "Could not extract reference from callback: #{callback_data}"
-          return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-        end
-
-        # Find the wallet transaction
-        transaction = WalletTransaction.find_by(
-          reference: reference,
-          transaction_type: 'topup',
-          status: 'pending'
-        )
-
-        unless transaction
-          Rails.logger.warn "No pending top-up transaction found for reference: #{reference}"
-          return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-        end
-
-        wallet = transaction.wallet
-
-        if result_code.to_i == 0
-          # Payment successful
-          callback_metadata = callback_data[:CallbackMetadata][:Item] rescue []
-          
-          mpesa_receipt = extract_callback_value(callback_metadata, 'MpesaReceiptNumber')
-          phone_number = extract_callback_value(callback_metadata, 'PhoneNumber')
-          amount = extract_callback_value(callback_metadata, 'Amount')
-
-          metadata = {
-            mpesa_receipt_number: mpesa_receipt,
-            phone_number: phone_number,
-            amount: amount,
-            transaction_date: Time.current.to_s
-          }
-
-          wallet.complete_topup!(
-            reference: reference,
-            mpesa_receipt: mpesa_receipt,
-            metadata: metadata
-          )
-
-          Rails.logger.info "Wallet top-up completed: #{wallet.id} - #{amount} KES (Receipt: #{mpesa_receipt})"
-        else
-          # Payment failed
-          failure_reason = result_desc || 'Payment cancelled or failed'
-          
-          wallet.fail_topup!(
-            reference: reference,
-            reason: failure_reason
-          )
-
-          Rails.logger.info "Wallet top-up failed: #{wallet.id} - #{failure_reason}"
-        end
-
-        render json: { ResultCode: 0, ResultDesc: 'Accepted' }
-      rescue => e
-        Rails.logger.error "Error processing wallet top-up callback: #{e.message}\n#{e.backtrace.join("\n")}"
-        render json: { ResultCode: 0, ResultDesc: 'Accepted' }
       end
 
       private
 
-
-      def extract_reference_from_callback(callback_data)
-        # Try to get from AccountReference
-        account_ref = callback_data.dig(:CallbackMetadata, :Item)&.find { |item| 
-          item[:Name] == 'AccountReference' 
-        }&.dig(:Value)
-        
-        return account_ref if account_ref.present?
-
-        # Fallback: try to find from transaction metadata
-        checkout_id = callback_data[:CheckoutRequestID]
-        return nil unless checkout_id
-
-        # You might need to store checkout_request_id when creating the transaction
-        # and query by that instead
-        nil
-      end
-
       def extract_callback_value(callback_items, key)
         return nil unless callback_items.is_a?(Array)
         
-        item = callback_items.find { |i| i[:Name] == key }
-        item&.dig(:Value)
+        item = callback_items.find { |i| (i[:Name] || i['Name']) == key }
+        item&.dig(:Value) || item&.dig('Value')
       end
 
       def force_json_format
