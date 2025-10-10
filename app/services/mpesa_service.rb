@@ -6,13 +6,7 @@ class MpesaService
   require 'base64'
   require 'json'
 
-  # Force sandbox for now since we're using sandbox credentials
   BASE_URL = 'https://sandbox.safaricom.co.ke'
-  
-  # Later when you have production credentials, use:
-  # BASE_URL = Rails.env.production? ? 
-  #   'https://api.safaricom.co.ke' : 
-  #   'https://sandbox.safaricom.co.ke'
 
   # ===========================================
   # STK PUSH (CONSUMER TO BUSINESS)
@@ -26,7 +20,6 @@ class MpesaService
       timestamp = Time.current.strftime('%Y%m%d%H%M%S')
       password = Base64.strict_encode64("#{business_short_code}#{passkey}#{timestamp}")
 
-      # Use provided callback URL or default to web controller endpoint
       callback_endpoint = callback_url || "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/mpesa/callback"
 
       payload = {
@@ -129,7 +122,6 @@ class MpesaService
       access_token = get_access_token
       return { success: false, message: 'Failed to get access token' } unless access_token
 
-      # B2C requires security credential (encrypted initiator password)
       security_credential = generate_security_credential
 
       callback_endpoint = "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/mpesa/b2c_callback"
@@ -182,7 +174,7 @@ class MpesaService
   end
 
   # ===========================================
-  # MANUAL TRANSACTION VERIFICATION
+  # MANUAL TRANSACTION VERIFICATION (FIXED)
   # ===========================================
 
   def self.verify_transaction(transaction_code:, amount:, phone_number: nil)
@@ -190,8 +182,6 @@ class MpesaService
       access_token = get_access_token
       return { success: false, message: 'Failed to get access token' } unless access_token
 
-      # Transaction Status Query
-      timestamp = Time.current.strftime('%Y%m%d%H%M%S')
       security_credential = generate_security_credential
 
       payload = {
@@ -222,8 +212,6 @@ class MpesaService
       Rails.logger.info "Verification response: #{response.body}"
 
       if response.success? && response.parsed_response['ResponseCode'] == '0'
-        # For sandbox/testing, we can simulate successful verification
-        # In production, you'd wait for the callback
         {
           success: true,
           data: {
@@ -247,39 +235,44 @@ class MpesaService
     end
   end
 
-  # Simplified manual verification for immediate response (sandbox-friendly)
+  # Simplified manual verification for immediate response (FIXED - sandbox-friendly)
   def self.verify_transaction_simple(transaction_code:, amount:, phone_number: nil)
     begin
-      # For sandbox/development, perform basic validation
-      # In production, you would query M-Pesa API properly
+      # Clean and validate transaction code
+      cleaned_code = transaction_code.to_s.upcase.strip
       
-      if transaction_code.blank? || transaction_code.length < 10
+      # Validate format (M-Pesa codes are 10 alphanumeric characters)
+      unless cleaned_code.match?(/^[A-Z0-9]{10}$/)
         return {
           success: false,
-          message: 'Invalid transaction code format'
+          message: 'Invalid transaction code format. M-Pesa codes are 10 characters (e.g., TJ7P76Q8GV)'
         }
       end
 
-      # Simulate transaction lookup (in production, query M-Pesa API)
-      # For now, accept any properly formatted transaction code
-      if transaction_code.match?(/^[A-Z0-9]{10,}$/i)
-        {
-          success: true,
-          data: {
-            transaction_code: transaction_code.upcase,
-            amount: amount,
-            phone_number: phone_number,
-            verified: true,
-            verification_method: 'manual'
-          },
-          message: 'Transaction verified successfully'
-        }
-      else
-        {
+      # Validate amount
+      if amount.nil? || amount <= 0
+        return {
           success: false,
-          message: 'Transaction code format is invalid'
+          message: 'Invalid amount'
         }
       end
+
+      # For sandbox, accept any properly formatted code
+      # In production, you would verify with M-Pesa API
+      Rails.logger.info "Verifying transaction code: #{cleaned_code} for amount: #{amount}"
+
+      {
+        success: true,
+        data: {
+          transaction_code: cleaned_code,
+          amount: amount,
+          phone_number: phone_number,
+          verified: true,
+          verification_method: 'format_validation',
+          verified_at: Time.current.iso8601
+        },
+        message: 'Transaction verified successfully'
+      }
 
     rescue => e
       Rails.logger.error "Simple verification error: #{e.message}"
@@ -301,7 +294,6 @@ class MpesaService
       merchant_request_id = stk_callback['MerchantRequestID']
 
       if result_code == 0
-        # Payment successful
         callback_metadata = stk_callback['CallbackMetadata']['Item']
         
         amount = callback_metadata.find { |item| item['Name'] == 'Amount' }['Value']
@@ -319,7 +311,6 @@ class MpesaService
           phone_number: phone_number
         }
       else
-        # Payment failed or cancelled
         {
           success: false,
           result_code: result_code,
@@ -349,7 +340,6 @@ class MpesaService
       originator_conversation_id = result['OriginatorConversationID']
 
       if result_code == 0
-        # B2C payment successful
         result_parameters = result['ResultParameters']['ResultParameter']
         
         transaction_receipt = result_parameters.find { |p| p['Key'] == 'TransactionReceipt' }&.dig('Value')
@@ -367,7 +357,6 @@ class MpesaService
           receiver: receiver_party_public_name
         }
       else
-        # B2C payment failed
         {
           success: false,
           result_code: result_code,
@@ -396,7 +385,6 @@ class MpesaService
 
   def self.get_access_token
     begin
-      # Cache access token for 55 minutes (expires in 1 hour)
       cache_key = "mpesa_access_token"
       cached_token = Rails.cache.read(cache_key)
       return cached_token if cached_token
@@ -422,7 +410,6 @@ class MpesaService
         access_token = result['access_token']
         
         if access_token
-          # Cache for 55 minutes
           Rails.cache.write(cache_key, access_token, expires_in: 55.minutes)
           Rails.logger.info "Access token generated and cached successfully"
           return access_token
@@ -443,34 +430,21 @@ class MpesaService
   end
 
   def self.generate_security_credential
-    # For B2C and transaction queries, we need to encrypt the initiator password
-    # with Safaricom's public certificate
-    
     begin
-      # Get the certificate path
       cert_path = Rails.root.join('config', 'certificates', 'mpesa_production.cer')
-      
-      # In sandbox, use sandbox certificate
       cert_path = Rails.root.join('config', 'certificates', 'mpesa_sandbox.cer') unless Rails.env.production?
       
       unless File.exist?(cert_path)
         Rails.logger.warn "M-Pesa certificate not found at #{cert_path}, using default password"
-        # For sandbox testing, return base64 encoded password
         return Base64.strict_encode64(b2c_initiator_password)
       end
 
-      # Read certificate
       cert = OpenSSL::X509::Certificate.new(File.read(cert_path))
-      
-      # Encrypt initiator password
       encrypted = cert.public_key.public_encrypt(b2c_initiator_password)
-      
-      # Return base64 encoded encrypted password
       Base64.strict_encode64(encrypted)
       
     rescue => e
       Rails.logger.error "Security credential generation error: #{e.message}"
-      # Fallback to simple base64 encoding for sandbox
       Base64.strict_encode64(b2c_initiator_password)
     end
   end
@@ -531,17 +505,15 @@ class MpesaService
   # ===========================================
 
   def self.format_phone_number(phone)
-    # Remove all non-digit characters
     cleaned = phone.gsub(/\D/, '')
     
-    # Handle Kenyan phone numbers
-    if cleaned.match(/^0[17]\d{8}$/) # 0712345678
+    if cleaned.match(/^0[17]\d{8}$/)
       "254#{cleaned[1..-1]}"
-    elsif cleaned.match(/^[17]\d{8}$/) # 712345678
+    elsif cleaned.match(/^[17]\d{8}$/)
       "254#{cleaned}"
-    elsif cleaned.match(/^254[17]\d{8}$/) # 254712345678
+    elsif cleaned.match(/^254[17]\d{8}$/)
       cleaned
-    elsif cleaned.match(/^\+254[17]\d{8}$/) # +254712345678
+    elsif cleaned.match(/^\+254[17]\d{8}$/)
       cleaned[1..-1]
     else
       cleaned
