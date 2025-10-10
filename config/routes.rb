@@ -246,20 +246,23 @@ get '/logout', to: 'sessions#destroy'
       # 💳 MPESA API
       # ==========================================
       
-      scope :mpesa do
-        post 'stk_push', to: 'mpesa#stk_push'
-        post 'stk_push_bulk', to: 'mpesa#stk_push_bulk'
-        post 'query_status', to: 'mpesa#query_status'
-        post 'verify_manual', to: 'mpesa#verify_manual'
-        post 'verify_manual_bulk', to: 'mpesa#verify_manual_bulk'
-        post 'callback', to: 'mpesa#callback'
-        post 'timeout', to: 'mpesa#timeout'
-        post 'verify_callback', to: 'mpesa#verify_callback'
-        post 'verify_timeout', to: 'mpesa#verify_timeout'
-        post 'mpesa/wallet_callback', to: 'mpesa#wallet_callback'
-        post 'topup', to: 'mpesa#topup'
-        post 'topup_manual', to: 'mpesa#topup_manual'
-      end
+         scope :mpesa do
+  # Authenticated endpoints
+  post 'stk_push', to: 'mpesa#stk_push'
+  post 'stk_push_bulk', to: 'mpesa#stk_push_bulk'
+  post 'query_status', to: 'mpesa#query_status'
+  post 'verify_manual', to: 'mpesa#verify_manual'
+  post 'verify_manual_bulk', to: 'mpesa#verify_manual_bulk'
+  post 'topup', to: 'mpesa#topup'
+  post 'topup_manual', to: 'mpesa#topup_manual'
+  
+  # Callback endpoints (no authentication)
+  post 'callback', to: 'mpesa#callback'                    # Package payments callback
+  post 'wallet_callback', to: 'mpesa#wallet_callback'      # Wallet topup callback (FIXED)
+  post 'timeout', to: 'mpesa#timeout'
+  post 'verify_callback', to: 'mpesa#verify_callback'
+  post 'verify_timeout', to: 'mpesa#verify_timeout'
+end
       
       # ==========================================
       # 📄 TERMS AND CONDITIONS
