@@ -1,35 +1,36 @@
 # app/controllers/public/tracking_controller.rb
-class Public::TrackingController < ApplicationController
-  # Skip authentication for public access
-  skip_before_action :authenticate_user!, raise: false
-  
-  # Find package before actions
-  before_action :find_package, only: [:show, :status, :timeline]
-  
-  # Use custom layout
-  layout 'public_tracking'
-
-  # Main tracking page
-  def show
-    unless @package
-      render :not_found, status: :not_found and return
-    end
-
-    @tracking_events = @package.tracking_events
-                               .includes(:user)
-                               .order(created_at: :desc)
+module Public
+  class TrackingController < WebApplicationController
+    # Skip authentication for public access
+    skip_before_action :authenticate_user!
     
-    @journey_timeline = build_journey_timeline(@package)
+    # Find package before actions
+    before_action :find_package, only: [:show, :status, :timeline]
     
-    respond_to do |format|
-      format.html
-      format.json { render json: package_tracking_json }
+    # Use custom layout
+    layout 'public_tracking'
+
+    # Main tracking page
+    def show
+      unless @package
+        render :not_found, status: :not_found and return
+      end
+
+      @tracking_events = @package.tracking_events
+                                 .includes(:user)
+                                 .order(created_at: :desc)
+      
+      @journey_timeline = build_journey_timeline(@package)
+      
+      respond_to do |format|
+        format.html
+        format.json { render json: package_tracking_json }
+      end
+    rescue => e
+      Rails.logger.error "Error in public tracking show: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+      render :not_found, status: :not_found
     end
-  rescue => e
-    Rails.logger.error "Error in public tracking show: #{e.message}"
-    Rails.logger.error e.backtrace.join("\n")
-    render :not_found, status: :not_found
-  end
 
   # Status endpoint (JSON only)
   def status
@@ -226,8 +227,9 @@ class Public::TrackingController < ApplicationController
       timeline: @journey_timeline,
       tracking_url: public_package_tracking_url(@package.code)
     }
-  rescue => e
-    Rails.logger.error "Error building package tracking JSON: #{e.message}"
-    { error: 'Error building tracking data' }
+    rescue => e
+      Rails.logger.error "Error building package tracking JSON: #{e.message}"
+      { error: 'Error building tracking data' }
+    end
   end
 end
