@@ -1,0 +1,271 @@
+<!-- app/views/public/tracking/index.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track Your Package - GLT Logistics</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      padding: 1.5rem;
+      background: rgba(30, 30, 60, 0.6);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #8b5cf6;
+      font-style: italic;
+      text-decoration: none;
+    }
+
+    .back-link {
+      color: #a78bfa;
+      text-decoration: none;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: color 0.3s;
+    }
+
+    .back-link:hover {
+      color: #8b5cf6;
+    }
+
+    .container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+    }
+
+    .tracking-card {
+      background: rgba(30, 30, 60, 0.8);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 24px;
+      padding: 3rem;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .tracking-icon {
+      width: 80px;
+      height: 80px;
+      background: rgba(124, 58, 237, 0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 2rem;
+      font-size: 2.5rem;
+    }
+
+    .tracking-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #f4f4f5;
+      text-align: center;
+      margin-bottom: 0.75rem;
+    }
+
+    .tracking-subtitle {
+      font-size: 1rem;
+      color: #a1a1aa;
+      text-align: center;
+      margin-bottom: 2.5rem;
+      line-height: 1.6;
+    }
+
+    .tracking-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .form-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #a1a1aa;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 1rem;
+      background: rgba(30, 30, 60, 0.6);
+      border: 2px solid rgba(124, 58, 237, 0.3);
+      border-radius: 12px;
+      color: #f4f4f5;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #8b5cf6;
+      background: rgba(30, 30, 60, 0.8);
+    }
+
+    .form-input::placeholder {
+      color: #71717a;
+    }
+
+    .submit-button {
+      width: 100%;
+      padding: 1rem;
+      background: transparent;
+      border: 2px solid #8b5cf6;
+      border-radius: 12px;
+      color: #8b5cf6;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .submit-button:hover {
+      background: rgba(139, 92, 246, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .submit-button:active {
+      transform: translateY(0);
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      text-align: center;
+      margin: 1.5rem 0;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      border-bottom: 1px solid rgba(124, 58, 237, 0.3);
+    }
+
+    .divider-text {
+      padding: 0 1rem;
+      color: #71717a;
+      font-size: 0.875rem;
+    }
+
+    .info-text {
+      font-size: 0.8125rem;
+      color: #71717a;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 640px) {
+      .tracking-card {
+        padding: 2rem 1.5rem;
+      }
+
+      .tracking-title {
+        font-size: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <a href="/" class="logo">GLT Logistics</a>
+      <a href="/" class="back-link">
+        ← Back to Home
+      </a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="tracking-card">
+      <div class="tracking-icon">📦</div>
+      
+      <h1 class="tracking-title">Track Your Package</h1>
+      <p class="tracking-subtitle">
+        Enter your tracking code to view real-time updates and delivery status
+      </p>
+
+      <form class="tracking-form" action="/public/track" method="get" onsubmit="handleSubmit(event)">
+        <div class="form-group">
+          <label class="form-label" for="tracking-code">Tracking Code</label>
+          <input 
+            type="text" 
+            id="tracking-code" 
+            name="code"
+            class="form-input" 
+            placeholder="Enter your tracking code (e.g., NRB-008-MCH)"
+            required
+            pattern="[A-Z]{3}-\d{3}-[A-Z]{3}"
+            title="Format: XXX-###-XXX (e.g., NRB-008-MCH)"
+          />
+        </div>
+
+        <button type="submit" class="submit-button">
+          <span>Track Package</span>
+          <span>→</span>
+        </button>
+      </form>
+
+      <div class="divider">
+        <span class="divider-text">Need help?</span>
+      </div>
+
+      <p class="info-text">
+        Your tracking code can be found in the confirmation email or SMS you received when your package was created.
+        Format: XXX-###-XXX (e.g., NRB-008-MCH)
+      </p>
+    </div>
+  </div>
+
+  <script>
+    function handleSubmit(event) {
+      event.preventDefault();
+      const code = document.getElementById('tracking-code').value.trim();
+      if (code) {
+        window.location.href = `/public/track/${code}`;
+      }
+    }
+  </script>
+</body>
+</html>
