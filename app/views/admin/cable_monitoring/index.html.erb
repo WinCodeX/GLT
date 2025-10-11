@@ -1,45 +1,238 @@
 <!-- app/views/admin/cable_monitoring/index.html.erb -->
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Cable Monitoring - Admin Panel</title>
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cable Monitoring - GLT Logistics Admin</title>
+  
+  <!-- Favicon Links -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  
+  <!-- Theme Color -->
+  <meta name="theme-color" content="#8b5cf6">
+  <meta name="msapplication-TileColor" content="#8b5cf6">
+  
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      min-height: 100vh;
+    }
     
     .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
-    .header h1 { font-size: 2rem; margin-bottom: 10px; }
     
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-    .stat-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .stat-card h3 { font-size: 0.9rem; color: #6b7280; margin-bottom: 10px; }
-    .stat-card .number { font-size: 2rem; font-weight: bold; color: #06b6d4; }
-    .stat-card.online .number { color: #10b981; }
-    .stat-card.offline .number { color: #ef4444; }
+    .header {
+      background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 20px;
+      margin-bottom: 30px;
+      box-shadow: 0 8px 32px rgba(139, 92, 246, 0.3);
+    }
     
-    .section { background: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; }
-    .section h2 { margin-bottom: 20px; color: #1f2937; }
+    .header h1 { font-size: 2rem; margin-bottom: 10px; font-weight: 700; }
+    .header p { opacity: 0.9; margin-bottom: 20px; }
     
-    .connections-table { width: 100%; border-collapse: collapse; }
-    .connections-table th { background: #f9fafb; padding: 12px; text-align: left; font-weight: 600; }
-    .connections-table td { padding: 12px; border-bottom: 1px solid #e5e7eb; }
-    .connections-table tr:hover { background: #f9fafb; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     
-    .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
-    .status-online { background: #10b981; }
-    .status-offline { background: #ef4444; }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.3s;
+      text-decoration: none;
+      display: inline-block;
+    }
     
-    .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; }
-    .btn-primary { background: #06b6d4; color: white; }
-    .btn-success { background: #10b981; color: white; }
+    .btn-primary {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+    }
     
-    .test-broadcast { background: #fef3c7; padding: 20px; border-radius: 10px; border-left: 4px solid #f59e0b; }
-    .test-form { display: flex; gap: 10px; margin-top: 15px; }
-    .test-form input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+    .btn-primary:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: translateY(-2px);
+    }
     
-    .refresh-btn { margin: 10px 0; }
+    .btn-success {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+    }
+    
+    .btn-success:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3); }
+    
+    .auto-refresh {
+      margin-top: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .auto-refresh input { width: 18px; height: 18px; cursor: pointer; }
+    .auto-refresh label { cursor: pointer; }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    
+    .stat-card {
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 20px;
+      padding: 25px;
+      transition: all 0.3s;
+    }
+    
+    .stat-card:hover {
+      background: rgba(139, 92, 246, 0.15);
+      border-color: rgba(139, 92, 246, 0.5);
+      transform: translateY(-4px);
+    }
+    
+    .stat-card h3 {
+      font-size: 0.9rem;
+      color: #a1a1aa;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .stat-card .number {
+      font-size: 2.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    .stat-card.online .number { background: linear-gradient(135deg, #10b981 0%, #34d399 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-card.offline .number { background: linear-gradient(135deg, #ef4444 0%, #f87171 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    
+    .section {
+      background: rgba(10, 10, 15, 0.8);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      padding: 30px;
+      border-radius: 20px;
+      margin-bottom: 20px;
+      backdrop-filter: blur(20px);
+    }
+    
+    .section h2 {
+      margin-bottom: 20px;
+      color: #f4f4f5;
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    
+    .refresh-btn { margin-bottom: 20px; }
+    
+    .connections-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: rgba(139, 92, 246, 0.05);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    
+    .connections-table th {
+      background: rgba(139, 92, 246, 0.2);
+      padding: 15px;
+      text-align: left;
+      font-weight: 600;
+      color: #f4f4f5;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .connections-table td {
+      padding: 15px;
+      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+      color: #e4e4e7;
+    }
+    
+    .connections-table tr:hover {
+      background: rgba(139, 92, 246, 0.1);
+    }
+    
+    .status-indicator {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
+    }
+    
+    .status-online { background: #10b981; box-shadow: 0 0 10px #10b981; }
+    .status-offline { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .test-broadcast {
+      background: rgba(245, 158, 11, 0.1);
+      padding: 25px;
+      border-radius: 15px;
+      border: 2px solid rgba(245, 158, 11, 0.3);
+    }
+    
+    .test-broadcast h2 { color: #fbbf24; margin-bottom: 10px; }
+    .test-broadcast p { color: #a1a1aa; margin-bottom: 15px; }
+    
+    .test-form {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+      flex-wrap: wrap;
+    }
+    
+    .test-form input {
+      flex: 1;
+      min-width: 200px;
+      padding: 12px;
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      border-radius: 10px;
+      background: rgba(10, 10, 15, 0.8);
+      color: #e4e4e7;
+      font-size: 14px;
+    }
+    
+    .test-form input:focus {
+      outline: none;
+      border-color: #8b5cf6;
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #a1a1aa;
+    }
+    
+    .empty-state-icon { font-size: 3rem; opacity: 0.3; margin-bottom: 15px; }
+    
+    @media (max-width: 768px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .header-actions { flex-direction: column; }
+      .btn { width: 100%; text-align: center; }
+    }
   </style>
   <script>
     let refreshInterval;
@@ -101,16 +294,15 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>ActionCable Monitoring</h1>
-      <p>Real-time WebSocket connection monitoring</p>
-      <div style="margin-top: 20px;">
-        <a href="<%= admin_root_path %>" class="btn btn-primary">Back to Admin</a>
-        <button onclick="location.reload()" class="btn btn-success">Refresh</button>
+      <h1>⚡ ActionCable Monitoring</h1>
+      <p>Real-time WebSocket connection monitoring and management</p>
+      <div class="header-actions">
+        <a href="<%= admin_root_path %>" class="btn btn-primary">← Back to Admin</a>
+        <button onclick="location.reload()" class="btn btn-success">🔄 Refresh</button>
       </div>
-      <div style="margin-top: 15px;">
-        <label style="color: white;">
-          <input type="checkbox" onchange="toggleAutoRefresh(this)"> Auto-refresh every 5 seconds
-        </label>
+      <div class="auto-refresh">
+        <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh(this)">
+        <label for="autoRefresh">Auto-refresh every 5 seconds</label>
       </div>
     </div>
 
@@ -134,8 +326,8 @@
     </div>
 
     <div class="section">
-      <h2>Active Connections</h2>
-      <button onclick="fetchConnections()" class="btn btn-primary refresh-btn">Refresh Connections</button>
+      <h2>🔗 Active Connections</h2>
+      <button onclick="fetchConnections()" class="btn btn-success refresh-btn">Refresh Connections</button>
       
       <% if @connections.any? %>
         <table class="connections-table">
@@ -160,13 +352,16 @@
           </tbody>
         </table>
       <% else %>
-        <p style="color: #9ca3af; text-align: center; padding: 40px;">No active connections</p>
+        <div class="empty-state">
+          <div class="empty-state-icon">🔌</div>
+          <p>No active connections</p>
+        </div>
       <% end %>
     </div>
 
     <div class="section">
-      <h2>Active Subscriptions by Channel</h2>
-      <button onclick="fetchSubscriptions()" class="btn btn-primary refresh-btn">Refresh Subscriptions</button>
+      <h2>📡 Active Subscriptions by Channel</h2>
+      <button onclick="fetchSubscriptions()" class="btn btn-success refresh-btn">Refresh Subscriptions</button>
       
       <% if @subscriptions.any? %>
         <table class="connections-table">
@@ -186,12 +381,15 @@
           </tbody>
         </table>
       <% else %>
-        <p style="color: #9ca3af; text-align: center; padding: 40px;">No active subscriptions</p>
+        <div class="empty-state">
+          <div class="empty-state-icon">📡</div>
+          <p>No active subscriptions</p>
+        </div>
       <% end %>
     </div>
 
     <div class="section test-broadcast">
-      <h2>Test Broadcast</h2>
+      <h2>🧪 Test Broadcast</h2>
       <p>Send a test message to a specific channel to verify ActionCable is working.</p>
       
       <form action="/admin/cable/test_broadcast" method="post" class="test-form">
