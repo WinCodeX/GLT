@@ -796,6 +796,8 @@ end
   # Tracking search page - ADD THIS LINE
   get 'track', to: 'tracking#index', as: 'tracking_index'
   
+  get 'package', to: 'packages#new', as: 'packages'
+
   # Existing tracking routes
   scope :track do
     get ':code', to: 'tracking#show', as: 'package_tracking'
