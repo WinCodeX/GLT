@@ -9,18 +9,19 @@
     </button>
     
     <div class="header-title">
-      <h1><%= @package.fragile_delivery? ? 'Fragile Tracking' : 'Package Tracking' %></h1>
+      <h1><%= get_delivery_type_display(@package.delivery_type) %> Tracking</h1>
       <p class="header-subtitle"><%= @package.code %></p>
     </div>
 
     <div class="header-actions">
-      <button class="icon-button">
+      <button class="icon-button" onclick="window.print()">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 3h18v18H3z"/>
-          <path d="M12 8v8m-4-4h8"/>
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
         </svg>
       </button>
-      <button class="icon-button">
+      <button class="icon-button" onclick="shareTracking()">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
           <polyline points="16 6 12 2 8 6"/>
@@ -36,23 +37,52 @@
       <div>
         <h2 class="package-code"><%= @package.code %></h2>
         <p class="package-route">
-          <%= @package.sender_name || 'null' %>, <%= @package.origin_area&.name || 'Kisaju' %> → 
-          <%= @package.destination_area&.name || 'Super' %>
+          <%= @package.sender_name || 'N/A' %>, 
+          <%= @package.origin_area&.name || 'Origin' %> → 
+          <%= @package.destination_area&.name || 'Destination' %>
         </p>
       </div>
       
       <div class="package-badges">
         <% if @package.fragile_delivery? %>
-          <span class="badge badge-fragile">
+          <span class="badge badge-fragile" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-              <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+              <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
             </svg>
-            Fragile
+            <%= get_delivery_type_display(@package.delivery_type) %>
+          </span>
+        <% else %>
+          <span class="badge badge-delivery-type" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>; color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
+            <% case get_package_type_icon(@package.delivery_type) %>
+            <% when 'shopping-bag' %>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+                <line x1="3" y1="6" x2="21" y2="6"/>
+                <path d="M16 10a4 4 0 0 1-8 0"/>
+              </svg>
+            <% when 'home' %>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+            <% when 'briefcase' %>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+            <% else %>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/>
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+            <% end %>
+            <%= get_delivery_type_display(@package.delivery_type) %>
           </span>
         <% end %>
         
-        <span class="badge badge-<%= @package.state.gsub('_', '-') %>">
+        <span class="badge badge-state" style="background-color: <%= get_state_badge_color(@package.state) %>">
           <%= @package.state.humanize.upcase %>
         </span>
       </div>
@@ -82,7 +112,7 @@
 
         <div class="detail-section">
           <p class="detail-label">Delivery Location</p>
-          <p class="detail-value"><%= @package.delivery_location || 'Standard delivery' %></p>
+          <p class="detail-value"><%= get_delivery_location_display(@package) %></p>
         </div>
       </div>
     </div>
@@ -135,9 +165,21 @@
     </div>
 
     <div class="qr-code-container">
-      <%= image_tag @package.qr_code_url, 
-                    alt: "QR Code for #{@package.code}", 
-                    class: 'qr-code-image' if @package.respond_to?(:qr_code_url) %>
+      <% if @package.respond_to?(:qr_code_url) && @package.qr_code_url.present? %>
+        <%= image_tag @package.qr_code_url, 
+                      alt: "QR Code for #{@package.code}", 
+                      class: 'qr-code-image' %>
+      <% else %>
+        <div class="qr-code-placeholder">
+          <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/>
+          </svg>
+          <p class="qr-placeholder-text">QR Code generating...</p>
+        </div>
+      <% end %>
     </div>
   </div>
 </div>
@@ -278,36 +320,13 @@
     letter-spacing: 0.5px;
   }
 
-  .badge-fragile {
+  .badge-fragile,
+  .badge-delivery-type {
     background: transparent;
-    border: 2px solid #f59e0b;
-    color: #fbbf24;
+    border: 2px solid;
   }
 
-  .badge-pending-unpaid {
-    background: #ef4444;
-    color: white;
-  }
-
-  .badge-pending {
-    background: #f59e0b;
-    color: white;
-  }
-
-  .badge-submitted,
-  .badge-in-transit {
-    background: #3b82f6;
-    color: white;
-  }
-
-  .badge-delivered,
-  .badge-collected {
-    background: #10b981;
-    color: white;
-  }
-
-  .badge-rejected {
-    background: #ef4444;
+  .badge-state {
     color: white;
   }
 
@@ -504,6 +523,19 @@
     height: auto;
   }
 
+  .qr-code-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .qr-placeholder-text {
+    color: #8b5cf6;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     .package-header {
@@ -520,3 +552,24 @@
     }
   }
 </style>
+
+<script>
+  function shareTracking() {
+    const url = window.location.href;
+    const code = '<%= @package.code %>';
+    const title = 'Track Package ' + code;
+    
+    if (navigator.share) {
+      navigator.share({
+        title: title,
+        text: 'Track your GLT package: ' + code,
+        url: url
+      }).catch(err => console.log('Share failed:', err));
+    } else {
+      // Fallback: copy to clipboard
+      navigator.clipboard.writeText(url).then(() => {
+        alert('Tracking link copied to clipboard!');
+      });
+    }
+  }
+</script>
