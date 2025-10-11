@@ -3,29 +3,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   
-  <title><%= content_for?(:title) ? yield(:title) : "Track Package - #{@package&.code}" %></title>
+  <title><%= content_for?(:title) ? yield(:title) : "Track Package#{' - ' + @package.code if @package}" %></title>
   
   <%= csrf_meta_tags %>
   <%= csp_meta_tag %>
   
   <!-- Favicon -->
-  <%= favicon_link_tag 'favicon.ico' %>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
   
   <!-- Open Graph Meta Tags -->
-  <meta property="og:title" content="Track Package <%= @package&.code %>">
+  <meta property="og:title" content="<%= "Track Package #{@package&.code}" %>">
   <meta property="og:description" content="Track your package in real-time">
   <meta property="og:type" content="website">
   
   <!-- Twitter Card Meta Tags -->
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Track Package <%= @package&.code %>">
+  <meta name="twitter:title" content="<%= "Track Package #{@package&.code}" %>">
   <meta name="twitter:description" content="Track your package in real-time">
-  
-  <!-- Styles -->
-  <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
   
   <style>
     /* Reset and Base Styles */
@@ -35,12 +32,19 @@
       box-sizing: border-box;
     }
     
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    html {
+      scroll-behavior: smooth;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
+      color: #e4e4e7;
       min-height: 100vh;
+      margin: 0;
+      padding: 0;
     }
     
     /* Loading State */
@@ -65,11 +69,6 @@
       to { transform: rotate(360deg); }
     }
     
-    /* Smooth scrolling */
-    html {
-      scroll-behavior: smooth;
-    }
-    
     /* Focus styles */
     *:focus {
       outline: 2px solid #a78bfa;
@@ -79,53 +78,107 @@
     button:focus {
       outline: 2px solid #a78bfa;
     }
+    
+    /* Flash Messages */
+    .flash-messages {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 9999;
+      max-width: 90%;
+    }
+    
+    .flash-message {
+      padding: 1rem 1.5rem;
+      border-radius: 0.5rem;
+      margin-bottom: 0.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+      animation: slideIn 0.3s ease-out;
+      color: white;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    
+    .flash-notice,
+    .flash-success {
+      background: rgba(16, 185, 129, 0.9);
+    }
+    
+    .flash-alert,
+    .flash-error {
+      background: rgba(239, 68, 68, 0.9);
+    }
+    
+    .flash-warning {
+      background: rgba(245, 158, 11, 0.9);
+    }
+    
+    .flash-info {
+      background: rgba(59, 130, 246, 0.9);
+    }
+    
+    @keyframes slideIn {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    @keyframes slideOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+    }
+    
+    /* Responsive */
+    @media (max-width: 640px) {
+      .flash-messages {
+        right: 0.5rem;
+        top: 0.5rem;
+      }
+      
+      .flash-message {
+        padding: 0.75rem 1rem;
+        font-size: 0.8125rem;
+      }
+    }
   </style>
-  
-  <%= javascript_importmap_tags %>
 </head>
 <body>
   <%= yield %>
   
   <!-- Flash Messages -->
   <% if flash.any? %>
-    <div id="flash-messages" style="position: fixed; top: 1rem; right: 1rem; z-index: 9999;">
+    <div class="flash-messages" id="flash-messages">
       <% flash.each do |type, message| %>
-        <div class="flash-message flash-<%= type %>" style="
-          background: <%= type == 'notice' ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)' %>;
-          color: white;
-          padding: 1rem 1.5rem;
-          border-radius: 0.5rem;
-          margin-bottom: 0.5rem;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-          animation: slideIn 0.3s ease-out;
-        ">
+        <div class="flash-message flash-<%= type %>">
           <%= message %>
         </div>
       <% end %>
     </div>
     
-    <style>
-      @keyframes slideIn {
-        from {
-          transform: translateX(100%);
-          opacity: 0;
-        }
-        to {
-          transform: translateX(0);
-          opacity: 1;
-        }
-      }
-    </style>
-    
     <script>
       // Auto-hide flash messages after 5 seconds
-      setTimeout(() => {
+      (function() {
         const flashMessages = document.getElementById('flash-messages');
         if (flashMessages) {
-          flashMessages.style.animation = 'slideOut 0.3s ease-out';
-          setTimeout(() => flashMessages.remove(), 300);
+          setTimeout(function() {
+            flashMessages.style.animation = 'slideOut 0.3s ease-out';
+            setTimeout(function() {
+              flashMessages.remove();
+            }, 300);
+          }, 5000);
         }
-      }, 5000);
+      })();
     </script>
   <% end %>
 </body>
