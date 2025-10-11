@@ -1,575 +1,662 @@
 <!-- app/views/public/tracking/show.html.erb -->
-<div class="tracking-container">
-  <!-- Header -->
-  <div class="tracking-header">
-    <button class="back-button" onclick="window.history.back()">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M19 12H5M12 19l-7-7 7-7"/>
-      </svg>
-    </button>
-    
-    <div class="header-title">
-      <h1><%= get_delivery_type_display(@package.delivery_type) %> Tracking</h1>
-      <p class="header-subtitle"><%= @package.code %></p>
-    </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track <%= @package.code %> - GLT Logistics</title>
+  
+  <!-- Favicon Links -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#8b5cf6">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-    <div class="header-actions">
-      <button class="icon-button" onclick="window.print()">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="6 9 6 2 18 2 18 9"/>
-          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-          <rect x="6" y="14" width="12" height="8"/>
-        </svg>
-      </button>
-      <button class="icon-button" onclick="shareTracking()">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
-          <polyline points="16 6 12 2 8 6"/>
-          <line x1="12" y1="2" x2="12" y2="15"/>
-        </svg>
-      </button>
-    </div>
-  </div>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+    }
 
-  <!-- Package Details Card -->
-  <div class="package-card">
-    <div class="package-header">
-      <div>
-        <h2 class="package-code"><%= @package.code %></h2>
-        <p class="package-route">
-          <%= @package.sender_name || 'N/A' %>, 
-          <%= @package.origin_area&.name || 'Origin' %> → 
-          <%= @package.destination_area&.name || 'Destination' %>
-        </p>
-      </div>
-      
-      <div class="package-badges">
-        <% if @package.fragile_delivery? %>
-          <span class="badge badge-fragile" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
-            </svg>
-            <%= get_delivery_type_display(@package.delivery_type) %>
-          </span>
-        <% else %>
-          <span class="badge badge-delivery-type" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>; color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
-            <% case get_package_type_icon(@package.delivery_type) %>
-            <% when 'shopping-bag' %>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
-                <line x1="3" y1="6" x2="21" y2="6"/>
-                <path d="M16 10a4 4 0 0 1-8 0"/>
-              </svg>
-            <% when 'home' %>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                <polyline points="9 22 9 12 15 12 15 22"/>
-              </svg>
-            <% when 'briefcase' %>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
-              </svg>
-            <% else %>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/>
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                <line x1="12" y1="22.08" x2="12" y2="12"/>
-              </svg>
-            <% end %>
-            <%= get_delivery_type_display(@package.delivery_type) %>
-          </span>
-        <% end %>
-        
-        <span class="badge badge-state" style="background-color: <%= get_state_badge_color(@package.state) %>">
-          <%= @package.state.humanize.upcase %>
-        </span>
-      </div>
-    </div>
+    /* Animated Background */
+    .animated-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      overflow: hidden;
+    }
 
-    <div class="package-details">
-      <!-- Sender -->
-      <div class="detail-section">
-        <p class="detail-label">Sender</p>
-        <p class="detail-value"><%= @package.sender_name || 'N/A' %></p>
-        <p class="detail-phone"><%= @package.sender_phone %></p>
-      </div>
+    .gradient-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.2;
+      animation: float 20s ease-in-out infinite;
+    }
 
-      <!-- Receiver -->
-      <div class="detail-section">
-        <p class="detail-label">Receiver</p>
-        <p class="detail-value"><%= @package.receiver_name %></p>
-        <p class="detail-phone"><%= @package.receiver_phone %></p>
-      </div>
+    .orb-1 {
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
+      top: -10%;
+      left: -10%;
+      animation-delay: 0s;
+    }
 
-      <!-- Cost & Delivery -->
-      <div class="detail-row">
-        <div class="detail-section">
-          <p class="detail-label">Cost</p>
-          <p class="cost-value">KES <%= @package.cost %></p>
-        </div>
+    .orb-2 {
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, #a78bfa 0%, transparent 70%);
+      top: 50%;
+      right: -10%;
+      animation-delay: 5s;
+    }
 
-        <div class="detail-section">
-          <p class="detail-label">Delivery Location</p>
-          <p class="detail-value"><%= get_delivery_location_display(@package) %></p>
-        </div>
-      </div>
-    </div>
-  </div>
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(50px, -50px) scale(1.1); }
+      66% { transform: translate(-30px, 30px) scale(0.9); }
+    }
 
-  <!-- Journey Timeline -->
-  <div class="timeline-card">
-    <div class="timeline-header">
-      <svg class="timeline-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <polyline points="12 6 12 12 16 14"/>
-      </svg>
-      <h3>Journey Timeline</h3>
-    </div>
+    /* Content */
+    .tracking-container {
+      position: relative;
+      z-index: 1;
+      max-width: 100%;
+      margin: 0 auto;
+      padding-bottom: 2rem;
+    }
 
-    <div class="timeline-list">
-      <% @journey_timeline.each_with_index do |event, index| %>
-        <div class="timeline-item <%= 'timeline-item-last' if index == @journey_timeline.length - 1 %>">
-          <div class="timeline-marker">
-            <div class="timeline-dot <%= event[:status] %>"></div>
-            <% unless index == @journey_timeline.length - 1 %>
-              <div class="timeline-line"></div>
-            <% end %>
-          </div>
-          
-          <div class="timeline-content">
-            <div class="timeline-text">
-              <p class="timeline-title"><%= event[:title] %></p>
-              <p class="timeline-description"><%= event[:description] %></p>
-            </div>
-            <p class="timeline-time">
-              <%= event[:timestamp].strftime('%b %d, %I:%M %p') %>
-            </p>
-          </div>
-        </div>
-      <% end %>
-    </div>
-  </div>
+    /* Header */
+    .tracking-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
 
-  <!-- QR Code Section -->
-  <div class="qr-code-card">
-    <div class="qr-code-header">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="3" width="7" height="7"/>
-        <rect x="14" y="3" width="7" height="7"/>
-        <rect x="14" y="14" width="7" height="7"/>
-        <rect x="3" y="14" width="7" height="7"/>
-      </svg>
-      <h3>QR Code for Tracking</h3>
-    </div>
+    .back-button {
+      background: rgba(139, 92, 246, 0.1);
+      border: 2px solid #8b5cf6;
+      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #a78bfa;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
 
-    <div class="qr-code-container">
-      <% if @package.respond_to?(:qr_code_url) && @package.qr_code_url.present? %>
-        <%= image_tag @package.qr_code_url, 
-                      alt: "QR Code for #{@package.code}", 
-                      class: 'qr-code-image' %>
-      <% else %>
-        <div class="qr-code-placeholder">
-          <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1">
-            <rect x="3" y="3" width="7" height="7"/>
-            <rect x="14" y="3" width="7" height="7"/>
-            <rect x="14" y="14" width="7" height="7"/>
-            <rect x="3" y="14" width="7" height="7"/>
-          </svg>
-          <p class="qr-placeholder-text">QR Code generating...</p>
-        </div>
-      <% end %>
-    </div>
-  </div>
-</div>
+    .back-button:hover {
+      background: rgba(139, 92, 246, 0.2);
+      transform: translateY(-2px);
+    }
 
-<style>
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
+    .header-title h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
 
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
-    color: #e4e4e7;
-    min-height: 100vh;
-    padding: 0;
-    margin: 0;
-  }
+    .header-subtitle {
+      font-size: 0.875rem;
+      color: #a1a1aa;
+      margin-top: 0.25rem;
+    }
 
-  .tracking-container {
-    max-width: 100%;
-    margin: 0 auto;
-    padding-bottom: 2rem;
-  }
+    .header-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
 
-  /* Header */
-  .tracking-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
-    background: rgba(30, 30, 60, 0.6);
-    backdrop-filter: blur(10px);
-  }
+    .icon-button {
+      background: rgba(139, 92, 246, 0.1);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #a78bfa;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
 
-  .back-button {
-    background: rgba(108, 92, 231, 0.2);
-    border: none;
-    border-radius: 50%;
-    width: 48px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #a78bfa;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
+    .icon-button:hover {
+      background: rgba(139, 92, 246, 0.2);
+      border-color: #8b5cf6;
+      transform: translateY(-2px);
+    }
 
-  .back-button:hover {
-    background: rgba(108, 92, 231, 0.3);
-    transform: scale(1.05);
-  }
+    /* Package Card */
+    .package-card {
+      margin: 2rem 1.5rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 24px;
+      padding: 2rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
 
-  .header-title h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #f4f4f5;
-    font-style: italic;
-  }
-
-  .header-subtitle {
-    font-size: 0.875rem;
-    color: #a1a1aa;
-    margin-top: 0.25rem;
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .icon-button {
-    background: rgba(108, 92, 231, 0.2);
-    border: none;
-    border-radius: 50%;
-    width: 48px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #a78bfa;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .icon-button:hover {
-    background: rgba(108, 92, 231, 0.3);
-    transform: scale(1.05);
-  }
-
-  /* Package Card */
-  .package-card {
-    margin: 1.5rem;
-    background: rgba(30, 30, 60, 0.8);
-    border-radius: 1rem;
-    padding: 1.5rem;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  }
-
-  .package-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 2rem;
-  }
-
-  .package-code {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: #f4f4f5;
-    margin-bottom: 0.5rem;
-    font-style: italic;
-  }
-
-  .package-route {
-    font-size: 0.875rem;
-    color: #a1a1aa;
-  }
-
-  .package-badges {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    align-items: flex-end;
-  }
-
-  .badge {
-    padding: 0.5rem 1rem;
-    border-radius: 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .badge-fragile,
-  .badge-delivery-type {
-    background: transparent;
-    border: 2px solid;
-  }
-
-  .badge-state {
-    color: white;
-  }
-
-  /* Package Details */
-  .package-details {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
-  .detail-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-
-  .detail-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .detail-label {
-    font-size: 0.875rem;
-    color: #71717a;
-    font-weight: 500;
-  }
-
-  .detail-value {
-    font-size: 1.125rem;
-    color: #f4f4f5;
-    font-weight: 500;
-  }
-
-  .detail-phone {
-    font-size: 0.875rem;
-    color: #a1a1aa;
-  }
-
-  .cost-value {
-    font-size: 1.125rem;
-    color: #34d399;
-    font-weight: 700;
-  }
-
-  /* Timeline Card */
-  .timeline-card {
-    margin: 1.5rem;
-    background: rgba(30, 30, 60, 0.8);
-    border-radius: 1rem;
-    padding: 1.5rem;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  }
-
-  .timeline-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .timeline-icon {
-    color: #a78bfa;
-  }
-
-  .timeline-header h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #f4f4f5;
-    font-style: italic;
-  }
-
-  .timeline-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .timeline-item {
-    display: flex;
-    gap: 1rem;
-    position: relative;
-  }
-
-  .timeline-marker {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding-top: 0.25rem;
-  }
-
-  .timeline-dot {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    background: rgba(168, 85, 247, 0.2);
-    border: 3px solid #a855f7;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    position: relative;
-    z-index: 2;
-  }
-
-  .timeline-dot.completed {
-    background: rgba(168, 85, 247, 0.3);
-    border-color: #a855f7;
-  }
-
-  .timeline-dot.rejected {
-    background: rgba(239, 68, 68, 0.3);
-    border-color: #ef4444;
-  }
-
-  .timeline-line {
-    width: 2px;
-    flex-grow: 1;
-    background: rgba(168, 85, 247, 0.3);
-    margin-top: 0.5rem;
-    min-height: 2rem;
-  }
-
-  .timeline-content {
-    flex: 1;
-    padding-bottom: 2rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-  }
-
-  .timeline-item-last .timeline-content {
-    padding-bottom: 0;
-  }
-
-  .timeline-text {
-    flex: 1;
-  }
-
-  .timeline-title {
-    font-size: 0.9375rem;
-    color: #f4f4f5;
-    font-weight: 500;
-    margin-bottom: 0.25rem;
-  }
-
-  .timeline-description {
-    font-size: 0.8125rem;
-    color: #71717a;
-  }
-
-  .timeline-time {
-    font-size: 0.75rem;
-    color: #a1a1aa;
-    text-align: right;
-    flex-shrink: 0;
-    margin-left: 1rem;
-  }
-
-  /* QR Code Card */
-  .qr-code-card {
-    margin: 1.5rem;
-    background: rgba(30, 30, 60, 0.8);
-    border-radius: 1rem;
-    padding: 1.5rem;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  }
-
-  .qr-code-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
-    color: #a78bfa;
-  }
-
-  .qr-code-header h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #f4f4f5;
-    font-style: italic;
-  }
-
-  .qr-code-container {
-    display: flex;
-    justify-content: center;
-    padding: 2rem;
-    background: white;
-    border-radius: 1rem;
-  }
-
-  .qr-code-image {
-    width: 100%;
-    max-width: 300px;
-    height: auto;
-  }
-
-  .qr-code-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .qr-placeholder-text {
-    color: #8b5cf6;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  /* Responsive */
-  @media (max-width: 640px) {
     .package-header {
-      flex-direction: column;
-      gap: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+    }
+
+    .package-code {
+      font-size: 1.75rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+
+    .package-route {
+      font-size: 0.9375rem;
+      color: #a1a1aa;
     }
 
     .package-badges {
-      align-items: flex-start;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+
+    .badge {
+      padding: 0.625rem 1.25rem;
+      border-radius: 12px;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-fragile,
+    .badge-delivery-type {
+      background: transparent;
+      border: 2px solid;
+    }
+
+    .badge-state {
+      color: white;
+    }
+
+    /* Package Details */
+    .package-details {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
     }
 
     .detail-row {
-      grid-template-columns: 1fr;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
     }
-  }
-</style>
 
-<script>
-  function shareTracking() {
-    const url = window.location.href;
-    const code = '<%= @package.code %>';
-    const title = 'Track Package ' + code;
-    
-    if (navigator.share) {
-      navigator.share({
-        title: title,
-        text: 'Track your GLT package: ' + code,
-        url: url
-      }).catch(err => console.log('Share failed:', err));
-    } else {
-      // Fallback: copy to clipboard
-      navigator.clipboard.writeText(url).then(() => {
-        alert('Tracking link copied to clipboard!');
-      });
+    .detail-section {
+      background: rgba(139, 92, 246, 0.05);
+      border: 1px solid rgba(139, 92, 246, 0.1);
+      border-radius: 16px;
+      padding: 1.5rem;
     }
-  }
-</script>
+
+    .detail-label {
+      font-size: 0.8125rem;
+      color: #71717a;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 0.75rem;
+    }
+
+    .detail-value {
+      font-size: 1.25rem;
+      color: #f4f4f5;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .detail-phone {
+      font-size: 0.9375rem;
+      color: #a1a1aa;
+    }
+
+    .cost-value {
+      font-size: 1.5rem;
+      color: #10b981;
+      font-weight: 800;
+    }
+
+    /* Timeline Card */
+    .timeline-card {
+      margin: 2rem 1.5rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 24px;
+      padding: 2rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .timeline-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+    }
+
+    .timeline-icon {
+      color: #a78bfa;
+    }
+
+    .timeline-header h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .timeline-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 1.5rem;
+      position: relative;
+    }
+
+    .timeline-marker {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 0.25rem;
+    }
+
+    .timeline-dot {
+      width: 3rem;
+      height: 3rem;
+      border-radius: 50%;
+      background: rgba(139, 92, 246, 0.1);
+      border: 3px solid #a855f7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 2;
+    }
+
+    .timeline-dot.completed {
+      background: rgba(139, 92, 246, 0.2);
+      border-color: #a855f7;
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.3);
+    }
+
+    .timeline-dot.rejected {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: #ef4444;
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+    }
+
+    .timeline-line {
+      width: 2px;
+      flex-grow: 1;
+      background: linear-gradient(180deg, rgba(168, 85, 247, 0.5) 0%, rgba(168, 85, 247, 0.1) 100%);
+      margin-top: 0.5rem;
+      min-height: 3rem;
+    }
+
+    .timeline-content {
+      flex: 1;
+      padding-bottom: 3rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .timeline-item-last .timeline-content {
+      padding-bottom: 0;
+    }
+
+    .timeline-text {
+      flex: 1;
+    }
+
+    .timeline-title {
+      font-size: 1rem;
+      color: #f4f4f5;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .timeline-description {
+      font-size: 0.875rem;
+      color: #71717a;
+      line-height: 1.6;
+    }
+
+    .timeline-time {
+      font-size: 0.8125rem;
+      color: #a1a1aa;
+      text-align: right;
+      flex-shrink: 0;
+      margin-left: 1.5rem;
+    }
+
+    /* QR Code Card */
+    .qr-code-card {
+      margin: 2rem 1.5rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 24px;
+      padding: 2rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .qr-code-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+    }
+
+    .qr-code-header svg {
+      color: #a78bfa;
+    }
+
+    .qr-code-header h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .qr-code-container {
+      display: flex;
+      justify-content: center;
+      padding: 3rem;
+      background: white;
+      border-radius: 20px;
+    }
+
+    .qr-code-image {
+      width: 100%;
+      max-width: 300px;
+      height: auto;
+    }
+
+    .qr-code-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .qr-placeholder-text {
+      color: #8b5cf6;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .package-header {
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .package-badges {
+        align-items: flex-start;
+        width: 100%;
+      }
+
+      .detail-row {
+        grid-template-columns: 1fr;
+      }
+
+      .header-actions {
+        gap: 0.25rem;
+      }
+
+      .icon-button {
+        width: 40px;
+        height: 40px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Animated Background -->
+  <div class="animated-bg">
+    <div class="gradient-orb orb-1"></div>
+    <div class="gradient-orb orb-2"></div>
+  </div>
+
+  <div class="tracking-container">
+    <!-- Header -->
+    <div class="tracking-header">
+      <button class="back-button" onclick="window.history.back()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      
+      <div class="header-title">
+        <h1><%= get_delivery_type_display(@package.delivery_type) %> Tracking</h1>
+        <p class="header-subtitle"><%= @package.code %></p>
+      </div>
+
+      <div class="header-actions">
+        <button class="icon-button" onclick="window.print()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 6 2 18 2 18 9"/>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+            <rect x="6" y="14" width="12" height="8"/>
+          </svg>
+        </button>
+        <button class="icon-button" onclick="shareTracking()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+            <polyline points="16 6 12 2 8 6"/>
+            <line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Package Details Card -->
+    <div class="package-card">
+      <div class="package-header">
+        <div>
+          <h2 class="package-code"><%= @package.code %></h2>
+          <p class="package-route">
+            <%= @package.sender_name || 'N/A' %>, 
+            <%= @package.origin_area&.name || 'Origin' %> → 
+            <%= @package.destination_area&.name || 'Destination' %>
+          </p>
+        </div>
+        
+        <div class="package-badges">
+          <% if @package.fragile_delivery? %>
+            <span class="badge badge-fragile" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>; color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
+              </svg>
+              <%= get_delivery_type_display(@package.delivery_type) %>
+            </span>
+          <% else %>
+            <span class="badge badge-delivery-type" style="border-color: <%= get_delivery_type_badge_color(@package.delivery_type) %>; color: <%= get_delivery_type_badge_color(@package.delivery_type) %>">
+              <%= get_delivery_type_display(@package.delivery_type) %>
+            </span>
+          <% end %>
+          
+          <span class="badge badge-state" style="background-color: <%= get_state_badge_color(@package.state) %>">
+            <%= @package.state.humanize.upcase %>
+          </span>
+        </div>
+      </div>
+
+      <div class="package-details">
+        <!-- Sender & Receiver -->
+        <div class="detail-row">
+          <div class="detail-section">
+            <p class="detail-label">Sender</p>
+            <p class="detail-value"><%= @package.sender_name || 'N/A' %></p>
+            <p class="detail-phone"><%= @package.sender_phone %></p>
+          </div>
+
+          <div class="detail-section">
+            <p class="detail-label">Receiver</p>
+            <p class="detail-value"><%= @package.receiver_name %></p>
+            <p class="detail-phone"><%= @package.receiver_phone %></p>
+          </div>
+        </div>
+
+        <!-- Cost & Location -->
+        <div class="detail-row">
+          <div class="detail-section">
+            <p class="detail-label">Cost</p>
+            <p class="cost-value">KES <%= @package.cost %></p>
+          </div>
+
+          <div class="detail-section">
+            <p class="detail-label">Delivery Location</p>
+            <p class="detail-value"><%= get_delivery_location_display(@package) %></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Journey Timeline -->
+    <div class="timeline-card">
+      <div class="timeline-header">
+        <svg class="timeline-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <h3>Journey Timeline</h3>
+      </div>
+
+      <div class="timeline-list">
+        <% @journey_timeline.each_with_index do |event, index| %>
+          <div class="timeline-item <%= 'timeline-item-last' if index == @journey_timeline.length - 1 %>">
+            <div class="timeline-marker">
+              <div class="timeline-dot <%= event[:status] %>"></div>
+              <% unless index == @journey_timeline.length - 1 %>
+                <div class="timeline-line"></div>
+              <% end %>
+            </div>
+            
+            <div class="timeline-content">
+              <div class="timeline-text">
+                <p class="timeline-title"><%= event[:title] %></p>
+                <p class="timeline-description"><%= event[:description] %></p>
+              </div>
+              <p class="timeline-time">
+                <%= event[:timestamp].strftime('%b %d, %I:%M %p') %>
+              </p>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- QR Code Section -->
+    <div class="qr-code-card">
+      <div class="qr-code-header">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        <h3>QR Code for Tracking</h3>
+      </div>
+
+      <div class="qr-code-container">
+        <% if @package.respond_to?(:qr_code_url) && @package.qr_code_url.present? %>
+          <img src="<%= @package.qr_code_url %>" alt="QR Code for <%= @package.code %>" class="qr-code-image">
+        <% else %>
+          <div class="qr-code-placeholder">
+            <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            <p class="qr-placeholder-text">QR Code generating...</p>
+          </div>
+        <% end %>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function shareTracking() {
+      const url = window.location.href;
+      const code = '<%= @package.code %>';
+      const title = 'Track Package ' + code;
+      
+      if (navigator.share) {
+        navigator.share({
+          title: title,
+          text: 'Track your GLT package: ' + code,
+          url: url
+        }).catch(err => console.log('Share failed:', err));
+      } else {
+        navigator.clipboard.writeText(url).then(() => {
+          alert('Tracking link copied to clipboard!');
+        });
+      }
+    }
+  </script>
+</body>
+</html>
