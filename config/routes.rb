@@ -789,21 +789,27 @@ end
   # 🌐 PUBLIC ENDPOINTS
   # ==========================================
   
-  scope :public do
-    get 'track/:code', to: 'public/tracking#show', as: :public_package_tracking
-    get 'track/:code/status', to: 'public/tracking#status'
-    get 'track/:code/timeline', to: 'public/tracking#timeline'
-    get 'track/:code/qr', to: 'public/tracking#qr_code'
-    get 'track/:code/qr/organic', to: 'public/tracking#organic_qr_code'
-    get 'track/:code/qr/thermal', to: 'public/tracking#thermal_qr_code'
-    
-    get 'track/:code/delivery_info', to: 'public/tracking#delivery_information'
-    get 'track/:code/special_handling', to: 'public/tracking#special_handling_info'
-    
-    get 'pricing/estimate', to: 'public/pricing#estimate'
-    get 'pricing/delivery_types', to: 'public/pricing#delivery_types_info'
-    get 'pricing/package_sizes', to: 'public/pricing#package_sizes_info'
+  namespace :public do
+  get 'home', to: 'home#index', as: 'home'
+  
+  # Existing tracking routes
+  scope :track do
+    get ':code', to: 'tracking#show', as: 'package_tracking'
+    get ':code/status', to: 'tracking#status'
+    get ':code/timeline', to: 'tracking#timeline'
+    get ':code/qr', to: 'tracking#qr_code'
+    get ':code/qr/organic', to: 'tracking#organic_qr_code'
+    get ':code/qr/thermal', to: 'tracking#thermal_qr_code'
+    get ':code/delivery_info', to: 'tracking#delivery_information'
+    get ':code/special_handling', to: 'tracking#special_handling_info'
   end
+  
+  scope :pricing do
+    get 'estimate', to: 'pricing#estimate'
+    get 'delivery_types', to: 'pricing#delivery_types_info'
+    get 'package_sizes', to: 'pricing#package_sizes_info'
+  end
+end
 
   get 'api/v1/track/:code', to: 'api/v1/packages#public_tracking', as: :package_tracking
 
