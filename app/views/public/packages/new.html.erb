@@ -1,0 +1,1121 @@
+<!-- app/views/public/packages/new.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Package - GLT Logistics</title>
+  
+  <!-- Favicon Links -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  
+  <meta name="theme-color" content="#8b5cf6">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated Background */
+    .animated-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .gradient-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.3;
+      animation: float 20s ease-in-out infinite;
+    }
+
+    .orb-1 {
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
+      top: -10%;
+      left: -10%;
+    }
+
+    .orb-2 {
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, #a78bfa 0%, transparent 70%);
+      top: 50%;
+      right: -10%;
+      animation-delay: 5s;
+    }
+
+    .orb-3 {
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, #7c3aed 0%, transparent 70%);
+      bottom: -20%;
+      left: 30%;
+      animation-delay: 10s;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(50px, -50px) scale(1.1); }
+      66% { transform: translate(-30px, 30px) scale(0.9); }
+    }
+
+    .grid-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image: 
+        linear-gradient(rgba(139, 92, 246, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(139, 92, 246, 0.05) 1px, transparent 1px);
+      background-size: 50px 50px;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* Content */
+    .content {
+      position: relative;
+      z-index: 2;
+    }
+
+    /* Header */
+    .header {
+      padding: 1.5rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+    }
+
+    .logo-image {
+      height: 40px;
+      width: auto;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .back-button {
+      padding: 0.75rem 1.5rem;
+      background: rgba(139, 92, 246, 0.1);
+      border: 2px solid #8b5cf6;
+      border-radius: 12px;
+      color: #a78bfa;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.3s;
+    }
+
+    .back-button:hover {
+      background: rgba(139, 92, 246, 0.2);
+      transform: translateY(-2px);
+    }
+
+    /* Container */
+    .container {
+      max-width: 800px;
+      margin: 3rem auto;
+      padding: 0 1.5rem;
+    }
+
+    /* Form Card */
+    .form-card {
+      background: rgba(26, 26, 46, 0.8);
+      backdrop-filter: blur(20px);
+      border-radius: 24px;
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      padding: 2.5rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Progress Steps */
+    .progress-steps {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2.5rem;
+      position: relative;
+    }
+
+    .progress-steps::before {
+      content: '';
+      position: absolute;
+      top: 20px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: rgba(139, 92, 246, 0.2);
+      z-index: 0;
+    }
+
+    .progress-line {
+      position: absolute;
+      top: 20px;
+      left: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+      z-index: 1;
+      transition: width 0.5s ease;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      position: relative;
+      z-index: 2;
+      flex: 1;
+    }
+
+    .step-circle {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(26, 26, 46, 0.8);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .step.active .step-circle {
+      background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+      border-color: #8b5cf6;
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+    }
+
+    .step.completed .step-circle {
+      background: #10b981;
+      border-color: #10b981;
+    }
+
+    .step-label {
+      font-size: 0.875rem;
+      color: #888;
+      text-align: center;
+    }
+
+    .step.active .step-label {
+      color: #a78bfa;
+      font-weight: 600;
+    }
+
+    /* Form Steps */
+    .form-step {
+      display: none;
+      animation: fadeIn 0.5s ease;
+    }
+
+    .form-step.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .step-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-subtitle {
+      font-size: 1rem;
+      color: #888;
+      margin-bottom: 2rem;
+    }
+
+    /* Form Groups */
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 0.5rem;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: rgba(10, 10, 15, 0.6);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      color: #fff;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #8b5cf6;
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    select {
+      cursor: pointer;
+    }
+
+    /* Required indicator */
+    .required {
+      color: #ef4444;
+      margin-left: 0.25rem;
+    }
+
+    /* Info Box */
+    .info-box {
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .info-box svg {
+      flex-shrink: 0;
+      margin-top: 0.125rem;
+    }
+
+    .info-box-text {
+      font-size: 0.875rem;
+      color: #a78bfa;
+      line-height: 1.5;
+    }
+
+    /* Price Display */
+    .price-display {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(167, 139, 250, 0.1));
+      border: 2px solid #8b5cf6;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .price-label {
+      font-size: 0.875rem;
+      color: #888;
+      margin-bottom: 0.5rem;
+    }
+
+    .price-amount {
+      font-size: 2.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .price-breakdown {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .price-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.875rem;
+      color: #888;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Buttons */
+    .button-group {
+      display: flex;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 1rem 2rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5);
+    }
+
+    .btn-secondary {
+      background: rgba(139, 92, 246, 0.1);
+      border: 2px solid #8b5cf6;
+      color: #a78bfa;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(139, 92, 246, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Modal */
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .modal.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: rgba(26, 26, 46, 0.95);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 24px;
+      padding: 2.5rem;
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+      animation: modalSlideUp 0.5s ease;
+    }
+
+    @keyframes modalSlideUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .modal-icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 1.5rem;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(167, 139, 250, 0.1));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.75rem;
+    }
+
+    .modal-text {
+      color: #888;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .phone-display {
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 1rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 1.5rem;
+    }
+
+    /* Success State */
+    .success-icon {
+      color: #10b981;
+    }
+
+    .success-title {
+      color: #10b981;
+    }
+
+    /* Error State */
+    .error-box {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 12px;
+      padding: 1rem;
+      color: #ef4444;
+      margin-top: 1rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+
+      .step-label {
+        font-size: 0.75rem;
+      }
+
+      .price-amount {
+        font-size: 2rem;
+      }
+
+      .button-group {
+        flex-direction: column-reverse;
+      }
+
+      .form-card {
+        padding: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Animated Background -->
+  <div class="animated-bg">
+    <div class="gradient-orb orb-1"></div>
+    <div class="gradient-orb orb-2"></div>
+    <div class="gradient-orb orb-3"></div>
+  </div>
+  <div class="grid-overlay"></div>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <a href="<%= public_home_path %>" class="logo-container">
+          <img src="/images/logo.png" alt="GLT Logistics" class="logo-image">
+          <div class="logo">GLT Logistics</div>
+        </a>
+        <a href="<%= public_home_path %>" class="back-button">← Back to Home</a>
+      </div>
+    </header>
+
+    <!-- Form Container -->
+    <div class="container">
+      <div class="form-card">
+        <!-- Progress Steps -->
+        <div class="progress-steps">
+          <div class="progress-line" id="progressLine"></div>
+          
+          <div class="step" data-step="1">
+            <div class="step-circle">1</div>
+            <div class="step-label">Sender Info</div>
+          </div>
+          
+          <div class="step" data-step="2">
+            <div class="step-circle">2</div>
+            <div class="step-label">Receiver Info</div>
+          </div>
+          
+          <div class="step" data-step="3">
+            <div class="step-circle">3</div>
+            <div class="step-label">Package Details</div>
+          </div>
+          
+          <div class="step" data-step="4">
+            <div class="step-circle">4</div>
+            <div class="step-label">Confirm & Pay</div>
+          </div>
+        </div>
+
+        <!-- Form -->
+        <form id="packageForm">
+          <!-- Step 1: Sender Information -->
+          <div class="form-step active" data-step="1">
+            <h2 class="step-title">Sender Information</h2>
+            <p class="step-subtitle">Who is sending this package?</p>
+
+            <div class="info-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <div class="info-box-text">
+                We'll use this information to send you updates about your package and for M-Pesa payment.
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="senderName">Full Name <span class="required">*</span></label>
+              <input type="text" id="senderName" name="sender_name" required>
+            </div>
+
+            <div class="form-group">
+              <label for="senderPhone">Phone Number <span class="required">*</span></label>
+              <input type="tel" id="senderPhone" name="sender_phone" placeholder="0712345678 or 254712345678" required>
+            </div>
+          </div>
+
+          <!-- Step 2: Receiver Information -->
+          <div class="form-step" data-step="2">
+            <h2 class="step-title">Receiver Information</h2>
+            <p class="step-subtitle">Who will receive this package?</p>
+
+            <div class="form-group">
+              <label for="receiverName">Full Name <span class="required">*</span></label>
+              <input type="text" id="receiverName" name="receiver_name" required>
+            </div>
+
+            <div class="form-group">
+              <label for="receiverPhone">Phone Number <span class="required">*</span></label>
+              <input type="tel" id="receiverPhone" name="receiver_phone" placeholder="0712345678 or 254712345678" required>
+            </div>
+          </div>
+
+          <!-- Step 3: Package Details -->
+          <div class="form-step" data-step="3">
+            <h2 class="step-title">Package Details</h2>
+            <p class="step-subtitle">Tell us about your package</p>
+
+            <input type="hidden" name="delivery_type" value="<%= @delivery_type %>">
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="originArea">Pickup Area <span class="required">*</span></label>
+                <select id="originArea" name="origin_area_id" required>
+                  <option value="">Select pickup area</option>
+                  <% @areas.group_by(&:location).each do |location, areas| %>
+                    <optgroup label="<%= location.name %>">
+                      <% areas.each do |area| %>
+                        <option value="<%= area.id %>"><%= area.name %></option>
+                      <% end %>
+                    </optgroup>
+                  <% end %>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="destinationArea">Delivery Area <span class="required">*</span></label>
+                <select id="destinationArea" name="destination_area_id" required>
+                  <option value="">Select delivery area</option>
+                  <% @areas.group_by(&:location).each do |location, areas| %>
+                    <optgroup label="<%= location.name %>">
+                      <% areas.each do |area| %>
+                        <option value="<%= area.id %>"><%= area.name %></option>
+                      <% end %>
+                    </optgroup>
+                  <% end %>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="packageSize">Package Size <span class="required">*</span></label>
+              <select id="packageSize" name="package_size" required>
+                <option value="small">Small (Documents, small items)</option>
+                <option value="medium" selected>Medium (Electronics, clothing)</option>
+                <option value="large">Large (Furniture, appliances)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="deliveryLocation">Delivery Address <span class="required">*</span></label>
+              <textarea id="deliveryLocation" name="delivery_location" placeholder="Enter full delivery address..." required></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="packageDescription">Package Description (Optional)</label>
+              <textarea id="packageDescription" name="package_description" placeholder="Describe what's in the package..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="specialInstructions">Special Instructions (Optional)</label>
+              <textarea id="specialInstructions" name="special_instructions" placeholder="Any special handling instructions..."></textarea>
+            </div>
+          </div>
+
+          <!-- Step 4: Confirmation & Payment -->
+          <div class="form-step" data-step="4">
+            <h2 class="step-title">Confirm & Pay</h2>
+            <p class="step-subtitle">Review your package details and proceed to payment</p>
+
+            <!-- Price Display -->
+            <div class="price-display" id="priceDisplay">
+              <div class="price-label">Total Amount</div>
+              <div class="price-amount" id="totalAmount">Calculating...</div>
+              <div class="price-breakdown" id="priceBreakdown"></div>
+            </div>
+
+            <!-- Summary -->
+            <div class="info-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4"></path>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path>
+              </svg>
+              <div class="info-box-text" id="packageSummary">
+                Package summary will appear here...
+              </div>
+            </div>
+
+            <div class="info-box">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <div class="info-box-text">
+                After clicking "Pay Now", you'll receive an M-Pesa prompt on your phone. Complete the payment to create your package.
+              </div>
+            </div>
+
+            <div id="errorBox" class="error-box" style="display: none;"></div>
+          </div>
+
+          <!-- Navigation Buttons -->
+          <div class="button-group">
+            <button type="button" class="btn btn-secondary" id="prevBtn" style="display: none;">
+              ← Previous
+            </button>
+            <button type="button" class="btn btn-primary" id="nextBtn">
+              Next →
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- M-Pesa Payment Modal -->
+  <div class="modal" id="paymentModal">
+    <div class="modal-content">
+      <div class="modal-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2">
+          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+          <line x1="1" y1="10" x2="23" y2="10"></line>
+        </svg>
+      </div>
+      <h3 class="modal-title">M-Pesa Payment</h3>
+      <p class="modal-text">
+        Please complete the payment on your phone.
+      </p>
+      <div class="phone-display" id="paymentPhone"></div>
+      <div class="modal-text">
+        <div class="spinner"></div>
+        <p style="margin-top: 1rem;">Waiting for payment confirmation...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Success Modal -->
+  <div class="modal" id="successModal">
+    <div class="modal-content">
+      <div class="modal-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" class="success-icon">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      </div>
+      <h3 class="modal-title success-title">Payment Successful!</h3>
+      <p class="modal-text">
+        Your package has been created and will be processed shortly.
+      </p>
+      <button class="btn btn-primary" id="trackBtn">
+        Track Package →
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let currentStep = 1;
+    const totalSteps = 4;
+    let estimatedCost = 0;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      updateStepDisplay();
+      setupEventListeners();
+    });
+
+    function setupEventListeners() {
+      // Navigation buttons
+      document.getElementById('nextBtn').addEventListener('click', handleNext);
+      document.getElementById('prevBtn').addEventListener('click', handlePrev);
+
+      // Cost calculation triggers
+      document.getElementById('originArea').addEventListener('change', calculateCost);
+      document.getElementById('destinationArea').addEventListener('change', calculateCost);
+      document.getElementById('packageSize').addEventListener('change', calculateCost);
+    }
+
+    function handleNext() {
+      if (currentStep < totalSteps) {
+        if (validateStep(currentStep)) {
+          currentStep++;
+          updateStepDisplay();
+          
+          // Calculate cost when reaching confirmation step
+          if (currentStep === 4) {
+            calculateCost();
+            updateSummary();
+          }
+        }
+      } else {
+        // Final step - initiate payment
+        initiatePayment();
+      }
+    }
+
+    function handlePrev() {
+      if (currentStep > 1) {
+        currentStep--;
+        updateStepDisplay();
+      }
+    }
+
+    function validateStep(step) {
+      const currentStepElement = document.querySelector(`.form-step[data-step="${step}"]`);
+      const inputs = currentStepElement.querySelectorAll('input[required], select[required], textarea[required]');
+      
+      let isValid = true;
+      inputs.forEach(input => {
+        if (!input.value.trim()) {
+          input.style.borderColor = '#ef4444';
+          isValid = false;
+        } else {
+          input.style.borderColor = 'rgba(139, 92, 246, 0.3)';
+        }
+      });
+
+      // Phone number validation
+      if (step === 1) {
+        const phone = document.getElementById('senderPhone').value;
+        if (!validatePhoneNumber(phone)) {
+          document.getElementById('senderPhone').style.borderColor = '#ef4444';
+          alert('Please enter a valid Kenyan phone number');
+          isValid = false;
+        }
+      }
+
+      return isValid;
+    }
+
+    function validatePhoneNumber(phone) {
+      const cleaned = phone.replace(/\D/g, '');
+      return /^(?:254|0)[17]\d{8}$/.test(cleaned);
+    }
+
+    function updateStepDisplay() {
+      // Update step indicators
+      document.querySelectorAll('.step').forEach((step, index) => {
+        step.classList.remove('active', 'completed');
+        if (index + 1 === currentStep) {
+          step.classList.add('active');
+        } else if (index + 1 < currentStep) {
+          step.classList.add('completed');
+        }
+      });
+
+      // Update progress line
+      const progress = ((currentStep - 1) / (totalSteps - 1)) * 100;
+      document.getElementById('progressLine').style.width = `${progress}%`;
+
+      // Update form steps
+      document.querySelectorAll('.form-step').forEach((step, index) => {
+        step.classList.remove('active');
+        if (index + 1 === currentStep) {
+          step.classList.add('active');
+        }
+      });
+
+      // Update buttons
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+
+      prevBtn.style.display = currentStep === 1 ? 'none' : 'flex';
+      
+      if (currentStep === totalSteps) {
+        nextBtn.innerHTML = '<span class="spinner" style="display: none;" id="paymentSpinner"></span> Pay Now';
+      } else {
+        nextBtn.textContent = 'Next →';
+      }
+    }
+
+    async function calculateCost() {
+      const originAreaId = document.getElementById('originArea').value;
+      const destinationAreaId = document.getElementById('destinationArea').value;
+      const packageSize = document.getElementById('packageSize').value;
+      const deliveryType = document.querySelector('input[name="delivery_type"]').value;
+
+      if (!originAreaId || !destinationAreaId) {
+        return;
+      }
+
+      try {
+        const response = await fetch('/public/packages/calculate_cost', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content || ''
+          },
+          body: JSON.stringify({
+            origin_area_id: originAreaId,
+            destination_area_id: destinationAreaId,
+            delivery_type: deliveryType,
+            package_size: packageSize
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          estimatedCost = data.cost;
+          updatePriceDisplay(data);
+        }
+      } catch (error) {
+        console.error('Cost calculation error:', error);
+      }
+    }
+
+    function updatePriceDisplay(data) {
+      document.getElementById('totalAmount').textContent = `KES ${data.cost.toLocaleString()}`;
+      
+      const breakdown = `
+        <div class="price-item">
+          <span>Base Cost:</span>
+          <span>KES ${data.breakdown.base_cost}</span>
+        </div>
+        <div class="price-item">
+          <span>Size Adjustment:</span>
+          <span>KES ${data.breakdown.size_adjustment}</span>
+        </div>
+        <div class="price-item">
+          <span>Route Cost:</span>
+          <span>KES ${data.breakdown.route_cost}</span>
+        </div>
+      `;
+      
+      document.getElementById('priceBreakdown').innerHTML = breakdown;
+    }
+
+    function updateSummary() {
+      const senderName = document.getElementById('senderName').value;
+      const receiverName = document.getElementById('receiverName').value;
+      const deliveryType = document.querySelector('input[name="delivery_type"]').value;
+      const packageSize = document.getElementById('packageSize').selectedOptions[0].text;
+      
+      const summary = `
+        <strong>From:</strong> ${senderName}<br>
+        <strong>To:</strong> ${receiverName}<br>
+        <strong>Service:</strong> ${getDeliveryTypeName(deliveryType)}<br>
+        <strong>Size:</strong> ${packageSize}
+      `;
+      
+      document.getElementById('packageSummary').innerHTML = summary;
+    }
+
+    function getDeliveryTypeName(type) {
+      const names = {
+        'home': 'Home Delivery',
+        'office': 'Office Delivery',
+        'fragile': 'Fragile Items',
+        'collection': 'Collection & Delivery',
+        'agent': 'Agent Pickup'
+      };
+      return names[type] || 'Standard Delivery';
+    }
+
+    async function initiatePayment() {
+      const form = document.getElementById('packageForm');
+      const formData = new FormData(form);
+      const senderPhone = document.getElementById('senderPhone').value;
+
+      // Show loading
+      const paymentSpinner = document.getElementById('paymentSpinner');
+      const nextBtn = document.getElementById('nextBtn');
+      paymentSpinner.style.display = 'inline-block';
+      nextBtn.disabled = true;
+
+      try {
+        const response = await fetch('/public/packages/initiate_payment', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]')?.content || ''
+          },
+          body: JSON.stringify({
+            package: Object.fromEntries(formData)
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          // Show M-Pesa modal
+          document.getElementById('paymentPhone').textContent = senderPhone;
+          document.getElementById('paymentModal').classList.add('active');
+
+          // Poll for payment status
+          pollPaymentStatus(data.package_code);
+        } else {
+          showError(data.message || 'Failed to initiate payment');
+        }
+      } catch (error) {
+        console.error('Payment error:', error);
+        showError('An error occurred. Please try again.');
+      } finally {
+        paymentSpinner.style.display = 'none';
+        nextBtn.disabled = false;
+      }
+    }
+
+    function pollPaymentStatus(packageCode) {
+      const pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`/public/packages/${packageCode}/payment_status`);
+          const data = await response.json();
+
+          if (data.status === 'completed') {
+            clearInterval(pollInterval);
+            document.getElementById('paymentModal').classList.remove('active');
+            
+            // Show success modal
+            document.getElementById('successModal').classList.add('active');
+            
+            // Setup track button
+            document.getElementById('trackBtn').onclick = () => {
+              window.location.href = data.tracking_url;
+            };
+          } else if (data.status === 'failed' || data.status === 'timeout') {
+            clearInterval(pollInterval);
+            document.getElementById('paymentModal').classList.remove('active');
+            showError(data.message || 'Payment failed. Please try again.');
+          }
+        } catch (error) {
+          console.error('Status check error:', error);
+        }
+      }, 3000); // Poll every 3 seconds
+
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        document.getElementById('paymentModal').classList.remove('active');
+        showError('Payment timeout. Please try again.');
+      }, 300000);
+    }
+
+    function showError(message) {
+      const errorBox = document.getElementById('errorBox');
+      errorBox.textContent = message;
+      errorBox.style.display = 'block';
+      
+      setTimeout(() => {
+        errorBox.style.display = 'none';
+      }, 5000);
+    }
+  </script>
+</body>
+</html>
