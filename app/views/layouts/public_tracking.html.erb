@@ -1,0 +1,132 @@
+<!-- app/views/layouts/public_tracking.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  
+  <title><%= content_for?(:title) ? yield(:title) : "Track Package - #{@package&.code}" %></title>
+  
+  <%= csrf_meta_tags %>
+  <%= csp_meta_tag %>
+  
+  <!-- Favicon -->
+  <%= favicon_link_tag 'favicon.ico' %>
+  
+  <!-- Open Graph Meta Tags -->
+  <meta property="og:title" content="Track Package <%= @package&.code %>">
+  <meta property="og:description" content="Track your package in real-time">
+  <meta property="og:type" content="website">
+  
+  <!-- Twitter Card Meta Tags -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Track Package <%= @package&.code %>">
+  <meta name="twitter:description" content="Track your package in real-time">
+  
+  <!-- Styles -->
+  <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+  
+  <style>
+    /* Reset and Base Styles */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
+      min-height: 100vh;
+    }
+    
+    /* Loading State */
+    .loading-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      color: #a78bfa;
+    }
+    
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(168, 123, 250, 0.2);
+      border-top-color: #a87bfa;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Smooth scrolling */
+    html {
+      scroll-behavior: smooth;
+    }
+    
+    /* Focus styles */
+    *:focus {
+      outline: 2px solid #a78bfa;
+      outline-offset: 2px;
+    }
+    
+    button:focus {
+      outline: 2px solid #a78bfa;
+    }
+  </style>
+  
+  <%= javascript_importmap_tags %>
+</head>
+<body>
+  <%= yield %>
+  
+  <!-- Flash Messages -->
+  <% if flash.any? %>
+    <div id="flash-messages" style="position: fixed; top: 1rem; right: 1rem; z-index: 9999;">
+      <% flash.each do |type, message| %>
+        <div class="flash-message flash-<%= type %>" style="
+          background: <%= type == 'notice' ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)' %>;
+          color: white;
+          padding: 1rem 1.5rem;
+          border-radius: 0.5rem;
+          margin-bottom: 0.5rem;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+          animation: slideIn 0.3s ease-out;
+        ">
+          <%= message %>
+        </div>
+      <% end %>
+    </div>
+    
+    <style>
+      @keyframes slideIn {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+    </style>
+    
+    <script>
+      // Auto-hide flash messages after 5 seconds
+      setTimeout(() => {
+        const flashMessages = document.getElementById('flash-messages');
+        if (flashMessages) {
+          flashMessages.style.animation = 'slideOut 0.3s ease-out';
+          setTimeout(() => flashMessages.remove(), 300);
+        }
+      }, 5000);
+    </script>
+  <% end %>
+</body>
+</html>
