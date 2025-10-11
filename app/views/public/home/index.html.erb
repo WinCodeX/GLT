@@ -1,0 +1,631 @@
+<!-- app/views/public/home/index.html.erb -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GLT Logistics - Fast, Reliable Delivery Services</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      color: #e4e4e7;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      padding: 1.5rem;
+      background: rgba(30, 30, 60, 0.6);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #8b5cf6;
+      font-style: italic;
+    }
+
+    .track-button {
+      background: rgba(124, 58, 237, 0.2);
+      border: 2px solid #7c3aed;
+      padding: 0.75rem 1.5rem;
+      border-radius: 12px;
+      color: #a78bfa;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.3s;
+    }
+
+    .track-button:hover {
+      background: rgba(124, 58, 237, 0.3);
+      transform: translateY(-2px);
+    }
+
+    /* Hero Section */
+    .hero {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 3rem;
+      text-align: center;
+    }
+
+    .hero-title {
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: #f4f4f5;
+      margin-bottom: 1rem;
+      line-height: 1.2;
+    }
+
+    .hero-subtitle {
+      font-size: 1.125rem;
+      color: #a1a1aa;
+      margin-bottom: 3rem;
+      line-height: 1.6;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 2rem;
+      margin-bottom: 4rem;
+    }
+
+    .stat-card {
+      background: rgba(30, 30, 60, 0.6);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #8b5cf6;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      font-size: 0.875rem;
+      color: #a1a1aa;
+    }
+
+    /* Services Section */
+    .services {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .section-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #f4f4f5;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-subtitle {
+      font-size: 1rem;
+      color: #a1a1aa;
+    }
+
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3rem;
+    }
+
+    .service-card {
+      background: rgba(30, 30, 60, 0.8);
+      border: 2px solid;
+      border-radius: 20px;
+      padding: 2rem;
+      transition: all 0.3s;
+      cursor: pointer;
+      text-decoration: none;
+      display: block;
+    }
+
+    .service-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .service-card.fragile {
+      border-color: rgba(255, 149, 0, 0.5);
+      background: rgba(255, 149, 0, 0.05);
+    }
+
+    .service-card.home {
+      border-color: rgba(139, 92, 246, 0.5);
+      background: rgba(139, 92, 246, 0.05);
+    }
+
+    .service-card.office {
+      border-color: rgba(59, 130, 246, 0.5);
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .service-card.collection {
+      border-color: rgba(16, 185, 129, 0.5);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .service-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+      font-size: 1.75rem;
+    }
+
+    .fragile .service-icon {
+      background: rgba(255, 149, 0, 0.2);
+      color: #FF9500;
+    }
+
+    .home .service-icon {
+      background: rgba(139, 92, 246, 0.2);
+      color: #8b5cf6;
+    }
+
+    .office .service-icon {
+      background: rgba(59, 130, 246, 0.2);
+      color: #3b82f6;
+    }
+
+    .collection .service-icon {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+
+    .service-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+
+    .fragile .service-title {
+      color: #FF9500;
+    }
+
+    .home .service-title {
+      color: #8b5cf6;
+    }
+
+    .office .service-title {
+      color: #3b82f6;
+    }
+
+    .collection .service-title {
+      color: #10b981;
+    }
+
+    .service-description {
+      font-size: 0.875rem;
+      color: #a1a1aa;
+      line-height: 1.6;
+      margin-bottom: 1.25rem;
+    }
+
+    .service-features {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8125rem;
+      color: #71717a;
+    }
+
+    .feature-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fragile .feature-icon {
+      background: rgba(255, 149, 0, 0.2);
+      color: #FF9500;
+    }
+
+    .home .feature-icon {
+      background: rgba(139, 92, 246, 0.2);
+      color: #8b5cf6;
+    }
+
+    .office .feature-icon {
+      background: rgba(59, 130, 246, 0.2);
+      color: #3b82f6;
+    }
+
+    .collection .feature-icon {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+    }
+
+    .service-button {
+      width: 100%;
+      padding: 0.875rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      border: 2px solid;
+      background: transparent;
+      transition: all 0.3s;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      display: block;
+    }
+
+    .fragile .service-button {
+      border-color: #FF9500;
+      color: #FF9500;
+    }
+
+    .fragile .service-button:hover {
+      background: rgba(255, 149, 0, 0.1);
+    }
+
+    .home .service-button {
+      border-color: #8b5cf6;
+      color: #8b5cf6;
+    }
+
+    .home .service-button:hover {
+      background: rgba(139, 92, 246, 0.1);
+    }
+
+    .office .service-button {
+      border-color: #3b82f6;
+      color: #3b82f6;
+    }
+
+    .office .service-button:hover {
+      background: rgba(59, 130, 246, 0.1);
+    }
+
+    .collection .service-button {
+      border-color: #10b981;
+      color: #10b981;
+    }
+
+    .collection .service-button:hover {
+      background: rgba(16, 185, 129, 0.1);
+    }
+
+    /* Features Section */
+    .features {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 2rem;
+    }
+
+    .feature-card {
+      background: rgba(30, 30, 60, 0.6);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .feature-card-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(124, 58, 237, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.5rem;
+      font-size: 2rem;
+      color: #8b5cf6;
+    }
+
+    .feature-card-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #f4f4f5;
+      margin-bottom: 0.75rem;
+    }
+
+    .feature-card-description {
+      font-size: 0.875rem;
+      color: #a1a1aa;
+      line-height: 1.6;
+    }
+
+    /* Footer */
+    .footer {
+      background: rgba(30, 30, 60, 0.6);
+      border-top: 1px solid rgba(124, 58, 237, 0.2);
+      padding: 2rem 1.5rem;
+      margin-top: 4rem;
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .footer-text {
+      font-size: 0.875rem;
+      color: #a1a1aa;
+      margin-bottom: 1rem;
+    }
+
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-link {
+      color: #8b5cf6;
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 0.3s;
+    }
+
+    .footer-link:hover {
+      color: #a78bfa;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .hero-title {
+        font-size: 2rem;
+      }
+
+      .services-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <div class="logo">GLT Logistics</div>
+      <a href="/public/track" class="track-button">Track Package</a>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <h1 class="hero-title">Fast, Reliable, Pay on Delivery</h1>
+    <p class="hero-subtitle">
+      Professional delivery services across Kenya with real-time tracking and special handling options
+    </p>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value">25K+</div>
+        <div class="stat-label">Small Businesses Reached</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">100K+</div>
+        <div class="stat-label">Online Shoppers Served</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">1M+</div>
+        <div class="stat-label">Packages Delivered</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">500M+</div>
+        <div class="stat-label">Gross Merchandise Value</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Services Section -->
+  <section class="services">
+    <div class="section-header">
+      <h2 class="section-title">Our Delivery Services</h2>
+      <p class="section-subtitle">Choose the service that best fits your needs</p>
+    </div>
+
+    <div class="services-grid">
+      <!-- Fragile Delivery -->
+      <div class="service-card fragile">
+        <div class="service-icon">⚠️</div>
+        <h3 class="service-title">Fragile Items</h3>
+        <p class="service-description">
+          Special handling for delicate items that require extra care during transport
+        </p>
+        <div class="service-features">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Extra protective packaging</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Careful handling guarantee</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Insurance coverage included</span>
+          </div>
+        </div>
+        <a href="/sign_in" class="service-button">Schedule Fragile Delivery</a>
+      </div>
+
+      <!-- Home Delivery -->
+      <div class="service-card home">
+        <div class="service-icon">🏠</div>
+        <h3 class="service-title">Home Delivery</h3>
+        <p class="service-description">
+          Convenient door-to-door delivery service to residential addresses
+        </p>
+        <div class="service-features">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Same-day delivery available</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Real-time tracking</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Flexible delivery windows</span>
+          </div>
+        </div>
+        <a href="/sign_in" class="service-button">Send to Home</a>
+      </div>
+
+      <!-- Office Delivery -->
+      <div class="service-card office">
+        <div class="service-icon">💼</div>
+        <h3 class="service-title">Office Delivery</h3>
+        <p class="service-description">
+          Professional delivery service to business and office locations
+        </p>
+        <div class="service-features">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Business hours delivery</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Reception desk drop-off</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Bulk delivery options</span>
+          </div>
+        </div>
+        <a href="/sign_in" class="service-button">Send to Office</a>
+      </div>
+
+      <!-- Collection Service -->
+      <div class="service-card collection">
+        <div class="service-icon">📦</div>
+        <h3 class="service-title">Collection & Delivery</h3>
+        <p class="service-description">
+          We pick up, consolidate, and deliver multiple packages to your location
+        </p>
+        <div class="service-features">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Multiple pickup points</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Package consolidation</span>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <span>Cost-effective solution</span>
+          </div>
+        </div>
+        <a href="/sign_in" class="service-button">Request Collection</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section class="features">
+    <div class="section-header">
+      <h2 class="section-title">Why Choose GLT Logistics?</h2>
+      <p class="section-subtitle">We make delivery simple, fast, and reliable</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-card-icon">📍</div>
+        <h3 class="feature-card-title">Real-Time Tracking</h3>
+        <p class="feature-card-description">
+          Track your packages in real-time with detailed status updates and location information
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">💳</div>
+        <h3 class="feature-card-title">Pay on Delivery</h3>
+        <p class="feature-card-description">
+          Flexible payment options with instant withdrawals to your M-Pesa or Airtel Money
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">⚡</div>
+        <h3 class="feature-card-title">Fast Delivery</h3>
+        <p class="feature-card-description">
+          Quick and efficient delivery across all major cities and towns in Kenya
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">🔒</div>
+        <h3 class="feature-card-title">Secure Handling</h3>
+        <p class="feature-card-description">
+          Your packages are handled with care and security throughout the delivery process
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <p class="footer-text">© 2025 GLT Logistics. All rights reserved.</p>
+      <div class="footer-links">
+        <a href="#" class="footer-link">Privacy Policy</a>
+        <a href="#" class="footer-link">Terms of Service</a>
+        <a href="#" class="footer-link">Contact Us</a>
+        <a href="/sign_in" class="footer-link">Sign In</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
