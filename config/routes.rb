@@ -876,7 +876,7 @@ end
   # 🔀 ROOT AND CATCH-ALL
   # ==========================================
   
-  root to: 'sessions#redirect_root'
+  root to: 'public/home#index'
   
   constraints(->(request) { 
     !request.path.start_with?('/rails/active_storage/') &&
