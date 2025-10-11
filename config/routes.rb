@@ -790,7 +790,11 @@ end
   # ==========================================
   
   namespace :public do
+  # Landing page
   get 'home', to: 'home#index', as: 'home'
+  
+  # Tracking search page - ADD THIS LINE
+  get 'track', to: 'tracking#index', as: 'tracking_index'
   
   # Existing tracking routes
   scope :track do
