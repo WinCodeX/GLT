@@ -8,7 +8,7 @@ module Public
     before_action :find_package, only: [:show, :status, :timeline]
     
     # Use custom layout
-    layout 'public_tracking'
+    layout :resolve_layout
     
     # Badge color helpers - exposed to views
     helper_method :get_delivery_type_badge_color
