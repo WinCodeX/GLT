@@ -242,7 +242,7 @@ class Package < ApplicationRecord
           notification_type: 'package_resubmitted',
           title: '🔄 Package Resubmitted',
           message: "Package #{code} resubmitted. New deadline: #{new_expiry_time.strftime('%b %d, %I:%M %p')}",
-          data: { package_id: id, package_code: code, new_deadline: new_expiry_time }
+          metadata: { package_id: id, package_code: code, new_deadline: new_expiry_time }
         )
       end
       
@@ -276,7 +276,7 @@ class Package < ApplicationRecord
           notification_type: 'package_rejected',
           title: auto_rejected ? '⚠️ Package Auto-Rejected' : '⚠️ Package Rejected',
           message: "Package #{code}: #{reason}",
-          data: { package_id: id, package_code: code, reason: reason, auto_rejected: auto_rejected }
+          metadata: { package_id: id, package_code: code, reason: reason, auto_rejected: auto_rejected }
         )
       end
       
@@ -510,7 +510,7 @@ class Package < ApplicationRecord
         notification_type: 'payment_collected',
         title: '💰 Payment Collected',
         message: "Payment of KES #{actual_collected_amount} collected for package #{code}",
-        data: {
+        metadata: {
           package_id: id,
           package_code: code,
           amount: actual_collected_amount
@@ -527,7 +527,7 @@ class Package < ApplicationRecord
         notification_type: 'commission_earned',
         title: '💰 Commission Earned',
         message: "Earned KES #{commission} commission for delivering package #{code}",
-        data: {
+        metadata: {
           package_id: id,
           package_code: code,
           commission: commission
@@ -654,7 +654,7 @@ class Package < ApplicationRecord
             notification_type: 'final_warning',
             title: '⚠️ Package Expiring Soon',
             message: "Package #{package.code} will expire in #{hours_remaining.round(1)} hours",
-            data: { package_id: package.id, hours_remaining: hours_remaining }
+            metadata: { package_id: package.id, hours_remaining: hours_remaining }
           )
           warned_count += 1
         end
