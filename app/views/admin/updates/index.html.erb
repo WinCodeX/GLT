@@ -4,8 +4,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>App Updates Management - Admin Portal</title>
+    <title>App Updates Management - GLT Logistics Admin</title>
     <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    
+    <!-- Favicon Links -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#8b5cf6">
+    <meta name="msapplication-TileColor" content="#8b5cf6">
+    
     <style>
         * {
             margin: 0;
@@ -14,8 +25,9 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0a0a0f;
+            color: #e4e4e7;
             min-height: 100vh;
             padding: 20px;
         }
@@ -23,18 +35,15 @@
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
         }
 
         .header {
-            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
             color: white;
             padding: 30px;
-            text-align: center;
-            position: relative;
+            border-radius: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(139, 92, 246, 0.3);
         }
 
         .header h1 {
@@ -49,63 +58,68 @@
         }
 
         .header-actions {
-            position: absolute;
-            top: 20px;
-            right: 30px;
+            margin-top: 20px;
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }
 
         .btn-header {
             background: rgba(255,255,255,0.2);
             color: white;
-            border: 1px solid rgba(255,255,255,0.3);
-            padding: 8px 16px;
-            border-radius: 6px;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 10px 20px;
+            border-radius: 12px;
             text-decoration: none;
             font-size: 14px;
+            font-weight: 600;
             transition: all 0.3s ease;
         }
 
         .btn-header:hover {
             background: rgba(255,255,255,0.3);
             border-color: rgba(255,255,255,0.5);
+            transform: translateY(-2px);
         }
 
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
-            padding: 30px;
-            background: #f8fafc;
-            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 30px;
         }
 
         .stat-card {
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 20px;
+            padding: 25px;
             text-align: center;
-            border-left: 4px solid #8B5CF6;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .stat-card:hover {
+            background: rgba(139, 92, 246, 0.15);
+            border-color: rgba(139, 92, 246, 0.5);
+            transform: translateY(-4px);
         }
 
         .stat-number {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #1f2937;
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin-bottom: 5px;
         }
 
         .stat-label {
             font-size: 0.9rem;
-            color: #6b7280;
+            color: #a1a1aa;
             text-transform: uppercase;
             font-weight: 600;
-        }
-
-        .content {
-            padding: 30px;
+            letter-spacing: 0.5px;
         }
 
         .content-header {
@@ -119,16 +133,16 @@
 
         .content-title {
             font-size: 1.5rem;
-            font-weight: 600;
-            color: #1f2937;
+            font-weight: 700;
+            color: #f4f4f5;
         }
 
         .btn {
-            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
             color: white;
             border: none;
             padding: 12px 24px;
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
@@ -141,7 +155,7 @@
 
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(139, 92, 246, 0.3);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5);
         }
 
         .btn-secondary {
@@ -157,123 +171,15 @@
         }
 
         .btn-small {
-            padding: 6px 12px;
+            padding: 8px 16px;
             font-size: 12px;
         }
 
-        .updates-table {
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
-
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .table thead {
-            background: #f8fafc;
-        }
-
-        .table th {
-            padding: 15px 20px;
-            text-align: left;
-            font-weight: 600;
-            color: #374151;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .table td {
-            padding: 15px 20px;
-            border-top: 1px solid #f3f4f6;
-            color: #374151;
-        }
-
-        .table tbody tr:hover {
-            background: #f9fafb;
-        }
-
-        .status-badge {
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            display: inline-block;
-        }
-
-        .status-published {
-            background: #dcfce7;
-            color: #166534;
-        }
-
-        .status-draft {
-            background: #fef3c7;
-            color: #d97706;
-        }
-
-        .version-info {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .version-number {
-            font-weight: 600;
-            color: #1f2937;
-        }
-
-        .version-id {
-            font-size: 0.8rem;
-            color: #6b7280;
-            font-family: 'Courier New', monospace;
-        }
-
-        .changelog-preview {
-            max-width: 300px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            color: #6b7280;
-            font-size: 0.9rem;
-        }
-
-        .actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #6b7280;
-        }
-
-        .empty-state-icon {
-            font-size: 4rem;
-            margin-bottom: 20px;
-            opacity: 0.5;
-        }
-
-        .empty-state h3 {
-            font-size: 1.5rem;
-            margin-bottom: 10px;
-            color: #374151;
-        }
-
-        .empty-state p {
-            margin-bottom: 30px;
-        }
-
         .search-filter {
-            background: #f8fafc;
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
             padding: 20px;
-            border-radius: 8px;
+            border-radius: 15px;
             margin-bottom: 20px;
             display: flex;
             gap: 15px;
@@ -285,22 +191,157 @@
             flex: 1;
             min-width: 200px;
             padding: 10px 15px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            border-radius: 10px;
             font-size: 14px;
+            background: rgba(10, 10, 15, 0.8);
+            color: #e4e4e7;
         }
 
         .search-input:focus {
             outline: none;
-            border-color: #8B5CF6;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
         }
 
         .filter-select {
             padding: 10px 15px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            background: white;
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            border-radius: 10px;
+            background: rgba(10, 10, 15, 0.8);
+            color: #e4e4e7;
             font-size: 14px;
+            cursor: pointer;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: #8b5cf6;
+        }
+
+        .updates-table {
+            background: rgba(10, 10, 15, 0.8);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 20px;
+            overflow: hidden;
+            backdrop-filter: blur(20px);
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table thead {
+            background: rgba(139, 92, 246, 0.2);
+        }
+
+        .table th {
+            padding: 15px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #f4f4f5;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .table td {
+            padding: 15px 20px;
+            border-top: 1px solid rgba(139, 92, 246, 0.1);
+            color: #e4e4e7;
+        }
+
+        .table tbody tr:hover {
+            background: rgba(139, 92, 246, 0.1);
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        .status-published {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-draft {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .version-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .version-number {
+            font-weight: 700;
+            color: #f4f4f5;
+        }
+
+        .version-id {
+            font-size: 0.8rem;
+            color: #a1a1aa;
+            font-family: 'Courier New', monospace;
+        }
+
+        .changelog-preview {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #a1a1aa;
+            font-size: 0.9rem;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: #f4f4f5;
+        }
+
+        .empty-state p {
+            margin-bottom: 30px;
+            color: #a1a1aa;
+        }
+
+        .force-update-indicator {
+            display: inline-block;
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-left: 8px;
+            border: 1px solid rgba(239, 68, 68, 0.3);
         }
 
         .toast {
@@ -308,12 +349,13 @@
             top: 20px;
             right: 20px;
             padding: 15px 20px;
-            border-radius: 8px;
+            border-radius: 12px;
             color: white;
             font-weight: 600;
             z-index: 1000;
             transform: translateX(400px);
             transition: transform 0.3s ease;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
         }
 
         .toast.show {
@@ -321,49 +363,31 @@
         }
 
         .toast.success {
-            background: #10b981;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         }
 
         .toast.error {
-            background: #ef4444;
-        }
-
-        .force-update-indicator {
-            display: inline-block;
-            background: #fee2e2;
-            color: #dc2626;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            margin-left: 8px;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
         }
 
         @media (max-width: 768px) {
-            .header-actions {
-                position: static;
-                justify-content: center;
-                margin-top: 15px;
-            }
-            
+            .header h1 { font-size: 2rem; }
             .content-header {
                 flex-direction: column;
                 align-items: stretch;
-                text-align: center;
             }
-            
             .stats-grid {
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                grid-template-columns: repeat(2, 1fr);
             }
-            
             .table-responsive {
                 overflow-x: auto;
             }
-            
             .search-filter {
                 flex-direction: column;
                 align-items: stretch;
+            }
+            .search-input, .filter-select {
+                width: 100%;
             }
         }
     </style>
@@ -371,10 +395,10 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>App Updates Management</h1>
+            <h1>📱 App Updates Management</h1>
             <p>Manage APK app updates and deployments</p>
             <div class="header-actions">
-                <a href="/admin" class="btn-header">Admin Home</a>
+                <a href="/admin" class="btn-header">← Admin Home</a>
                 <a href="/logout" class="btn-header">Sign Out</a>
             </div>
         </div>
@@ -399,157 +423,153 @@
             </div>
         </div>
 
-        <div class="content">
-            <div class="content-header">
-                <h2 class="content-title">App Updates</h2>
-                <a href="/admin/updates/new" class="btn">
-                    Create New Update
-                </a>
+        <div class="content-header">
+            <h2 class="content-title">App Updates</h2>
+            <a href="/admin/updates/new" class="btn">
+                ➕ Create New Update
+            </a>
+        </div>
+
+        <!-- Search and Filter -->
+        <% if @updates&.any? %>
+            <div class="search-filter">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search updates by version, description...">
+                <select id="statusFilter" class="filter-select">
+                    <option value="">All Statuses</option>
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                </select>
+                <select id="sortBy" class="filter-select">
+                    <option value="created_at">Sort by Date</option>
+                    <option value="version">Sort by Version</option>
+                    <option value="download_count">Sort by Downloads</option>
+                </select>
             </div>
+        <% end %>
 
-            <!-- Search and Filter (only show if we have updates) -->
-            <% if @updates&.any? %>
-                <div class="search-filter">
-                    <input type="text" id="searchInput" class="search-input" placeholder="Search updates by version, description...">
-                    <select id="statusFilter" class="filter-select">
-                        <option value="">All Statuses</option>
-                        <option value="published">Published</option>
-                        <option value="draft">Draft</option>
-                    </select>
-                    <select id="sortBy" class="filter-select">
-                        <option value="created_at">Sort by Date</option>
-                        <option value="version">Sort by Version</option>
-                        <option value="download_count">Sort by Downloads</option>
-                    </select>
-                </div>
-            <% end %>
-
-            <% if @updates&.any? %>
-                <div class="updates-table">
-                    <div class="table-responsive">
-                        <table class="table" id="updatesTable">
-                            <thead>
-                                <tr>
-                                    <th>Version</th>
-                                    <th>Status</th>
-                                    <th>Description</th>
-                                    <th>Downloads</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <% if @updates.present? %>
-                                    <% @updates.each do |update| %>
-                                        <% next if update.nil? %>
-                                        <% 
-                                          # Safely get update_id with fallback
-                                          update_id_display = begin
-                                            if update.respond_to?(:update_id) && update.update_id.present?
-                                              update.update_id.to_s.first(9) + '...'
-                                            else
-                                              'N/A'
-                                            end
-                                          rescue
-                                            'N/A'
-                                          end
-                                          
-                                          # Safely check for APK URL with fallbacks
-                                          has_apk = begin
-                                            (update.respond_to?(:apk_url) && update.apk_url.present?) ||
-                                            (update.respond_to?(:bundle_url) && update.bundle_url.present?)
-                                          rescue
-                                            false
-                                          end
-                                        %>
-                                        <tr>
-                                            <td>
-                                                <div class="version-info">
-                                                    <span class="version-number">
-                                                        v<%= update.try(:version) || 'Unknown' %>
-                                                        <% if update.try(:force_update) %>
-                                                            <span class="force-update-indicator">Force</span>
-                                                        <% end %>
-                                                    </span>
-                                                    <span class="version-id">
-                                                        <%= update_id_display %>
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <% is_published = update.try(:published?) || update.try(:published) %>
-                                                <span class="status-badge <%= is_published ? 'status-published' : 'status-draft' %>">
-                                                    <%= is_published ? 'Published' : 'Draft' %>
+        <% if @updates&.any? %>
+            <div class="updates-table">
+                <div class="table-responsive">
+                    <table class="table" id="updatesTable">
+                        <thead>
+                            <tr>
+                                <th>Version</th>
+                                <th>Status</th>
+                                <th>Description</th>
+                                <th>Downloads</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% if @updates.present? %>
+                                <% @updates.each do |update| %>
+                                    <% next if update.nil? %>
+                                    <% 
+                                      update_id_display = begin
+                                        if update.respond_to?(:update_id) && update.update_id.present?
+                                          update.update_id.to_s.first(9) + '...'
+                                        else
+                                          'N/A'
+                                        end
+                                      rescue
+                                        'N/A'
+                                      end
+                                      
+                                      has_apk = begin
+                                        (update.respond_to?(:apk_url) && update.apk_url.present?) ||
+                                        (update.respond_to?(:bundle_url) && update.bundle_url.present?)
+                                      rescue
+                                        false
+                                      end
+                                    %>
+                                    <tr>
+                                        <td>
+                                            <div class="version-info">
+                                                <span class="version-number">
+                                                    v<%= update.try(:version) || 'Unknown' %>
+                                                    <% if update.try(:force_update) %>
+                                                        <span class="force-update-indicator">Force</span>
+                                                    <% end %>
                                                 </span>
-                                            </td>
-                                            <td>
-                                                <% description = update.try(:description) %>
-                                                <div class="changelog-preview" title="<%= description %>">
-                                                    <%= description.present? ? description : 'No description' %>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <strong><%= update.try(:download_count) || 0 %></strong>
-                                            </td>
-                                            <td>
-                                                <% created_at = update.try(:created_at) %>
-                                                <% if created_at.present? %>
-                                                    <%= created_at.strftime("%b %d, %Y") rescue 'Unknown' %><br>
-                                                    <small style="color: #6b7280;">
-                                                        <%= time_ago_in_words(created_at) rescue 'Unknown' %> ago
-                                                    </small>
-                                                <% else %>
-                                                    <span style="color: #6b7280;">Unknown</span>
-                                                <% end %>
-                                            </td>
-                                            <td>
-                                                <div class="actions">
-                                                    <a href="/admin/updates/<%= update.id %>" class="btn btn-small btn-secondary">
-                                                        View
+                                                <span class="version-id">
+                                                    <%= update_id_display %>
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <% is_published = update.try(:published?) || update.try(:published) %>
+                                            <span class="status-badge <%= is_published ? 'status-published' : 'status-draft' %>">
+                                                <%= is_published ? 'Published' : 'Draft' %>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <% description = update.try(:description) %>
+                                            <div class="changelog-preview" title="<%= description %>">
+                                                <%= description.present? ? description : 'No description' %>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <strong style="color: #8b5cf6;"><%= update.try(:download_count) || 0 %></strong>
+                                        </td>
+                                        <td>
+                                            <% created_at = update.try(:created_at) %>
+                                            <% if created_at.present? %>
+                                                <%= created_at.strftime("%b %d, %Y") rescue 'Unknown' %><br>
+                                                <small style="color: #a1a1aa;">
+                                                    <%= time_ago_in_words(created_at) rescue 'Unknown' %> ago
+                                                </small>
+                                            <% else %>
+                                                <span style="color: #a1a1aa;">Unknown</span>
+                                            <% end %>
+                                        </td>
+                                        <td>
+                                            <div class="actions">
+                                                <a href="/admin/updates/<%= update.id %>" class="btn btn-small btn-secondary">
+                                                    View
+                                                </a>
+                                                <% unless is_published %>
+                                                    <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
+                                                        Edit
                                                     </a>
-                                                    <% unless is_published %>
-                                                        <a href="/admin/updates/<%= update.id %>/edit" class="btn btn-small btn-secondary">
-                                                            Edit
-                                                        </a>
-                                                        <% if has_apk %>
-                                                            <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
-                                                                Publish
-                                                            </button>
-                                                        <% end %>
-                                                        <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.try(:version) || 'Unknown' %>')" class="btn btn-small btn-danger">
-                                                            Delete
-                                                        </button>
-                                                    <% else %>
-                                                        <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
-                                                            Unpublish
+                                                    <% if has_apk %>
+                                                        <button onclick="publishUpdate('<%= update.id %>')" class="btn btn-small btn-success">
+                                                            Publish
                                                         </button>
                                                     <% end %>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    <% end %>
-                                <% else %>
-                                    <tr>
-                                        <td colspan="6" style="text-align: center; padding: 40px; color: #6b7280;">
-                                            No updates available
+                                                    <button onclick="deleteUpdate('<%= update.id %>', 'v<%= update.try(:version) || 'Unknown' %>')" class="btn btn-small btn-danger">
+                                                        Delete
+                                                    </button>
+                                                <% else %>
+                                                    <button onclick="unpublishUpdate('<%= update.id %>')" class="btn btn-small btn-secondary">
+                                                        Unpublish
+                                                    </button>
+                                                <% end %>
+                                            </div>
                                         </td>
                                     </tr>
                                 <% end %>
-                            </tbody>
-                        </table>
-                    </div>
+                            <% else %>
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #a1a1aa;">
+                                        No updates available
+                                    </td>
+                                </tr>
+                            <% end %>
+                        </tbody>
+                    </table>
                 </div>
-            <% else %>
-                <div class="empty-state">
-                    <div class="empty-state-icon">📱</div>
-                    <h3>No Updates Found</h3>
-                    <p>Get started by creating your first app update</p>
-                    <a href="/admin/updates/new" class="btn">
-                        Create Your First Update
-                    </a>
-                </div>
-            <% end %>
-        </div>
+            </div>
+        <% else %>
+            <div class="empty-state">
+                <div class="empty-state-icon">📱</div>
+                <h3>No Updates Found</h3>
+                <p>Get started by creating your first app update</p>
+                <a href="/admin/updates/new" class="btn">
+                    ➕ Create Your First Update
+                </a>
+            </div>
+        <% end %>
     </div>
 
     <!-- Toast Messages -->
@@ -729,7 +749,6 @@
             }
         }
 
-        // Initialize the manager
         let updatesManager;
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
@@ -739,7 +758,6 @@
             updatesManager = new UpdatesManager();
         }
 
-        // Global functions for button onclick handlers
         function publishUpdate(updateId) {
             if (updatesManager) {
                 updatesManager.publishUpdate(updateId);
