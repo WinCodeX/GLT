@@ -1,0 +1,522 @@
+<!-- app/views/public/tracking/show.html.erb -->
+<div class="tracking-container">
+  <!-- Header -->
+  <div class="tracking-header">
+    <button class="back-button" onclick="window.history.back()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+    </button>
+    
+    <div class="header-title">
+      <h1><%= @package.fragile_delivery? ? 'Fragile Tracking' : 'Package Tracking' %></h1>
+      <p class="header-subtitle"><%= @package.code %></p>
+    </div>
+
+    <div class="header-actions">
+      <button class="icon-button">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3h18v18H3z"/>
+          <path d="M12 8v8m-4-4h8"/>
+        </svg>
+      </button>
+      <button class="icon-button">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+          <polyline points="16 6 12 2 8 6"/>
+          <line x1="12" y1="2" x2="12" y2="15"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Package Details Card -->
+  <div class="package-card">
+    <div class="package-header">
+      <div>
+        <h2 class="package-code"><%= @package.code %></h2>
+        <p class="package-route">
+          <%= @package.sender_name || 'null' %>, <%= @package.origin_area&.name || 'Kisaju' %> → 
+          <%= @package.destination_area&.name || 'Super' %>
+        </p>
+      </div>
+      
+      <div class="package-badges">
+        <% if @package.fragile_delivery? %>
+          <span class="badge badge-fragile">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            Fragile
+          </span>
+        <% end %>
+        
+        <span class="badge badge-<%= @package.state.gsub('_', '-') %>">
+          <%= @package.state.humanize.upcase %>
+        </span>
+      </div>
+    </div>
+
+    <div class="package-details">
+      <!-- Sender -->
+      <div class="detail-section">
+        <p class="detail-label">Sender</p>
+        <p class="detail-value"><%= @package.sender_name || 'N/A' %></p>
+        <p class="detail-phone"><%= @package.sender_phone %></p>
+      </div>
+
+      <!-- Receiver -->
+      <div class="detail-section">
+        <p class="detail-label">Receiver</p>
+        <p class="detail-value"><%= @package.receiver_name %></p>
+        <p class="detail-phone"><%= @package.receiver_phone %></p>
+      </div>
+
+      <!-- Cost & Delivery -->
+      <div class="detail-row">
+        <div class="detail-section">
+          <p class="detail-label">Cost</p>
+          <p class="cost-value">KES <%= @package.cost %></p>
+        </div>
+
+        <div class="detail-section">
+          <p class="detail-label">Delivery Location</p>
+          <p class="detail-value"><%= @package.delivery_location || 'Standard delivery' %></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Journey Timeline -->
+  <div class="timeline-card">
+    <div class="timeline-header">
+      <svg class="timeline-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      <h3>Journey Timeline</h3>
+    </div>
+
+    <div class="timeline-list">
+      <% @journey_timeline.each_with_index do |event, index| %>
+        <div class="timeline-item <%= 'timeline-item-last' if index == @journey_timeline.length - 1 %>">
+          <div class="timeline-marker">
+            <div class="timeline-dot <%= event[:status] %>"></div>
+            <% unless index == @journey_timeline.length - 1 %>
+              <div class="timeline-line"></div>
+            <% end %>
+          </div>
+          
+          <div class="timeline-content">
+            <div class="timeline-text">
+              <p class="timeline-title"><%= event[:title] %></p>
+              <p class="timeline-description"><%= event[:description] %></p>
+            </div>
+            <p class="timeline-time">
+              <%= event[:timestamp].strftime('%b %d, %I:%M %p') %>
+            </p>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  </div>
+
+  <!-- QR Code Section -->
+  <div class="qr-code-card">
+    <div class="qr-code-header">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"/>
+        <rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      <h3>QR Code for Tracking</h3>
+    </div>
+
+    <div class="qr-code-container">
+      <%= image_tag @package.qr_code_url, 
+                    alt: "QR Code for #{@package.code}", 
+                    class: 'qr-code-image' if @package.respond_to?(:qr_code_url) %>
+    </div>
+  </div>
+</div>
+
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
+    color: #e4e4e7;
+    min-height: 100vh;
+    padding: 0;
+    margin: 0;
+  }
+
+  .tracking-container {
+    max-width: 100%;
+    margin: 0 auto;
+    padding-bottom: 2rem;
+  }
+
+  /* Header */
+  .tracking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: rgba(30, 30, 60, 0.6);
+    backdrop-filter: blur(10px);
+  }
+
+  .back-button {
+    background: rgba(108, 92, 231, 0.2);
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a78bfa;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .back-button:hover {
+    background: rgba(108, 92, 231, 0.3);
+    transform: scale(1.05);
+  }
+
+  .header-title h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #f4f4f5;
+    font-style: italic;
+  }
+
+  .header-subtitle {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    margin-top: 0.25rem;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .icon-button {
+    background: rgba(108, 92, 231, 0.2);
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a78bfa;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .icon-button:hover {
+    background: rgba(108, 92, 231, 0.3);
+    transform: scale(1.05);
+  }
+
+  /* Package Card */
+  .package-card {
+    margin: 1.5rem;
+    background: rgba(30, 30, 60, 0.8);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  .package-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 2rem;
+  }
+
+  .package-code {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #f4f4f5;
+    margin-bottom: 0.5rem;
+    font-style: italic;
+  }
+
+  .package-route {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+  }
+
+  .package-badges {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-end;
+  }
+
+  .badge {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-fragile {
+    background: transparent;
+    border: 2px solid #f59e0b;
+    color: #fbbf24;
+  }
+
+  .badge-pending-unpaid {
+    background: #ef4444;
+    color: white;
+  }
+
+  .badge-pending {
+    background: #f59e0b;
+    color: white;
+  }
+
+  .badge-submitted,
+  .badge-in-transit {
+    background: #3b82f6;
+    color: white;
+  }
+
+  .badge-delivered,
+  .badge-collected {
+    background: #10b981;
+    color: white;
+  }
+
+  .badge-rejected {
+    background: #ef4444;
+    color: white;
+  }
+
+  /* Package Details */
+  .package-details {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .detail-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .detail-label {
+    font-size: 0.875rem;
+    color: #71717a;
+    font-weight: 500;
+  }
+
+  .detail-value {
+    font-size: 1.125rem;
+    color: #f4f4f5;
+    font-weight: 500;
+  }
+
+  .detail-phone {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+  }
+
+  .cost-value {
+    font-size: 1.125rem;
+    color: #34d399;
+    font-weight: 700;
+  }
+
+  /* Timeline Card */
+  .timeline-card {
+    margin: 1.5rem;
+    background: rgba(30, 30, 60, 0.8);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  .timeline-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .timeline-icon {
+    color: #a78bfa;
+  }
+
+  .timeline-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #f4f4f5;
+    font-style: italic;
+  }
+
+  .timeline-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .timeline-item {
+    display: flex;
+    gap: 1rem;
+    position: relative;
+  }
+
+  .timeline-marker {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 0.25rem;
+  }
+
+  .timeline-dot {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: rgba(168, 85, 247, 0.2);
+    border: 3px solid #a855f7;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+  }
+
+  .timeline-dot.completed {
+    background: rgba(168, 85, 247, 0.3);
+    border-color: #a855f7;
+  }
+
+  .timeline-dot.rejected {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+  }
+
+  .timeline-line {
+    width: 2px;
+    flex-grow: 1;
+    background: rgba(168, 85, 247, 0.3);
+    margin-top: 0.5rem;
+    min-height: 2rem;
+  }
+
+  .timeline-content {
+    flex: 1;
+    padding-bottom: 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .timeline-item-last .timeline-content {
+    padding-bottom: 0;
+  }
+
+  .timeline-text {
+    flex: 1;
+  }
+
+  .timeline-title {
+    font-size: 0.9375rem;
+    color: #f4f4f5;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+  }
+
+  .timeline-description {
+    font-size: 0.8125rem;
+    color: #71717a;
+  }
+
+  .timeline-time {
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    text-align: right;
+    flex-shrink: 0;
+    margin-left: 1rem;
+  }
+
+  /* QR Code Card */
+  .qr-code-card {
+    margin: 1.5rem;
+    background: rgba(30, 30, 60, 0.8);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  .qr-code-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    color: #a78bfa;
+  }
+
+  .qr-code-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #f4f4f5;
+    font-style: italic;
+  }
+
+  .qr-code-container {
+    display: flex;
+    justify-content: center;
+    padding: 2rem;
+    background: white;
+    border-radius: 1rem;
+  }
+
+  .qr-code-image {
+    width: 100%;
+    max-width: 300px;
+    height: auto;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .package-header {
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .package-badges {
+      align-items: flex-start;
+    }
+
+    .detail-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
