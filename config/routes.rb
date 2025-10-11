@@ -889,12 +889,16 @@ end
   root to: 'public/home#index'
   
   constraints(->(request) { 
-    !request.path.start_with?('/rails/active_storage/') &&
-    !request.path.start_with?('/assets/') &&
-    !request.path.start_with?('/packs/') &&
-    !request.path.start_with?('/images/') && # ← ADD THIS
-    !request.path.include?('favicon')
-  }) do
-    match '*unmatched', to: 'application#route_not_found', via: :all
-  end
+  !request.path.start_with?('/rails/active_storage/') &&
+  !request.path.start_with?('/assets/') &&
+  !request.path.start_with?('/packs/') &&
+  !request.path.start_with?('/images/') &&      # For logo
+  !request.path.match?(/\.ico$/) &&             # For favicon.ico
+  !request.path.match?(/favicon/) &&            # For all favicon files
+  !request.path.match?(/apple-touch-icon/) &&   # For iOS icons
+  !request.path.match?(/android-chrome/) &&     # For Android icons
+  !request.path.match?(/site\.webmanifest/)     # For PWA manifest
+}) do
+  match '*unmatched', to: 'application#route_not_found', via: :all
+ end
 end
