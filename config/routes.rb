@@ -892,6 +892,7 @@ end
     !request.path.start_with?('/rails/active_storage/') &&
     !request.path.start_with?('/assets/') &&
     !request.path.start_with?('/packs/') &&
+    !request.path.start_with?('/images/') && # ← ADD THIS
     !request.path.include?('favicon')
   }) do
     match '*unmatched', to: 'application#route_not_found', via: :all
