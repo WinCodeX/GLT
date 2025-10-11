@@ -4,8 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome Back - GLT Package Delivery</title>
+    <title>Welcome Back - GLT Logistics</title>
     <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    
+    <!-- Favicon Links -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <meta name="theme-color" content="#8b5cf6">
+    
     <style>
         * {
             margin: 0;
@@ -15,44 +22,107 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(180deg, #0a0a0f 0%, #0a0a0f 100%);
+            background: #0a0a0f;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
             color: #f8f8f2;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background */
+        .animated-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .gradient-orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.25;
+            animation: float 20s ease-in-out infinite;
+        }
+
+        .orb-1 {
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
+            top: -20%;
+            left: -10%;
+            animation-delay: 0s;
+        }
+
+        .orb-2 {
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, #a78bfa 0%, transparent 70%);
+            bottom: -20%;
+            right: -10%;
+            animation-delay: 5s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(50px, -50px) scale(1.1); }
+            66% { transform: translate(-30px, 30px) scale(0.9); }
         }
 
         .sign-in-container {
-            background: #1a1a2e;
-            border-radius: 20px;
+            position: relative;
+            z-index: 1;
+            background: rgba(10, 10, 15, 0.8);
+            backdrop-filter: blur(20px);
+            border-radius: 32px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
             overflow: hidden;
-            max-width: 420px;
+            max-width: 460px;
             width: 100%;
-            border: 1px solid rgba(124, 58, 237, 0.2);
+            border: 1px solid rgba(139, 92, 246, 0.3);
         }
 
         .header {
-            padding: 40px 30px 30px;
+            padding: 3rem 2.5rem 2rem;
             text-align: center;
         }
 
-        .title-gradient-container {
+        .logo-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .logo-image {
+            height: 48px;
+            width: auto;
+        }
+
+        .title-container {
             display: inline-block;
-            background: linear-gradient(135deg, #7c3aed 0%, #a855f7 25%, #c084fc 75%, #ddd6fe 100%);
-            padding: 10px 20px;
-            border-radius: 15px;
-            margin-bottom: 20px;
+            padding: 0.75rem 1.5rem;
+            border-radius: 16px;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border: 1px solid rgba(139, 92, 246, 0.3);
         }
 
         .header h1 {
             font-size: 2rem;
             margin: 0;
-            font-weight: 700;
-            color: #ffffff;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffffff 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
         .status-container {
@@ -60,7 +130,6 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            margin-bottom: 24px;
         }
 
         .status-dot {
@@ -77,46 +146,47 @@
         }
 
         .status-text {
-            font-size: 12px;
+            font-size: 0.8125rem;
             color: #10b981;
             font-weight: 500;
         }
 
         .form-container {
-            padding: 0 30px 40px;
+            padding: 0 2.5rem 3rem;
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 1.5rem;
         }
 
         .form-group label {
             display: block;
-            margin-bottom: 8px;
+            margin-bottom: 0.75rem;
             color: #a1a1aa;
-            font-weight: 500;
-            font-size: 14px;
+            font-weight: 600;
+            font-size: 0.9375rem;
         }
 
         .form-control {
             width: 100%;
-            padding: 14px 16px;
-            border: 2px solid #44475a;
-            border-radius: 10px;
-            font-size: 16px;
+            padding: 1rem 1.125rem;
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            border-radius: 16px;
+            font-size: 1rem;
             transition: all 0.3s ease;
-            background: #1e1e2f;
+            background: rgba(139, 92, 246, 0.05);
             color: #f8f8f2;
             outline: none;
         }
 
         .form-control::placeholder {
-            color: #6b7280;
+            color: #71717a;
         }
 
         .form-control:focus {
-            border-color: #bd93f9;
-            box-shadow: 0 0 0 3px rgba(189, 147, 249, 0.1);
+            border-color: #8b5cf6;
+            background: rgba(139, 92, 246, 0.1);
+            box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1);
         }
 
         .password-wrapper {
@@ -125,44 +195,46 @@
 
         .toggle-password {
             position: absolute;
-            right: 12px;
+            right: 1rem;
             top: 50%;
             transform: translateY(-50%);
             background: none;
             border: none;
             color: #a1a1aa;
             cursor: pointer;
-            padding: 8px;
-            font-size: 18px;
+            padding: 0.5rem;
+            font-size: 1.125rem;
             transition: color 0.2s;
         }
 
         .toggle-password:hover {
-            color: #bd93f9;
+            color: #a78bfa;
         }
 
         .btn {
             width: 100%;
-            padding: 14px 28px;
-            border-radius: 25px;
-            font-size: 16px;
+            padding: 1rem 1.75rem;
+            border-radius: 16px;
+            font-size: 1.0625rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
             border: none;
-            margin-top: 12px;
+            margin-top: 0.75rem;
             position: relative;
             overflow: hidden;
         }
 
         .btn-login {
-            background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 50%, #10b981 100%);
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
             color: white;
+            box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
         }
 
         .btn-login:hover {
+            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
             transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5);
         }
 
         .btn-login:disabled {
@@ -171,31 +243,22 @@
             transform: none;
         }
 
-        .btn-google {
-            background: #20202a;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            border: 1px solid rgba(124, 58, 237, 0.2);
+        .btn-demo {
+            background: rgba(139, 92, 246, 0.1);
+            color: #a78bfa;
+            border: 2px solid rgba(139, 92, 246, 0.3);
         }
 
-        .btn-google:hover {
-            background: #2a2a3a;
-            border-color: rgba(124, 58, 237, 0.4);
-        }
-
-        .btn-google svg {
-            width: 20px;
-            height: 20px;
+        .btn-demo:hover {
+            background: rgba(139, 92, 246, 0.2);
+            border-color: #8b5cf6;
         }
 
         .alert {
-            padding: 12px 16px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            font-size: 14px;
+            padding: 1rem 1.25rem;
+            border-radius: 16px;
+            margin-bottom: 1.5rem;
+            font-size: 0.9375rem;
             font-weight: 500;
         }
 
@@ -213,19 +276,19 @@
 
         .link-container {
             text-align: center;
-            margin-top: 20px;
+            margin-top: 1.25rem;
         }
 
         .link-container a {
-            color: #bd93f9;
+            color: #a78bfa;
             text-decoration: none;
-            font-size: 14px;
+            font-size: 0.9375rem;
             font-weight: 500;
             transition: color 0.2s;
         }
 
         .link-container a:hover {
-            color: #c084fc;
+            color: #8b5cf6;
         }
 
         .loading-spinner {
@@ -252,50 +315,41 @@
         .demo-credentials {
             background: rgba(245, 158, 11, 0.1);
             border: 1px solid rgba(245, 158, 11, 0.3);
-            border-radius: 10px;
-            padding: 16px;
-            margin-bottom: 20px;
-            font-size: 13px;
-            color: #fbbf24;
+            border-radius: 16px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.875rem;
         }
 
         .demo-credentials h4 {
-            margin-bottom: 10px;
+            margin-bottom: 0.75rem;
             color: #f59e0b;
-            font-size: 14px;
-            font-weight: 600;
+            font-size: 0.9375rem;
+            font-weight: 700;
         }
 
         .demo-credentials p {
-            margin: 6px 0;
+            margin: 0.5rem 0;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 0.5rem;
+            color: #fbbf24;
         }
 
         .demo-credentials code {
             background: rgba(255, 255, 255, 0.1);
-            padding: 3px 8px;
-            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
             font-family: 'Courier New', monospace;
             color: #fff;
-            font-size: 12px;
+            font-size: 0.8125rem;
         }
 
         .demo-credentials small {
             display: block;
-            margin-top: 8px;
-            font-size: 11px;
+            margin-top: 0.75rem;
+            font-size: 0.75rem;
             color: #a1a1aa;
-        }
-
-        .btn-demo {
-            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-            color: white;
-        }
-
-        .btn-demo:hover {
-            background: linear-gradient(135deg, #5558e0 0%, #4338ca 100%);
         }
 
         /* Responsive */
@@ -309,15 +363,29 @@
             }
 
             .form-container {
-                padding: 0 20px 30px;
+                padding: 0 1.5rem 2.5rem;
+            }
+
+            .header {
+                padding: 2.5rem 1.5rem 1.5rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Animated Background -->
+    <div class="animated-bg">
+        <div class="gradient-orb orb-1"></div>
+        <div class="gradient-orb orb-2"></div>
+    </div>
+
     <div class="sign-in-container">
         <div class="header">
-            <div class="title-gradient-container">
+            <div class="logo-container">
+                <img src="/images/logo.png" alt="GLT Logistics" class="logo-image">
+            </div>
+
+            <div class="title-container">
                 <h1>Welcome Back!</h1>
             </div>
             
@@ -429,9 +497,6 @@
                 demoBtn.addEventListener('click', function() {
                     document.getElementById('user_email').value = 'admin@example.com';
                     document.getElementById('user_password').value = 'password';
-                    
-                    // Optional: Auto-submit after filling
-                    // form.submit();
                 });
             }
 
@@ -439,16 +504,6 @@
             const emailField = document.getElementById('user_email');
             if (emailField && !emailField.value) {
                 emailField.focus();
-            }
-
-            // Enter key handling for password field
-            if (passwordField) {
-                passwordField.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        form.submit();
-                    }
-                });
             }
         });
     </script>
