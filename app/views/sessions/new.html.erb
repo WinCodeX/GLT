@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In - GLT Package Delivery</title>
+    <title>Welcome Back - GLT Package Delivery</title>
     <meta name="csrf-token" content="<%= form_authenticity_token %>">
     <style>
         * {
@@ -14,44 +14,76 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(180deg, #0a0a0f 0%, #0a0a0f 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            color: #f8f8f2;
         }
 
         .sign-in-container {
-            background: white;
+            background: #1a1a2e;
             border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
             overflow: hidden;
-            max-width: 400px;
+            max-width: 420px;
             width: 100%;
+            border: 1px solid rgba(124, 58, 237, 0.2);
         }
 
         .header {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            padding: 40px 30px;
+            padding: 40px 30px 30px;
             text-align: center;
+        }
+
+        .title-gradient-container {
+            display: inline-block;
+            background: linear-gradient(135deg, #7c3aed 0%, #a855f7 25%, #c084fc 75%, #ddd6fe 100%);
+            padding: 10px 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
         }
 
         .header h1 {
             font-size: 2rem;
-            margin-bottom: 10px;
+            margin: 0;
             font-weight: 700;
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         }
 
-        .header p {
-            font-size: 1rem;
-            opacity: 0.9;
+        .status-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-size: 12px;
+            color: #10b981;
+            font-weight: 500;
         }
 
         .form-container {
-            padding: 40px 30px;
+            padding: 0 30px 40px;
         }
 
         .form-group {
@@ -61,94 +93,150 @@
         .form-group label {
             display: block;
             margin-bottom: 8px;
-            color: #374151;
-            font-weight: 600;
+            color: #a1a1aa;
+            font-weight: 500;
+            font-size: 14px;
         }
 
         .form-control {
             width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e5e7eb;
+            padding: 14px 16px;
+            border: 2px solid #44475a;
             border-radius: 10px;
             font-size: 16px;
             transition: all 0.3s ease;
+            background: #1e1e2f;
+            color: #f8f8f2;
+            outline: none;
+        }
+
+        .form-control::placeholder {
+            color: #6b7280;
         }
 
         .form-control:focus {
-            outline: none;
-            border-color: #10b981;
-            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+            border-color: #bd93f9;
+            box-shadow: 0 0 0 3px rgba(189, 147, 249, 0.1);
+        }
+
+        .password-wrapper {
+            position: relative;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #a1a1aa;
+            cursor: pointer;
+            padding: 8px;
+            font-size: 18px;
+            transition: color 0.2s;
+        }
+
+        .toggle-password:hover {
+            color: #bd93f9;
         }
 
         .btn {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            border: none;
+            width: 100%;
             padding: 14px 28px;
-            border-radius: 10px;
+            border-radius: 25px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            width: 100%;
-            margin-top: 10px;
+            border: none;
+            margin-top: 12px;
+            position: relative;
+            overflow: hidden;
         }
 
-        .btn:hover {
+        .btn-login {
+            background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 50%, #10b981 100%);
+            color: white;
+        }
+
+        .btn-login:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);
         }
 
-        .btn:disabled {
-            background: #9ca3af;
+        .btn-login:disabled {
+            opacity: 0.6;
             cursor: not-allowed;
             transform: none;
-            box-shadow: none;
+        }
+
+        .btn-google {
+            background: #20202a;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            border: 1px solid rgba(124, 58, 237, 0.2);
+        }
+
+        .btn-google:hover {
+            background: #2a2a3a;
+            border-color: rgba(124, 58, 237, 0.4);
+        }
+
+        .btn-google svg {
+            width: 20px;
+            height: 20px;
         }
 
         .alert {
             padding: 12px 16px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 20px;
             font-size: 14px;
+            font-weight: 500;
         }
 
         .alert-error {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #dc2626;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
         }
 
         .alert-success {
-            background: #ecfdf5;
-            border: 1px solid #bbf7d0;
-            color: #059669;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #10b981;
         }
 
-        .forgot-password {
+        .link-container {
             text-align: center;
             margin-top: 20px;
         }
 
-        .forgot-password a {
-            color: #6b7280;
+        .link-container a {
+            color: #bd93f9;
             text-decoration: none;
             font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
         }
 
-        .forgot-password a:hover {
-            color: #10b981;
+        .link-container a:hover {
+            color: #c084fc;
         }
 
-        .loading {
+        .loading-spinner {
             display: none;
             width: 20px;
             height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #10b981;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid white;
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin-right: 10px;
+            margin: 0 auto;
         }
 
         @keyframes spin {
@@ -156,34 +244,87 @@
             100% { transform: rotate(360deg); }
         }
 
+        .loading .loading-spinner {
+            display: inline-block;
+            margin-right: 10px;
+        }
+
         .demo-credentials {
-            background: #fef3c7;
-            border: 1px solid #f59e0b;
-            border-radius: 8px;
-            padding: 15px;
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 10px;
+            padding: 16px;
             margin-bottom: 20px;
-            font-size: 14px;
-            color: #92400e;
+            font-size: 13px;
+            color: #fbbf24;
         }
 
         .demo-credentials h4 {
-            margin-bottom: 8px;
-            color: #d97706;
+            margin-bottom: 10px;
+            color: #f59e0b;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .demo-credentials p {
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .demo-credentials code {
-            background: rgba(255,255,255,0.7);
-            padding: 2px 6px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 3px 8px;
             border-radius: 4px;
             font-family: 'Courier New', monospace;
+            color: #fff;
+            font-size: 12px;
+        }
+
+        .demo-credentials small {
+            display: block;
+            margin-top: 8px;
+            font-size: 11px;
+            color: #a1a1aa;
+        }
+
+        .btn-demo {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+        }
+
+        .btn-demo:hover {
+            background: linear-gradient(135deg, #5558e0 0%, #4338ca 100%);
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .sign-in-container {
+                margin: 0 10px;
+            }
+
+            .header h1 {
+                font-size: 1.75rem;
+            }
+
+            .form-container {
+                padding: 0 20px 30px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="sign-in-container">
         <div class="header">
-            <h1>🏦 GLT Delivery</h1>
-            <p>Sign in to your account</p>
+            <div class="title-gradient-container">
+                <h1>Welcome Back!</h1>
+            </div>
+            
+            <div class="status-container">
+                <div class="status-dot"></div>
+                <span class="status-text">Server Connected</span>
+            </div>
         </div>
 
         <div class="form-container">
@@ -203,38 +344,56 @@
             <!-- Demo Credentials (for development) -->
             <% if Rails.env.development? %>
                 <div class="demo-credentials">
-                    <h4>Demo Account</h4>
+                    <h4>💡 Demo Account</h4>
                     <p>Email: <code>admin@example.com</code></p>
                     <p>Password: <code>password</code></p>
-                    <small>Click "Use Demo" to auto-fill</small>
+                    <small>Click "Use Demo Account" below to auto-fill</small>
                 </div>
             <% end %>
 
             <%= form_with(model: @user, url: sign_in_path, local: true, id: 'sign-in-form') do |form| %>
                 <div class="form-group">
-                    <%= form.label :email, 'Email Address' %>
-                    <%= form.email_field :email, class: 'form-control', placeholder: 'your@email.com', required: true %>
+                    <%= form.label :email, 'Email' %>
+                    <%= form.email_field :email, 
+                        class: 'form-control', 
+                        placeholder: 'your@email.com', 
+                        required: true,
+                        autocomplete: 'email' %>
                 </div>
 
                 <div class="form-group">
                     <%= form.label :password, 'Password' %>
-                    <%= form.password_field :password, class: 'form-control', placeholder: 'Your password', required: true %>
+                    <div class="password-wrapper">
+                        <%= form.password_field :password, 
+                            class: 'form-control', 
+                            placeholder: 'Enter your password', 
+                            required: true,
+                            id: 'password-field',
+                            autocomplete: 'current-password' %>
+                        <button type="button" class="toggle-password" id="toggle-password" aria-label="Toggle password visibility">
+                            👁️
+                        </button>
+                    </div>
                 </div>
 
-                <button type="submit" class="btn" id="sign-in-btn">
-                    <span class="loading" id="loading"></span>
-                    <span id="btn-text">Sign In</span>
+                <button type="submit" class="btn btn-login" id="sign-in-btn">
+                    <span class="loading-spinner" id="loading"></span>
+                    <span id="btn-text">Log In</span>
                 </button>
 
                 <% if Rails.env.development? %>
-                    <button type="button" class="btn" id="demo-btn" style="background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); margin-top: 10px;">
+                    <button type="button" class="btn btn-demo" id="demo-btn">
                         Use Demo Account
                     </button>
                 <% end %>
             <% end %>
 
-            <div class="forgot-password">
+            <div class="link-container">
                 <a href="#">Forgot your password?</a>
+            </div>
+            
+            <div class="link-container" style="margin-top: 10px;">
+                <a href="/signup">Don't have an account? Sign up</a>
             </div>
         </div>
     </div>
@@ -246,34 +405,51 @@
             const loading = document.getElementById('loading');
             const btnText = document.getElementById('btn-text');
             const demoBtn = document.getElementById('demo-btn');
+            const passwordField = document.getElementById('password-field');
+            const togglePassword = document.getElementById('toggle-password');
 
             // Handle form submission
             form.addEventListener('submit', function() {
                 signInBtn.disabled = true;
-                loading.style.display = 'inline-block';
-                btnText.textContent = 'Signing in...';
+                signInBtn.classList.add('loading');
+                btnText.textContent = 'Logging in...';
             });
+
+            // Password visibility toggle
+            if (togglePassword && passwordField) {
+                togglePassword.addEventListener('click', function() {
+                    const type = passwordField.type === 'password' ? 'text' : 'password';
+                    passwordField.type = type;
+                    togglePassword.textContent = type === 'password' ? '👁️' : '👁️‍🗨️';
+                });
+            }
 
             // Demo account auto-fill (development only)
             if (demoBtn) {
                 demoBtn.addEventListener('click', function() {
                     document.getElementById('user_email').value = 'admin@example.com';
                     document.getElementById('user_password').value = 'password';
+                    
+                    // Optional: Auto-submit after filling
+                    // form.submit();
                 });
             }
 
             // Auto-focus email field
             const emailField = document.getElementById('user_email');
-            if (emailField) {
+            if (emailField && !emailField.value) {
                 emailField.focus();
             }
 
-            // Enter key handling
-            document.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    form.submit();
-                }
-            });
+            // Enter key handling for password field
+            if (passwordField) {
+                passwordField.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        form.submit();
+                    }
+                });
+            }
         });
     </script>
 </body>
