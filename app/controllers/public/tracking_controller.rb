@@ -17,6 +17,19 @@ module Public
     helper_method :get_package_type_icon
     helper_method :get_delivery_location_display
 
+
+# Tracking search page
+def index
+  respond_to do |format|
+    format.html { render layout: false }
+    format.json { render json: { tracking_url: public_package_tracking_url(':code') } }
+  end
+rescue => e
+  Rails.logger.error "Error loading tracking search page: #{e.message}"
+  Rails.logger.error e.backtrace.join("\n")
+  render :error, status: :internal_server_error, layout: false
+end
+
     # Main tracking page
     def show
       unless @package
