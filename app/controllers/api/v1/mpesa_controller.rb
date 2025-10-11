@@ -54,22 +54,37 @@ module Api
             }, status: :forbidden
           end
 
-          Rails.logger.info "Initiating wallet top-up for user #{current_user.id}, amount: #{amount}"
+          # FIXED: Generate clean account reference (GltWlt + user_id, max 12 chars)
+          account_reference = generate_wallet_account_reference(current_user.id)
 
-          # Use username or phone as account reference
-          account_reference = current_user.username.presence || current_user.phone_number.gsub(/\D/, '')
+          Rails.logger.info "=" * 60
+          Rails.logger.info "💰 WALLET TOP-UP STK PUSH INITIATED"
+          Rails.logger.info "=" * 60
+          Rails.logger.info "👤 User ID: #{current_user.id}"
+          Rails.logger.info "👛 Wallet ID: #{wallet.id}"
+          Rails.logger.info "📞 Phone: #{formatted_phone}"
+          Rails.logger.info "💵 Amount: KES #{amount}"
+          Rails.logger.info "🔖 Account Reference: #{account_reference} (length: #{account_reference.length})"
+          Rails.logger.info "📝 Transaction Desc: Wallet topup"
+          Rails.logger.info "🔗 Callback URL: #{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/wallet_callback"
+          Rails.logger.info "=" * 60
 
           # Initiate STK push with explicit callback URL
           result = MpesaService.initiate_stk_push(
             phone_number: formatted_phone,
             amount: amount,
             account_reference: account_reference,
-            transaction_desc: "Wallet top-up",
+            transaction_desc: "Wallet topup",
             callback_url: "#{ENV.fetch('APP_BASE_URL', 'http://localhost:3000')}/api/v1/mpesa/wallet_callback"
           )
 
+          Rails.logger.info "📡 M-Pesa STK Push Response:"
+          Rails.logger.info "Success: #{result[:success]}"
+          Rails.logger.info "Data: #{result[:data].inspect}" if result[:data]
+          Rails.logger.info "Message: #{result[:message]}" if result[:message]
+
           if result[:success]
-            # FIXED: Store payment details in wallet metadata (like package payment stores in package columns)
+            # Store payment details in wallet metadata
             current_metadata = wallet.metadata || {}
             current_metadata['pending_topup'] = {
               checkout_request_id: result[:data]['CheckoutRequestID'],
@@ -77,11 +92,13 @@ module Api
               amount: amount,
               phone_number: formatted_phone,
               user_id: current_user.id,
+              account_reference: account_reference,
               initiated_at: Time.current.iso8601
             }
             wallet.update_column(:metadata, current_metadata)
 
-            Rails.logger.info "Wallet top-up initiated for wallet #{wallet.id} - CheckoutRequestID: #{result[:data]['CheckoutRequestID']}"
+            Rails.logger.info "✅ Wallet top-up initiated successfully"
+            Rails.logger.info "🎫 CheckoutRequestID: #{result[:data]['CheckoutRequestID']}"
 
             render json: {
               status: 'success',
@@ -96,6 +113,8 @@ module Api
               }
             }
           else
+            Rails.logger.error "❌ M-Pesa STK Push failed: #{result[:message]}"
+            
             render json: {
               status: 'error',
               message: result[:message] || 'Failed to initiate top-up'
@@ -103,7 +122,12 @@ module Api
           end
 
         rescue => e
-          Rails.logger.error "Wallet top-up error: #{e.message}\n#{e.backtrace.join("\n")}"
+          Rails.logger.error "❌ WALLET TOP-UP ERROR"
+          Rails.logger.error "Error Class: #{e.class}"
+          Rails.logger.error "Error Message: #{e.message}"
+          Rails.logger.error "Backtrace:"
+          Rails.logger.error e.backtrace.join("\n")
+          
           render json: {
             status: 'error',
             message: 'Failed to initiate top-up',
@@ -143,7 +167,10 @@ module Api
             }, status: :forbidden
           end
 
-          Rails.logger.info "Manual wallet top-up verification for user #{current_user.id}, amount: #{amount}, code: #{transaction_code}"
+          Rails.logger.info "🔍 MANUAL WALLET TOP-UP VERIFICATION"
+          Rails.logger.info "User: #{current_user.id}"
+          Rails.logger.info "Amount: #{amount}"
+          Rails.logger.info "Transaction Code: #{transaction_code}"
 
           # Check if transaction code has already been used
           existing_wallet_transaction = WalletTransaction.where(
@@ -230,38 +257,66 @@ module Api
       # POST /api/v1/mpesa/wallet_callback (FIXED)
       def wallet_callback
         begin
-          Rails.logger.info "Wallet top-up callback received: #{params.to_json}"
+          # Log raw callback data
+          raw_body = request.body.read
+          request.body.rewind
+          
+          Rails.logger.info "=" * 60
+          Rails.logger.info "💳 WALLET TOP-UP CALLBACK RECEIVED"
+          Rails.logger.info "=" * 60
+          Rails.logger.info "Raw Body: #{raw_body}"
+          Rails.logger.info "=" * 60
 
-          callback_data = params[:Body][:stkCallback] rescue params
+          # Parse callback data
+          callback_data = JSON.parse(raw_body)
+          stk_callback = callback_data.dig('Body', 'stkCallback')
 
-          checkout_request_id = callback_data[:CheckoutRequestID]
-          result_code = callback_data[:ResultCode].to_i
-          result_desc = callback_data[:ResultDesc]
-
-          Rails.logger.info "Processing wallet callback: #{checkout_request_id} - Result Code: #{result_code}"
-
-          # FIXED: Find wallet by checkout_request_id in metadata (like packages use payment_request_id)
-          wallet = Wallet.all.find do |w|
-            w.metadata.is_a?(Hash) && 
-            w.metadata.dig('pending_topup', 'checkout_request_id') == checkout_request_id
+          unless stk_callback
+            Rails.logger.error "❌ Invalid callback structure"
+            return render json: { ResultCode: 1, ResultDesc: 'Invalid callback structure' }
           end
 
+          checkout_request_id = stk_callback['CheckoutRequestID']
+          result_code = stk_callback['ResultCode'].to_i
+          result_desc = stk_callback['ResultDesc']
+
+          Rails.logger.info "🎫 CheckoutRequestID: #{checkout_request_id}"
+          Rails.logger.info "📊 Result Code: #{result_code}"
+          Rails.logger.info "📝 Result Description: #{result_desc}"
+
+          # FIXED: Use PostgreSQL JSONB query instead of loading all wallets
+          wallet = Wallet.where(
+            "metadata->'pending_topup'->>'checkout_request_id' = ?",
+            checkout_request_id
+          ).first
+
           unless wallet
-            Rails.logger.warn "No wallet found for checkout_request_id: #{checkout_request_id}"
+            Rails.logger.warn "⚠️ No wallet found for checkout_request_id: #{checkout_request_id}"
             return render json: { ResultCode: 0, ResultDesc: 'Accepted' }
           end
 
           pending_topup = wallet.metadata['pending_topup']
           amount = pending_topup['amount']
+          user_id = pending_topup['user_id']
+
+          Rails.logger.info "👛 Wallet Found: #{wallet.id}"
+          Rails.logger.info "👤 User ID: #{user_id}"
+          Rails.logger.info "💰 Amount: #{amount}"
 
           if result_code == 0
             # Payment successful
-            callback_metadata = callback_data[:CallbackMetadata][:Item] rescue []
+            callback_metadata = stk_callback['CallbackMetadata']['Item']
             
             mpesa_receipt = extract_callback_value(callback_metadata, 'MpesaReceiptNumber')
             phone_number = extract_callback_value(callback_metadata, 'PhoneNumber')
+            transaction_amount = extract_callback_value(callback_metadata, 'Amount')
 
-            # Credit wallet (like package updates to 'pending' state)
+            Rails.logger.info "✅ Payment Successful"
+            Rails.logger.info "🧾 M-Pesa Receipt: #{mpesa_receipt}"
+            Rails.logger.info "📞 Phone: #{phone_number}"
+            Rails.logger.info "💵 Amount: #{transaction_amount}"
+
+            # Credit wallet
             wallet.credit!(
               amount,
               transaction_type: 'topup',
@@ -271,6 +326,7 @@ module Api
                 mpesa_receipt_number: mpesa_receipt,
                 phone_number: phone_number,
                 checkout_request_id: checkout_request_id,
+                transaction_amount: transaction_amount,
                 completed_at: Time.current.iso8601
               }
             )
@@ -280,19 +336,25 @@ module Api
             current_metadata.delete('pending_topup')
             wallet.update_column(:metadata, current_metadata)
 
-            Rails.logger.info "✅ Wallet top-up completed: #{wallet.id} - #{amount} KES (Receipt: #{mpesa_receipt})"
+            Rails.logger.info "✅ Wallet #{wallet.id} credited successfully - New balance: #{wallet.reload.balance}"
           else
             # Payment failed - clear pending topup
             current_metadata = wallet.metadata
-            current_metadata.delete('pending_topup')
+            failed_topup = current_metadata.delete('pending_topup')
             wallet.update_column(:metadata, current_metadata)
 
-            Rails.logger.info "❌ Wallet top-up failed: #{wallet.id} - #{result_desc}"
+            Rails.logger.warn "❌ Payment failed for wallet #{wallet.id}"
+            Rails.logger.warn "Reason: #{result_desc}"
           end
 
           render json: { ResultCode: 0, ResultDesc: 'Accepted' }
+        rescue JSON::ParserError => e
+          Rails.logger.error "❌ JSON Parse Error: #{e.message}"
+          render json: { ResultCode: 0, ResultDesc: 'Accepted' }
         rescue => e
-          Rails.logger.error "Error processing wallet top-up callback: #{e.message}\n#{e.backtrace.join("\n")}"
+          Rails.logger.error "❌ WALLET CALLBACK ERROR"
+          Rails.logger.error "Error: #{e.class} - #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           render json: { ResultCode: 0, ResultDesc: 'Accepted' }
         end
       end
@@ -838,12 +900,35 @@ module Api
       def extract_callback_value(callback_items, key)
         return nil unless callback_items.is_a?(Array)
         
-        item = callback_items.find { |i| i[:Name] == key }
-        item&.dig(:Value)
+        item = callback_items.find { |i| i['Name'] == key }
+        item&.dig('Value')
       end
 
       def force_json_format
         request.format = :json
+      end
+
+      # FIXED: Generate clean account reference
+      # Format: GltWlt + user_id (max 12 chars total)
+      # Examples: GltWlt1, GltWlt999, GltWlt12345
+      def generate_wallet_account_reference(user_id)
+        prefix = "GltWlt"
+        # Max total length is 12, prefix is 6, so max 6 digits for user_id
+        user_id_str = user_id.to_s
+        
+        # If user_id is too long, take last 6 digits
+        if user_id_str.length > 6
+          user_id_str = user_id_str[-6..]
+        end
+        
+        reference = "#{prefix}#{user_id_str}"
+        
+        # Double check length
+        if reference.length > 12
+          reference = reference[0..11]
+        end
+        
+        reference
       end
     end
   end
