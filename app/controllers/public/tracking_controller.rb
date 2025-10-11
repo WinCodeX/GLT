@@ -4,10 +4,10 @@ module Public
     # Skip authentication for public access
     skip_before_action :authenticate_user!
     
-    # Find package before actions
+    # Find package before specific actions
     before_action :find_package, only: [:show, :status, :timeline]
     
-    # Use custom layout
+    # Use dynamic layout based on action
     layout :resolve_layout
     
     # Badge color helpers - exposed to views
@@ -17,22 +17,26 @@ module Public
     helper_method :get_package_type_icon
     helper_method :get_delivery_location_display
 
+    # ==========================================
+    # PUBLIC ACTIONS
+    # ==========================================
 
-# Tracking search page
-def index
-  respond_to do |format|
-    format.html { render layout: false }
-    format.json { render json: { tracking_url: public_package_tracking_url(':code') } }
-  end
-rescue => e
-  Rails.logger.error "Error loading tracking search page: #{e.message}"
-  Rails.logger.error e.backtrace.join("\n")
-  render :error, status: :internal_server_error, layout: false
-end
+    # Tracking search page
+    def index
+      respond_to do |format|
+        format.html # renders index.html.erb with no layout
+        format.json { render json: { tracking_url: public_package_tracking_url(':code') } }
+      end
+    rescue => e
+      Rails.logger.error "Error loading tracking search page: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+      render :error, status: :internal_server_error
+    end
 
     # Main tracking page
     def show
       unless @package
+        Rails.logger.info "Package not found for tracking: #{params[:code]}"
         render :not_found, status: :not_found and return
       end
 
@@ -43,7 +47,7 @@ end
       @journey_timeline = build_journey_timeline(@package)
       
       respond_to do |format|
-        format.html
+        format.html # renders show.html.erb with public_tracking layout
         format.json { render json: package_tracking_json }
       end
     rescue => e
@@ -95,6 +99,10 @@ end
 
     private
 
+    # ==========================================
+    # BEFORE ACTION METHODS
+    # ==========================================
+
     def find_package
       @package = Package.find_by(code: params[:code])
       
@@ -104,6 +112,25 @@ end
         Rails.logger.info "Package found: #{@package.code} (ID: #{@package.id})"
       end
     end
+
+    # ==========================================
+    # LAYOUT RESOLUTION
+    # ==========================================
+
+    def resolve_layout
+      case action_name
+      when 'index'
+        false  # No layout - index.html.erb is complete HTML document
+      when 'show'
+        'public_tracking'  # Use tracking layout for package details
+      else
+        'public_tracking'  # Default to tracking layout
+      end
+    end
+
+    # ==========================================
+    # BADGE & DISPLAY HELPERS
+    # ==========================================
 
     # Badge color for delivery types (matching React Native)
     def get_delivery_type_badge_color(delivery_type)
@@ -178,6 +205,10 @@ end
         end
       end
     end
+
+    # ==========================================
+    # TIMELINE BUILDER
+    # ==========================================
 
     def build_journey_timeline(package)
       return [] unless package
@@ -280,7 +311,14 @@ end
 
       # Sort by timestamp (oldest first for proper timeline order)
       timeline.sort_by { |event| event[:timestamp] }
+    rescue => e
+      Rails.logger.error "Error building timeline: #{e.message}"
+      []
     end
+
+    # ==========================================
+    # HELPER METHODS
+    # ==========================================
 
     def estimate_delivery_time(package)
       return nil unless package
@@ -297,6 +335,9 @@ end
       else
         package.created_at + 3.days
       end
+    rescue => e
+      Rails.logger.error "Error estimating delivery time: #{e.message}"
+      nil
     end
 
     def package_tracking_json
