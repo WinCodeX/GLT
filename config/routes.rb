@@ -789,12 +789,18 @@ end
 # 🌐 PUBLIC ENDPOINTS
 # ==========================================
 
+# config/routes.rb
+# Replace your public namespace with this
+
 namespace :public do
   # Landing page
   get 'home', to: 'home#index', as: 'home'
 
   # Tracking search page
   get 'track', to: 'tracking#index', as: 'tracking_index'
+
+  # Agent area endpoint (REQUIRED for automatic pricing)
+  get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
 
   # Package routes
   scope :packages do
@@ -820,9 +826,6 @@ namespace :public do
 
   # Shorter alias for package creation
   get 'package', to: 'packages#new', as: 'packages_new'
-
-# Agent area endpoint for AJAX
-  get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
 
   # Tracking routes
   scope :track do
