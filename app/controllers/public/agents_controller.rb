@@ -1,5 +1,4 @@
-
-# Create this controller: app/controllers/public/agents_controller.rb
+# app/controllers/public/agents_controller.rb
 module Public
   class AgentsController < WebApplicationController
     skip_before_action :authenticate_user!, only: [:area]
@@ -7,13 +6,18 @@ module Public
     def area
       agent = Agent.find_by(id: params[:id])
       
-      if agent
+      if agent && agent.area_id
         render json: {
           success: true,
           area_id: agent.area_id,
           area_name: agent.area.name,
           location_name: agent.area.location.name
         }
+      elsif agent
+        render json: {
+          success: false,
+          message: 'Agent does not have an area assigned'
+        }, status: :unprocessable_entity
       else
         render json: {
           success: false,
