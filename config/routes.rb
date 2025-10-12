@@ -785,20 +785,43 @@ end
     end
   end
 
-  # ==========================================
-  # 🌐 PUBLIC ENDPOINTS
-  # ==========================================
-  
-  namespace :public do
+# ==========================================
+# 🌐 PUBLIC ENDPOINTS
+# ==========================================
+
+namespace :public do
   # Landing page
   get 'home', to: 'home#index', as: 'home'
-  
-  # Tracking search page - ADD THIS LINE
+
+  # Tracking search page
   get 'track', to: 'tracking#index', as: 'tracking_index'
-  
+
+  # Package routes
+  scope :packages do
+    # Package creation form
+    get 'new', to: 'packages#new', as: 'package_new'
+    
+    # Delivery type specific routes
+    get 'fragile', to: 'packages#new', defaults: { delivery_type: 'fragile' }, as: 'package_fragile'
+    get 'home', to: 'packages#new', defaults: { delivery_type: 'home' }, as: 'package_home'
+    get 'doorstep', to: 'packages#new', defaults: { delivery_type: 'doorstep' }, as: 'package_doorstep'
+    get 'office', to: 'packages#new', defaults: { delivery_type: 'office' }, as: 'package_office'
+    get 'agent', to: 'packages#new', defaults: { delivery_type: 'agent' }, as: 'package_agent'
+    get 'collection', to: 'packages#new', defaults: { delivery_type: 'collection' }, as: 'package_collection'
+    
+    # Package creation
+    post '', to: 'packages#create', as: 'packages'
+    
+    # Package actions
+    post 'calculate_pricing', to: 'packages#calculate_pricing'
+    post 'initiate_payment', to: 'packages#initiate_payment'
+    get 'check_payment_status', to: 'packages#check_payment_status'
+  end
+
+  # Shorter alias for package creation
   get 'package', to: 'packages#new', as: 'packages_new'
 
-  # Existing tracking routes
+  # Tracking routes
   scope :track do
     get ':code', to: 'tracking#show', as: 'package_tracking'
     get ':code/status', to: 'tracking#status'
@@ -809,7 +832,8 @@ end
     get ':code/delivery_info', to: 'tracking#delivery_information'
     get ':code/special_handling', to: 'tracking#special_handling_info'
   end
-  
+
+  # Pricing routes
   scope :pricing do
     get 'estimate', to: 'pricing#estimate'
     get 'delivery_types', to: 'pricing#delivery_types_info'
