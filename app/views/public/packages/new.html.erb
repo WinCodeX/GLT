@@ -24,7 +24,6 @@
       min-height: 100vh;
     }
 
-    /* Animated Background */
     .animated-bg {
       position: fixed;
       top: 0;
@@ -74,7 +73,6 @@
       padding: 2rem;
     }
 
-    /* Header */
     .header {
       text-align: center;
       margin-bottom: 3rem;
@@ -108,7 +106,6 @@
       color: #a1a1aa;
     }
 
-    /* Delivery Type Badge */
     .delivery-type-badge {
       display: inline-block;
       padding: 0.5rem 1rem;
@@ -123,7 +120,6 @@
     .delivery-type-badge.fragile { background: rgba(249, 115, 22, 0.2); color: #f97316; }
     .delivery-type-badge.collection { background: rgba(16, 185, 129, 0.2); color: #10b981; }
 
-    /* Form Card */
     .form-card {
       background: rgba(26, 26, 46, 0.8);
       backdrop-filter: blur(20px);
@@ -201,7 +197,6 @@
       cursor: pointer;
     }
 
-    /* Price Estimate Card */
     .price-estimate {
       background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%);
       border: 2px solid rgba(139, 92, 246, 0.3);
@@ -253,23 +248,6 @@
       color: #8b5cf6;
     }
 
-    .calculate-btn {
-      width: 100%;
-      padding: 0.75rem 1.5rem;
-      background: rgba(139, 92, 246, 0.2);
-      border: 1px solid #8b5cf6;
-      border-radius: 8px;
-      color: #8b5cf6;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-
-    .calculate-btn:hover {
-      background: rgba(139, 92, 246, 0.3);
-    }
-
-    /* Submit Button */
     .submit-btn {
       width: 100%;
       padding: 1rem 2rem;
@@ -295,7 +273,6 @@
       transform: none;
     }
 
-    /* Info Box */
     .info-box {
       background: rgba(59, 130, 246, 0.1);
       border: 1px solid rgba(59, 130, 246, 0.3);
@@ -317,7 +294,6 @@
       line-height: 1.5;
     }
 
-    /* Loading Spinner */
     .spinner {
       display: inline-block;
       width: 20px;
@@ -336,7 +312,6 @@
       display: none;
     }
 
-    /* Responsive */
     @media (max-width: 768px) {
       .container {
         padding: 1rem;
@@ -357,14 +332,12 @@
   </style>
 </head>
 <body>
-  <!-- Animated Background -->
   <div class="animated-bg">
     <div class="gradient-orb orb-1"></div>
     <div class="gradient-orb orb-2"></div>
   </div>
 
   <div class="container">
-    <!-- Header -->
     <div class="header">
       <a href="<%= public_home_path %>" class="back-link">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -406,11 +379,6 @@
               <%= f.text_field :sender_phone, class: 'form-input', placeholder: '+254...', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
             </div>
           </div>
-          
-          <div class="form-group">
-            <label class="form-label">Sender Email (Optional)</label>
-            <%= f.email_field :sender_email, class: 'form-input', placeholder: 'your.email@example.com' %>
-          </div>
         </div>
       </div>
 
@@ -436,17 +404,146 @@
               <%= f.text_field :receiver_phone, class: 'form-input', placeholder: '+254...', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
             </div>
           </div>
-          
-          <div class="form-group">
-            <label class="form-label">Receiver Email (Optional)</label>
-            <%= f.email_field :receiver_email, class: 'form-input', placeholder: 'recipient.email@example.com' %>
-          </div>
         </div>
       </div>
 
-      <!-- Delivery-Type Specific Fields -->
-      <% if @delivery_type == 'collection' %>
-        <!-- Collection-Specific Fields -->
+      <!-- Delivery Type Specific Fields -->
+      <% if @delivery_type == 'home' %>
+        <!-- Home Delivery: Origin Agent + Destination Location -->
+        <div class="form-card">
+          <div class="form-section">
+            <h3 class="form-section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+              Pickup & Delivery Details
+            </h3>
+            
+            <div class="form-group">
+              <label class="form-label required">Sending From (Agent Office)</label>
+              <%= f.collection_select :origin_agent_id, 
+                @form_data[:agents], 
+                :id, 
+                ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
+                { prompt: 'Select pickup office' },
+                { class: 'form-select', required: true, id: 'origin_agent_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Location</label>
+              <%= f.collection_select :destination_area_id, 
+                @form_data[:areas], 
+                :id, 
+                ->(area) { "#{area.name} - #{area.location.name}" },
+                { prompt: 'Select delivery location' },
+                { class: 'form-select', required: true, id: 'destination_area_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Address</label>
+              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Full delivery address with building details', rows: 3, required: true %>
+            </div>
+          </div>
+        </div>
+
+      <% elsif @delivery_type == 'office' %>
+        <!-- Office Delivery: Agent to Agent Only -->
+        <div class="form-card">
+          <div class="form-section">
+            <h3 class="form-section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+              Office Transfer Details
+            </h3>
+            
+            <div class="form-group">
+              <label class="form-label required">From Agent Office</label>
+              <%= f.collection_select :origin_agent_id, 
+                @form_data[:agents], 
+                :id, 
+                ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
+                { prompt: 'Select origin office' },
+                { class: 'form-select', required: true, id: 'origin_agent_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">To Agent Office</label>
+              <%= f.collection_select :destination_agent_id, 
+                @form_data[:agents], 
+                :id, 
+                ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
+                { prompt: 'Select destination office' },
+                { class: 'form-select', required: true, id: 'destination_agent_select' }
+              %>
+            </div>
+          </div>
+        </div>
+
+      <% elsif @delivery_type == 'fragile' %>
+        <!-- Fragile: Location-based pickup and delivery -->
+        <div class="form-card">
+          <div class="form-section">
+            <h3 class="form-section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Fragile Item Details
+            </h3>
+            
+            <div class="form-group">
+              <label class="form-label required">Pickup Location</label>
+              <%= f.collection_select :origin_area_id, 
+                @form_data[:areas], 
+                :id, 
+                ->(area) { "#{area.name} - #{area.location.name}" },
+                { prompt: 'Select pickup location' },
+                { class: 'form-select', required: true, id: 'origin_area_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Pickup Address</label>
+              <%= f.text_area :pickup_location, class: 'form-textarea', placeholder: 'Exact pickup address with building details', rows: 2, required: true %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Location</label>
+              <%= f.collection_select :destination_area_id, 
+                @form_data[:areas], 
+                :id, 
+                ->(area) { "#{area.name} - #{area.location.name}" },
+                { prompt: 'Select delivery location' },
+                { class: 'form-select', required: true, id: 'destination_area_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Address</label>
+              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Exact delivery address with building details', rows: 2, required: true %>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label required">Item Description</label>
+              <%= f.text_area :item_description, class: 'form-textarea', placeholder: 'Describe the fragile items in detail', rows: 3, required: true %>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Estimated Value (KES)</label>
+              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01' %>
+            </div>
+          </div>
+        </div>
+
+      <% elsif @delivery_type == 'collection' %>
+        <!-- Collection: Location-based collection + delivery -->
         <div class="form-card">
           <div class="form-section">
             <h3 class="form-section-title">
@@ -461,7 +558,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label required">Shop/Store Name</label>
-                <%= f.text_field :shop_name, class: 'form-input', placeholder: 'Name of shop' %>
+                <%= f.text_field :shop_name, class: 'form-input', placeholder: 'Name of shop', required: true %>
               </div>
               
               <div class="form-group">
@@ -469,49 +566,47 @@
                 <%= f.text_field :shop_contact, class: 'form-input', placeholder: '+254...' %>
               </div>
             </div>
+
+            <div class="form-group">
+              <label class="form-label required">Collection Location</label>
+              <%= f.collection_select :origin_area_id, 
+                @form_data[:areas], 
+                :id, 
+                ->(area) { "#{area.name} - #{area.location.name}" },
+                { prompt: 'Select collection location' },
+                { class: 'form-select', required: true, id: 'origin_area_select' }
+              %>
+            </div>
             
             <div class="form-group">
               <label class="form-label required">Collection Address</label>
-              <%= f.text_area :collection_address, class: 'form-textarea', placeholder: 'Full address of collection point', rows: 3 %>
+              <%= f.text_area :collection_address, class: 'form-textarea', placeholder: 'Full address of collection point', rows: 3, required: true %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Location</label>
+              <%= f.collection_select :destination_area_id, 
+                @form_data[:areas], 
+                :id, 
+                ->(area) { "#{area.name} - #{area.location.name}" },
+                { prompt: 'Select delivery location' },
+                { class: 'form-select', required: true, id: 'destination_area_select' }
+              %>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label required">Delivery Address</label>
+              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Full delivery address', rows: 3, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Items to Collect</label>
-              <%= f.text_area :items_to_collect, class: 'form-textarea', placeholder: 'Describe items to be collected', rows: 2 %>
+              <%= f.text_area :items_to_collect, class: 'form-textarea', placeholder: 'Describe items to be collected', rows: 2, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Estimated Item Value (KES)</label>
-              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01' %>
-            </div>
-          </div>
-        </div>
-      <% elsif @delivery_type == 'fragile' %>
-        <!-- Fragile-Specific Fields -->
-        <div class="form-card">
-          <div class="form-section">
-            <h3 class="form-section-title">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                <line x1="12" y1="9" x2="12" y2="13"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-              Fragile Item Details
-            </h3>
-            
-            <div class="form-group">
-              <label class="form-label required">Item Description</label>
-              <%= f.text_area :item_description, class: 'form-textarea', placeholder: 'Describe the fragile items', rows: 3 %>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">Estimated Value (KES)</label>
-              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01' %>
-            </div>
-            
-            <div class="form-group">
-              <label class="form-label">Pickup Location</label>
-              <%= f.text_field :pickup_location, class: 'form-input', placeholder: 'Where to pick up from' %>
+              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01', required: true %>
             </div>
           </div>
         </div>
@@ -529,46 +624,13 @@
             Package Details
           </h3>
           
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label required">Package Size</label>
-              <%= f.select :package_size, 
-                options_for_select([['Small', 'small'], ['Medium', 'medium'], ['Large', 'large']], @package.package_size),
-                {}, 
-                { class: 'form-select', required: true } 
-              %>
-            </div>
-            
-            <% if ['home', 'office', 'agent'].include?(@delivery_type) %>
-              <div class="form-group">
-                <label class="form-label required">Origin Area</label>
-                <%= f.collection_select :origin_area_id, 
-                  @form_data[:areas], 
-                  :id, 
-                  ->(area) { "#{area.name} - #{area.location.name}" },
-                  { prompt: 'Select origin area' },
-                  { class: 'form-select', required: true }
-                %>
-              </div>
-            <% end %>
-          </div>
-          
-          <% if ['home', 'office', 'agent'].include?(@delivery_type) %>
-            <div class="form-group">
-              <label class="form-label required">Destination Area</label>
-              <%= f.collection_select :destination_area_id, 
-                @form_data[:areas], 
-                :id, 
-                ->(area) { "#{area.name} - #{area.location.name}" },
-                { prompt: 'Select destination area' },
-                { class: 'form-select', required: true }
-              %>
-            </div>
-          <% end %>
-          
           <div class="form-group">
-            <label class="form-label required">Delivery Location</label>
-            <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Full delivery address with building details', rows: 3, required: true %>
+            <label class="form-label required">Package Size</label>
+            <%= f.select :package_size, 
+              options_for_select([['Small', 'small'], ['Medium', 'medium'], ['Large', 'large']], @package.package_size),
+              {}, 
+              { class: 'form-select', required: true, id: 'package_size_select' } 
+            %>
           </div>
           
           <div class="form-group">
@@ -583,39 +645,24 @@
         </div>
       </div>
 
-      <!-- Price Estimate -->
-      <div class="price-estimate">
-        <h3 class="price-estimate-title">Estimated Cost</h3>
+      <!-- Automatic Price Estimate -->
+      <div class="price-estimate" id="priceEstimate">
+        <h3 class="price-estimate-title">Delivery Cost</h3>
         
-        <button type="button" class="calculate-btn" id="calculateBtn">
-          <span id="calculateText">Calculate Pricing</span>
-          <span id="calculateSpinner" class="spinner hidden"></span>
-        </button>
-        
-        <div id="priceBreakdown" class="hidden">
-          <div class="price-breakdown">
-            <div class="price-line">
-              <span>Base Fee</span>
-              <span id="baseFee">KES 0</span>
-            </div>
-            <div class="price-line">
-              <span>Delivery Type Fee</span>
-              <span id="deliveryFee">KES 0</span>
-            </div>
-            <div class="price-line">
-              <span>Size Adjustment</span>
-              <span id="sizeAdjustment">KES 0</span>
-            </div>
-            <div class="price-line" id="insuranceLine" style="display: none;">
-              <span>Insurance</span>
-              <span id="insurance">KES 0</span>
-            </div>
-          </div>
-          
+        <div id="priceLoading" class="hidden" style="text-align: center; padding: 1rem;">
+          <div class="spinner"></div>
+          <p style="margin-top: 0.5rem; color: #a1a1aa;">Calculating price...</p>
+        </div>
+
+        <div id="priceBreakdown">
           <div class="price-total">
             <span class="price-total-label">Total Cost</span>
             <span class="price-total-value" id="totalCost">KES 0</span>
           </div>
+        </div>
+
+        <div id="priceError" class="hidden" style="color: #ef4444; font-size: 0.875rem; margin-top: 1rem;">
+          Please fill in all required fields to calculate pricing
         </div>
       </div>
 
@@ -641,82 +688,157 @@
     <% end %>
   </div>
 
-  <!-- Payment Modal Partial -->
   <%= render 'public/packages/payment_modal' %>
 
   <script>
-    // Form elements
     const form = document.getElementById('packageForm');
-    const calculateBtn = document.getElementById('calculateBtn');
     const submitBtn = document.getElementById('submitBtn');
-    const priceBreakdown = document.getElementById('priceBreakdown');
+    const deliveryType = '<%= @delivery_type %>';
     
     let estimatedCost = 0;
-    let calculatedBreakdown = null;
 
-    // Calculate pricing
-    calculateBtn.addEventListener('click', async function() {
-      const calculateText = document.getElementById('calculateText');
-      const calculateSpinner = document.getElementById('calculateSpinner');
-      
-      calculateText.classList.add('hidden');
-      calculateSpinner.classList.remove('hidden');
-      
+    // Elements that trigger price calculation
+    const priceInputs = [
+      document.getElementById('origin_area_select'),
+      document.getElementById('destination_area_select'),
+      document.getElementById('origin_agent_select'),
+      document.getElementById('destination_agent_select'),
+      document.getElementById('package_size_select')
+    ].filter(el => el !== null);
+
+    // Auto-calculate pricing when relevant fields change
+    priceInputs.forEach(input => {
+      if (input) {
+        input.addEventListener('change', calculatePricing);
+      }
+    });
+
+    // Initial calculation on page load
+    setTimeout(calculatePricing, 500);
+
+    async function calculatePricing() {
+      const priceLoading = document.getElementById('priceLoading');
+      const priceBreakdown = document.getElementById('priceBreakdown');
+      const priceError = document.getElementById('priceError');
+      const totalCostEl = document.getElementById('totalCost');
+
+      // Gather form data
       const formData = new FormData(form);
-      const data = {
-        delivery_type: formData.get('delivery_type'),
-        package_size: formData.get('package[package_size]'),
-        origin_area_id: formData.get('package[origin_area_id]'),
-        destination_area_id: formData.get('package[destination_area_id]'),
-        item_value: formData.get('package[item_value]')
-      };
+      let originAreaId, destinationAreaId;
+
+      // Determine origin and destination based on delivery type
+      if (deliveryType === 'home') {
+        const originAgentId = formData.get('package[origin_agent_id]');
+        destinationAreaId = formData.get('package[destination_area_id]');
+        
+        if (!originAgentId || !destinationAreaId) {
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
+          return;
+        }
+
+        // Get origin area from agent
+        originAreaId = await getAgentArea(originAgentId);
+        
+      } else if (deliveryType === 'office') {
+        const originAgentId = formData.get('package[origin_agent_id]');
+        const destAgentId = formData.get('package[destination_agent_id]');
+        
+        if (!originAgentId || !destAgentId) {
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
+          return;
+        }
+
+        originAreaId = await getAgentArea(originAgentId);
+        destinationAreaId = await getAgentArea(destAgentId);
+        
+      } else {
+        // Fragile and Collection use area selectors
+        originAreaId = formData.get('package[origin_area_id]');
+        destinationAreaId = formData.get('package[destination_area_id]');
+        
+        if (!originAreaId || !destinationAreaId) {
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
+          return;
+        }
+      }
+
+      const packageSize = formData.get('package[package_size]');
       
+      if (!packageSize) {
+        priceError.classList.remove('hidden');
+        priceBreakdown.classList.add('hidden');
+        submitBtn.disabled = true;
+        return;
+      }
+
+      // Show loading
+      priceLoading.classList.remove('hidden');
+      priceBreakdown.classList.add('hidden');
+      priceError.classList.add('hidden');
+
       try {
-        const response = await fetch('/public/packages/calculate_pricing', {
+        const response = await fetch('<%= calculate_pricing_public_packages_path %>', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
           },
-          body: JSON.stringify(data)
+          body: JSON.stringify({
+            delivery_type: deliveryType,
+            package_size: packageSize,
+            origin_area_id: originAreaId,
+            destination_area_id: destinationAreaId
+          })
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
           estimatedCost = result.data.total_cost;
-          calculatedBreakdown = result.data.breakdown;
-          
-          // Update UI
-          document.getElementById('baseFee').textContent = `KES ${calculatedBreakdown.base_fee}`;
-          document.getElementById('deliveryFee').textContent = `KES ${calculatedBreakdown.delivery_type_fee}`;
-          document.getElementById('sizeAdjustment').textContent = `KES ${calculatedBreakdown.size_adjustment}`;
-          document.getElementById('totalCost').textContent = `KES ${estimatedCost.toLocaleString()}`;
-          
-          // Show/hide insurance line
-          const insuranceLine = document.getElementById('insuranceLine');
-          if (calculatedBreakdown.insurance > 0) {
-            document.getElementById('insurance').textContent = `KES ${calculatedBreakdown.insurance}`;
-            insuranceLine.style.display = 'flex';
-          } else {
-            insuranceLine.style.display = 'none';
-          }
+          totalCostEl.textContent = `KES ${estimatedCost.toLocaleString()}`;
           
           priceBreakdown.classList.remove('hidden');
+          priceError.classList.add('hidden');
           submitBtn.disabled = false;
         } else {
-          alert('Failed to calculate pricing. Please try again.');
+          priceError.textContent = result.message || 'Unable to calculate price';
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
         }
       } catch (error) {
         console.error('Pricing calculation error:', error);
-        alert('Error calculating pricing. Please try again.');
+        priceError.textContent = 'Error calculating price. Please try again.';
+        priceError.classList.remove('hidden');
+        priceBreakdown.classList.add('hidden');
+        submitBtn.disabled = true;
       } finally {
-        calculateText.classList.remove('hidden');
-        calculateSpinner.classList.add('hidden');
+        priceLoading.classList.add('hidden');
       }
-    });
+    }
 
-    // Form submission with M-Pesa integration
+    async function getAgentArea(agentId) {
+      try {
+        const response = await fetch(`/public/agents/${agentId}/area`, {
+          headers: {
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
+          }
+        });
+        const result = await response.json();
+        return result.area_id;
+      } catch (error) {
+        console.error('Error fetching agent area:', error);
+        return null;
+      }
+    }
+
+    // Form submission
     form.addEventListener('submit', async function(e) {
       e.preventDefault();
       
@@ -724,7 +846,7 @@
       const submitSpinner = document.getElementById('submitSpinner');
       
       if (estimatedCost === 0) {
-        alert('Please calculate pricing first');
+        alert('Please wait for pricing calculation');
         return;
       }
       
@@ -735,17 +857,15 @@
       const formData = new FormData(form);
       const senderPhone = formData.get('package[sender_phone]');
       
-      // Show payment modal
       showPaymentModal(senderPhone, estimatedCost, formData);
     });
 
     function showPaymentModal(phoneNumber, amount, packageData) {
       const modal = document.getElementById('paymentModal');
       document.getElementById('paymentPhone').value = phoneNumber;
-      document.getElementById('paymentAmount').value = amount;
+      document.getElementById('paymentAmount').textContent = amount;
       modal.style.display = 'flex';
       
-      // Store package data for after payment
       window.pendingPackageData = packageData;
     }
   </script>
