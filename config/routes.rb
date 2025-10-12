@@ -790,7 +790,7 @@ end
 # ==========================================
 
 # config/routes.rb
-# Replace your public namespace with this
+# Replace your entire public namespace with this
 
 namespace :public do
   # Landing page
@@ -803,29 +803,25 @@ namespace :public do
   get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
 
   # Package routes
-  scope :packages do
-    # Package creation form
-    get 'new', to: 'packages#new', as: 'package_new'
-    
-    # Delivery type specific routes
-    get 'fragile', to: 'packages#new', defaults: { delivery_type: 'fragile' }, as: 'package_fragile'
-    get 'home', to: 'packages#new', defaults: { delivery_type: 'home' }, as: 'package_home'
-    get 'doorstep', to: 'packages#new', defaults: { delivery_type: 'doorstep' }, as: 'package_doorstep'
-    get 'office', to: 'packages#new', defaults: { delivery_type: 'office' }, as: 'package_office'
-    get 'agent', to: 'packages#new', defaults: { delivery_type: 'agent' }, as: 'package_agent'
-    get 'collection', to: 'packages#new', defaults: { delivery_type: 'collection' }, as: 'package_collection'
-    
-    # Package creation
-    post '', to: 'packages#create', as: 'packages'
-    
-    # Package actions
-    post 'calculate_pricing', to: 'packages#calculate_pricing'
-    post 'initiate_payment', to: 'packages#initiate_payment'
-    get 'check_payment_status', to: 'packages#check_payment_status'
+  resources :packages, only: [:new, :create] do
+    collection do
+      # These need explicit names for the path helpers to work
+      post 'calculate_pricing', as: 'calculate_pricing'
+      post 'initiate_payment', as: 'initiate_payment'
+      get 'check_payment_status', as: 'check_payment_status'
+      
+      # Delivery type specific routes
+      get 'fragile', action: :new, defaults: { delivery_type: 'fragile' }, as: 'fragile'
+      get 'home', action: :new, defaults: { delivery_type: 'home' }, as: 'home_delivery'
+      get 'doorstep', action: :new, defaults: { delivery_type: 'doorstep' }, as: 'doorstep'
+      get 'office', action: :new, defaults: { delivery_type: 'office' }, as: 'office'
+      get 'agent', action: :new, defaults: { delivery_type: 'agent' }, as: 'agent'
+      get 'collection', action: :new, defaults: { delivery_type: 'collection' }, as: 'collection'
+    end
   end
 
   # Shorter alias for package creation
-  get 'package', to: 'packages#new', as: 'packages_new'
+  get 'package', to: 'packages#new', as: 'package_new'
 
   # Tracking routes
   scope :track do
