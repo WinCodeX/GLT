@@ -723,7 +723,7 @@
           <img src="/images/logo.png" alt="GLT Logistics" class="logo-image">
           <div class="logo">GLT Logistics</div>
         </div>
-        <a href="<%= public_track_path %>" class="track-button">Track Package</a>
+        <a href="<%= public_tracking_index_path %>" class="track-button">Track Package</a>
       </div>
     </header>
 
@@ -736,8 +736,8 @@
       </p>
       
       <div class="cta-buttons">
-        <a href="<%= new_public_package_path %>" class="cta-primary">Get Started</a>
-        <a href="<%= public_track_path %>" class="cta-secondary">Track Package</a>
+        <a href="<%= public_packages_new_path %>" class="cta-primary">Get Started</a>
+        <a href="<%= public_tracking_index_path %>" class="cta-secondary">Track Package</a>
       </div>
 
       <div class="stats-grid">
@@ -769,7 +769,7 @@
 
       <div class="services-grid">
         <!-- Fragile Delivery -->
-        <a href="<%= new_public_package_path(delivery_type: 'fragile') %>" class="service-card fragile">
+        <a href="<%= public_package_fragile_path %>" class="service-card fragile">
           <div class="service-icon">⚠️</div>
           <h3 class="service-title">Fragile Items</h3>
           <p class="service-description">
@@ -793,7 +793,7 @@
         </a>
 
         <!-- Home Delivery -->
-        <a href="<%= new_public_package_path(delivery_type: 'home') %>" class="service-card home">
+        <a href="<%= public_package_home_path %>" class="service-card home">
           <div class="service-icon">🏠</div>
           <h3 class="service-title">Home Delivery</h3>
           <p class="service-description">
@@ -817,7 +817,7 @@
         </a>
 
         <!-- Office Delivery -->
-        <a href="<%= new_public_package_path(delivery_type: 'office') %>" class="service-card office">
+        <a href="<%= public_package_office_path %>" class="service-card office">
           <div class="service-icon">💼</div>
           <h3 class="service-title">Office Delivery</h3>
           <p class="service-description">
@@ -841,7 +841,7 @@
         </a>
 
         <!-- Collection Service -->
-        <a href="<%= new_public_package_path(delivery_type: 'collection') %>" class="service-card collection">
+        <a href="<%= public_package_collection_path %>" class="service-card collection">
           <div class="service-icon">📦</div>
           <h3 class="service-title">Collection & Delivery</h3>
           <p class="service-description">
@@ -915,10 +915,10 @@
           <div class="footer-section">
             <h3>Services</h3>
             <div class="footer-links">
-              <a href="<%= new_public_package_path(delivery_type: 'fragile') %>" class="footer-link">Fragile Items</a>
-              <a href="<%= new_public_package_path(delivery_type: 'home') %>" class="footer-link">Home Delivery</a>
-              <a href="<%= new_public_package_path(delivery_type: 'office') %>" class="footer-link">Office Delivery</a>
-              <a href="<%= new_public_package_path(delivery_type: 'collection') %>" class="footer-link">Collection Service</a>
+              <a href="<%= public_package_fragile_path %>" class="footer-link">Fragile Items</a>
+              <a href="<%= public_package_home_path %>" class="footer-link">Home Delivery</a>
+              <a href="<%= public_package_office_path %>" class="footer-link">Office Delivery</a>
+              <a href="<%= public_package_collection_path %>" class="footer-link">Collection Service</a>
             </div>
           </div>
 
@@ -935,7 +935,7 @@
           <div class="footer-section">
             <h3>Support</h3>
             <div class="footer-links">
-              <a href="<%= public_track_path %>" class="footer-link">Track Package</a>
+              <a href="<%= public_tracking_index_path %>" class="footer-link">Track Package</a>
               <a href="#" class="footer-link">Help Center</a>
               <a href="#" class="footer-link">Pricing</a>
               <a href="/sign_in" class="footer-link">Sign In</a>
