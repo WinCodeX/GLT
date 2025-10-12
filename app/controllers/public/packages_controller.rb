@@ -284,12 +284,27 @@ module Public
     private
     
     def set_form_data
+      # Check if Agent model has active column
+      has_active = Agent.column_names.include?('active')
+      
       @form_data = {
         areas: Area.includes(:location).order('locations.name, areas.name'),
-        agents: Agent.includes(:area, :location).where(active: true).order(:name),
+        agents: has_active ? Agent.includes(:area, :location).where(active: true).order(:name) : Agent.includes(:area, :location).order(:name),
         locations: Location.order(:name),
-        delivery_types: Package.delivery_types.keys,
-        package_sizes: Package.package_sizes.keys
+        delivery_types: ['home', 'office', 'fragile', 'collection'],
+        package_sizes: ['small', 'medium', 'large']
+      }
+    rescue => e
+      Rails.logger.error "Error in set_form_data: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+      
+      # Provide minimal fallback data
+      @form_data = {
+        areas: Area.all,
+        agents: Agent.all,
+        locations: Location.all,
+        delivery_types: ['home', 'office', 'fragile', 'collection'],
+        package_sizes: ['small', 'medium', 'large']
       }
     end
     
