@@ -1,0 +1,389 @@
+<!-- public/500.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>500 - Server Error | GLT Logistics</title>
+  
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <meta name="theme-color" content="#8b5cf6">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Animated Background */
+    .animated-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .gradient-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.3;
+      animation: float 20s ease-in-out infinite;
+    }
+
+    .orb-1 {
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, #8b5cf6 0%, transparent 70%);
+      top: -10%;
+      left: -10%;
+    }
+
+    .orb-2 {
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, #a78bfa 0%, transparent 70%);
+      bottom: -10%;
+      right: -10%;
+      animation-delay: 7s;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(50px, -50px) scale(1.1); }
+      66% { transform: translate(-30px, 30px) scale(0.9); }
+    }
+
+    /* Content Container */
+    .error-container {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 2rem;
+      max-width: 600px;
+      animation: fadeInUp 0.8s ease-out;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Error Icon */
+    .error-icon {
+      width: 200px;
+      height: 200px;
+      margin: 0 auto 2rem;
+      position: relative;
+    }
+
+    .error-icon-bg {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%);
+      border: 2px solid rgba(139, 92, 246, 0.3);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        transform: scale(1);
+        border-color: rgba(139, 92, 246, 0.3);
+      }
+      50% {
+        transform: scale(1.05);
+        border-color: rgba(139, 92, 246, 0.5);
+      }
+    }
+
+    .error-icon svg {
+      width: 100px;
+      height: 100px;
+      stroke: #8b5cf6;
+      animation: shake 3s ease-in-out infinite;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: rotate(0deg); }
+      25% { transform: rotate(-5deg); }
+      75% { transform: rotate(5deg); }
+    }
+
+    /* Error Code */
+    .error-code {
+      font-size: 6rem;
+      font-weight: 900;
+      background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+      margin-bottom: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    /* Error Title */
+    .error-title {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 1rem;
+    }
+
+    /* Error Message */
+    .error-message {
+      font-size: 1.125rem;
+      color: #a1a1aa;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+
+    /* Error Details Card */
+    .error-details {
+      background: rgba(26, 26, 46, 0.6);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      text-align: left;
+    }
+
+    .error-details-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .error-details-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .error-details-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      font-size: 0.9375rem;
+      color: #a1a1aa;
+      line-height: 1.5;
+    }
+
+    .error-details-icon {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      background: rgba(139, 92, 246, 0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #8b5cf6;
+      font-size: 0.75rem;
+      margin-top: 2px;
+    }
+
+    /* Action Buttons */
+    .action-buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 1rem 2rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 2px solid #8b5cf6;
+      color: #a78bfa;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(139, 92, 246, 0.1);
+      transform: translateY(-2px);
+    }
+
+    /* Footer Note */
+    .error-footer {
+      margin-top: 3rem;
+      font-size: 0.875rem;
+      color: #71717a;
+    }
+
+    .error-footer a {
+      color: #8b5cf6;
+      text-decoration: none;
+      transition: color 0.3s;
+    }
+
+    .error-footer a:hover {
+      color: #a78bfa;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .error-code {
+        font-size: 4rem;
+      }
+
+      .error-title {
+        font-size: 1.5rem;
+      }
+
+      .error-message {
+        font-size: 1rem;
+      }
+
+      .error-icon {
+        width: 150px;
+        height: 150px;
+      }
+
+      .error-icon svg {
+        width: 75px;
+        height: 75px;
+      }
+
+      .action-buttons {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Animated Background -->
+  <div class="animated-bg">
+    <div class="gradient-orb orb-1"></div>
+    <div class="gradient-orb orb-2"></div>
+  </div>
+
+  <!-- Error Container -->
+  <div class="error-container">
+    <!-- Error Icon -->
+    <div class="error-icon">
+      <div class="error-icon-bg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Error Code -->
+    <div class="error-code">500</div>
+
+    <!-- Error Title -->
+    <h1 class="error-title">Something Went Wrong</h1>
+
+    <!-- Error Message -->
+    <p class="error-message">
+      We're experiencing technical difficulties on our end. Our team has been notified and we're working to fix the issue as quickly as possible.
+    </p>
+
+    <!-- Error Details -->
+    <div class="error-details">
+      <div class="error-details-title">What You Can Do</div>
+      <ul class="error-details-list">
+        <li class="error-details-item">
+          <span class="error-details-icon">1</span>
+          <span>Try refreshing the page in a few moments</span>
+        </li>
+        <li class="error-details-item">
+          <span class="error-details-icon">2</span>
+          <span>Return to the homepage and try again</span>
+        </li>
+        <li class="error-details-item">
+          <span class="error-details-icon">3</span>
+          <span>Contact our support team if the problem persists</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="action-buttons">
+      <button onclick="window.location.reload()" class="btn btn-secondary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+        Refresh Page
+      </button>
+      
+      <a href="/" class="btn btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        Go Home
+      </a>
+    </div>
+
+    <!-- Footer -->
+    <div class="error-footer">
+      Need immediate assistance? <a href="tel:+254700000000">Call Support</a> or <a href="mailto:support@glt.co.ke">Email Us</a>
+    </div>
+  </div>
+</body>
+</html>
