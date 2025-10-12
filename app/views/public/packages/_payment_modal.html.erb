@@ -1,0 +1,265 @@
+<!-- app/views/public/packages/_payment_modal.html.erb -->
+<div id="paymentModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); z-index: 9999; align-items: center; justify-content: center;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 20px; padding: 2rem; max-width: 500px; width: 90%; border: 1px solid rgba(139, 92, 246, 0.3);">
+    
+    <!-- Modal Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+      <h3 style="font-size: 1.5rem; font-weight: 700; color: #ffffff;">Complete Payment</h3>
+      <button onclick="closePaymentModal()" style="background: none; border: none; color: #8b5cf6; cursor: pointer; font-size: 1.5rem;">&times;</button>
+    </div>
+
+    <!-- Payment Status -->
+    <div id="paymentStatus" style="margin-bottom: 1.5rem;">
+      <div id="initiatingPayment" style="display: none; text-align: center; padding: 2rem;">
+        <div style="display: inline-block; width: 50px; height: 50px; border: 4px solid rgba(139, 92, 246, 0.3); border-radius: 50%; border-top-color: #8b5cf6; animation: spin 1s ease-in-out infinite; margin-bottom: 1rem;"></div>
+        <p style="color: #a1a1aa;">Initiating M-Pesa payment...</p>
+      </div>
+
+      <div id="awaitingPayment" style="display: none; text-align: center; padding: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">📱</div>
+        <h4 style="color: #10b981; font-size: 1.25rem; margin-bottom: 0.5rem;">Check Your Phone</h4>
+        <p style="color: #a1a1aa; margin-bottom: 1.5rem;">Enter your M-Pesa PIN to complete payment</p>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; color: #8b5cf6;">
+          <div style="width: 8px; height: 8px; border-radius: 50%; background: #8b5cf6; animation: pulse 1.5s ease-in-out infinite;"></div>
+          <span style="font-size: 0.875rem;">Waiting for payment...</span>
+        </div>
+      </div>
+
+      <div id="paymentSuccess" style="display: none; text-align: center; padding: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+        <h4 style="color: #10b981; font-size: 1.25rem; margin-bottom: 0.5rem;">Payment Successful!</h4>
+        <p style="color: #a1a1aa; margin-bottom: 1.5rem;">Creating your package...</p>
+      </div>
+
+      <div id="paymentFailed" style="display: none; text-align: center; padding: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">❌</div>
+        <h4 style="color: #ef4444; font-size: 1.25rem; margin-bottom: 0.5rem;">Payment Failed</h4>
+        <p id="failureReason" style="color: #a1a1aa; margin-bottom: 1.5rem;">Please try again</p>
+        <button onclick="retryPayment()" style="width: 100%; padding: 0.75rem; background: #8b5cf6; border: none; border-radius: 8px; color: #ffffff; font-weight: 600; cursor: pointer;">
+          Retry Payment
+        </button>
+      </div>
+    </div>
+
+    <!-- Payment Form -->
+    <div id="paymentForm">
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.5rem;">M-Pesa Phone Number</label>
+        <input 
+          type="tel" 
+          id="paymentPhone" 
+          placeholder="+254..." 
+          style="width: 100%; padding: 0.75rem; background: rgba(10, 10, 15, 0.6); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #ffffff; font-size: 1rem;"
+        />
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.5rem;">Amount to Pay</label>
+        <div style="font-size: 2rem; font-weight: 700; color: #10b981;">
+          KES <span id="paymentAmount">0</span>
+        </div>
+      </div>
+
+      <button 
+        id="initiatePaymentBtn" 
+        onclick="initiatePayment()" 
+        style="width: 100%; padding: 1rem; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; border-radius: 12px; color: #ffffff; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);"
+      >
+        Pay with M-Pesa
+      </button>
+    </div>
+
+    <!-- Info -->
+    <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px;">
+      <div style="display: flex; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="12"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <p style="color: #93c5fd; font-size: 0.875rem; line-height: 1.5; margin: 0;">
+          You will receive an M-Pesa prompt on your phone. Enter your PIN to complete the payment. Your package will be created immediately after payment.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+  
+  #initiatePaymentBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.5);
+  }
+</style>
+
+<script>
+  let checkoutRequestId = null;
+  let paymentCheckInterval = null;
+
+  function closePaymentModal() {
+    const modal = document.getElementById('paymentModal');
+    modal.style.display = 'none';
+    
+    // Reset states
+    document.getElementById('paymentForm').style.display = 'block';
+    document.getElementById('initiatingPayment').style.display = 'none';
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentSuccess').style.display = 'none';
+    document.getElementById('paymentFailed').style.display = 'none';
+    
+    // Clear interval if exists
+    if (paymentCheckInterval) {
+      clearInterval(paymentCheckInterval);
+      paymentCheckInterval = null;
+    }
+    
+    // Re-enable submit button
+    const submitBtn = document.getElementById('submitBtn');
+    const submitText = document.getElementById('submitText');
+    const submitSpinner = document.getElementById('submitSpinner');
+    
+    submitText.textContent = 'Proceed to Payment';
+    submitSpinner.classList.add('hidden');
+    submitBtn.disabled = true; // Keep disabled until they calculate again
+  }
+
+  async function initiatePayment() {
+    const phone = document.getElementById('paymentPhone').value;
+    const amount = parseFloat(document.getElementById('paymentAmount').textContent);
+    
+    if (!phone || !amount) {
+      alert('Please ensure phone number and amount are provided');
+      return;
+    }
+    
+    // Hide form, show initiating
+    document.getElementById('paymentForm').style.display = 'none';
+    document.getElementById('initiatingPayment').style.display = 'block';
+    
+    try {
+      const response = await fetch('/public/packages/initiate_payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
+        },
+        body: JSON.stringify({
+          phone_number: phone,
+          amount: amount,
+          package_reference: 'WEB-' + Date.now()
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        checkoutRequestId = result.checkout_request_id;
+        
+        // Show awaiting payment
+        document.getElementById('initiatingPayment').style.display = 'none';
+        document.getElementById('awaitingPayment').style.display = 'block';
+        
+        // Start checking payment status
+        startPaymentStatusCheck();
+      } else {
+        showPaymentError(result.message || 'Failed to initiate payment');
+      }
+    } catch (error) {
+      console.error('Payment initiation error:', error);
+      showPaymentError('Error initiating payment. Please try again.');
+    }
+  }
+
+  function startPaymentStatusCheck() {
+    let attempts = 0;
+    const maxAttempts = 60; // Check for 2 minutes (60 * 2 seconds)
+    
+    paymentCheckInterval = setInterval(async () => {
+      attempts++;
+      
+      if (attempts > maxAttempts) {
+        clearInterval(paymentCheckInterval);
+        showPaymentError('Payment timeout. Please try again.');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`/public/packages/check_payment_status?checkout_request_id=${checkoutRequestId}`, {
+          headers: {
+            'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          if (result.payment_status === 'completed') {
+            clearInterval(paymentCheckInterval);
+            handlePaymentSuccess();
+          } else if (result.payment_status === 'failed') {
+            clearInterval(paymentCheckInterval);
+            showPaymentError(result.result_desc || 'Payment failed');
+          }
+        }
+      } catch (error) {
+        console.error('Payment status check error:', error);
+      }
+    }, 2000); // Check every 2 seconds
+  }
+
+  async function handlePaymentSuccess() {
+    // Show success message
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentSuccess').style.display = 'block';
+    
+    // Create the package
+    try {
+      const formData = window.pendingPackageData;
+      formData.append('mpesa_transaction_id', checkoutRequestId);
+      
+      const response = await fetch('/public/packages', {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
+        },
+        body: formData
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        // Redirect to tracking page
+        setTimeout(() => {
+          window.location.href = result.data.tracking_url;
+        }, 2000);
+      } else {
+        throw new Error(result.message || 'Package creation failed');
+      }
+    } catch (error) {
+      console.error('Package creation error:', error);
+      document.getElementById('paymentSuccess').style.display = 'none';
+      showPaymentError('Payment successful but package creation failed. Please contact support.');
+    }
+  }
+
+  function showPaymentError(message) {
+    document.getElementById('initiatingPayment').style.display = 'none';
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentFailed').style.display = 'block';
+    document.getElementById('failureReason').textContent = message;
+  }
+
+  function retryPayment() {
+    document.getElementById('paymentFailed').style.display = 'none';
+    document.getElementById('paymentForm').style.display = 'block';
+  }
+</script>
