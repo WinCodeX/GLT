@@ -821,6 +821,9 @@ namespace :public do
   # Shorter alias for package creation
   get 'package', to: 'packages#new', as: 'packages_new'
 
+# Agent area endpoint for AJAX
+  get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
+
   # Tracking routes
   scope :track do
     get ':code', to: 'tracking#show', as: 'package_tracking'
