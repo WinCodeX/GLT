@@ -5,7 +5,7 @@ module Public
     skip_before_action :authenticate_user!
     
     # Find package before specific actions
-    before_action :find_package, only: [:show, :status, :timeline]
+    before_action :find_package, only: [:show, :status, :timeline, :qr_code, :organic_qr_code, :thermal_qr_code]
     
     # Use dynamic layout based on action
     layout :resolve_layout
@@ -46,6 +46,9 @@ module Public
       
       @journey_timeline = build_journey_timeline(@package)
       
+      # Generate QR code for display
+      @qr_code_base64 = generate_qr_code_base64(@package)
+      
       respond_to do |format|
         format.html # renders show.html.erb with public_tracking layout
         format.json { render json: package_tracking_json }
@@ -54,6 +57,76 @@ module Public
       Rails.logger.error "Error in public tracking show: #{e.message}"
       Rails.logger.error e.backtrace.join("\n")
       render :not_found, status: :not_found
+    end
+
+    # QR Code endpoint (returns base64 image)
+    def qr_code
+      unless @package
+        render json: { error: 'Package not found' }, status: :not_found and return
+      end
+
+      qr_base64 = generate_qr_code_base64(@package)
+      
+      render json: {
+        package_code: @package.code,
+        qr_code_base64: qr_base64,
+        tracking_url: public_package_tracking_url(@package.code)
+      }
+    rescue => e
+      Rails.logger.error "Error generating QR code: #{e.message}"
+      render json: { error: 'Failed to generate QR code' }, status: :internal_server_error
+    end
+
+    # Organic QR Code (styled)
+    def organic_qr_code
+      unless @package
+        render json: { error: 'Package not found' }, status: :not_found and return
+      end
+
+      qr_generator = QrCodeGenerator.new(@package, {
+        corner_radius: 6,
+        gradient: true,
+        center_logo: true,
+        module_size: 10
+      })
+      
+      qr_base64 = qr_generator.generate_base64
+      
+      render json: {
+        package_code: @package.code,
+        qr_code_base64: qr_base64,
+        style: 'organic',
+        tracking_url: public_package_tracking_url(@package.code)
+      }
+    rescue => e
+      Rails.logger.error "Error generating organic QR code: #{e.message}"
+      render json: { error: 'Failed to generate QR code' }, status: :internal_server_error
+    end
+
+    # Thermal QR Code (printer-friendly)
+    def thermal_qr_code
+      unless @package
+        render json: { error: 'Package not found' }, status: :not_found and return
+      end
+
+      qr_generator = QrCodeGenerator.new(@package, {
+        corner_radius: 0,
+        gradient: false,
+        center_logo: false,
+        module_size: 8
+      })
+      
+      qr_base64 = qr_generator.generate_base64
+      
+      render json: {
+        package_code: @package.code,
+        qr_code_base64: qr_base64,
+        style: 'thermal',
+        tracking_url: public_package_tracking_url(@package.code)
+      }
+    rescue => e
+      Rails.logger.error "Error generating thermal QR code: #{e.message}"
+      render json: { error: 'Failed to generate QR code' }, status: :internal_server_error
     end
 
     # Status endpoint (JSON only)
@@ -110,6 +183,29 @@ module Public
         Rails.logger.info "Package not found: #{params[:code]}"
       else
         Rails.logger.info "Package found: #{@package.code} (ID: #{@package.id})"
+      end
+    end
+
+    # ==========================================
+    # QR CODE GENERATION
+    # ==========================================
+
+    def generate_qr_code_base64(package)
+      return nil unless package
+
+      begin
+        qr_generator = QrCodeGenerator.new(package, {
+          corner_radius: 5,
+          gradient: true,
+          center_logo: true,
+          module_size: 8
+        })
+        
+        qr_generator.generate_base64
+      rescue => e
+        Rails.logger.error "QR code generation failed: #{e.message}"
+        Rails.logger.error e.backtrace.join("\n")
+        nil
       end
     end
 
@@ -365,7 +461,8 @@ module Public
           package_size: @package.package_size_display,
           created_at: @package.created_at,
           updated_at: @package.updated_at,
-          estimated_delivery: estimate_delivery_time(@package)
+          estimated_delivery: estimate_delivery_time(@package),
+          qr_code_base64: @qr_code_base64
         },
         timeline: @journey_timeline,
         tracking_url: public_package_tracking_url(@package.code)
