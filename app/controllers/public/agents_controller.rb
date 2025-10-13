@@ -3,33 +3,36 @@ module Public
   class AgentsController < WebApplicationController
     skip_before_action :authenticate_user!, only: [:area]
     
+    # GET /public/agents/:id/area
+    # Returns the area_id for a given agent (required for automatic pricing)
     def area
-      agent = Agent.find_by(id: params[:id])
-      
-      if agent && agent.area_id
+      begin
+        agent = Agent.find(params[:id])
+        
         render json: {
           success: true,
+          agent_id: agent.id,
           area_id: agent.area_id,
-          area_name: agent.area.name,
-          location_name: agent.area.location.name
+          agent_name: agent.name,
+          area_name: agent.area&.name,
+          location_name: agent.area&.location&.name
         }
-      elsif agent
+      rescue ActiveRecord::RecordNotFound
         render json: {
           success: false,
-          message: 'Agent does not have an area assigned'
-        }, status: :unprocessable_entity
-      else
-        render json: {
-          success: false,
-          message: 'Agent not found'
+          error: 'Agent not found',
+          message: "Agent with ID #{params[:id]} does not exist"
         }, status: :not_found
+      rescue => e
+        Rails.logger.error "Error fetching agent area: #{e.message}"
+        Rails.logger.error e.backtrace.join("\n")
+        
+        render json: {
+          success: false,
+          error: 'Internal server error',
+          message: Rails.env.development? ? e.message : 'Failed to fetch agent information'
+        }, status: :internal_server_error
       end
-    rescue => e
-      Rails.logger.error "Error fetching agent area: #{e.message}"
-      render json: {
-        success: false,
-        message: 'Error fetching agent information'
-      }, status: :internal_server_error
     end
   end
 end
