@@ -785,12 +785,10 @@ end
     end
   end
 
+
 # ==========================================
 # 🌐 PUBLIC ENDPOINTS
 # ==========================================
-
-# config/routes.rb
-# Replace your entire public namespace with this
 
 namespace :public do
   # Landing page
@@ -809,7 +807,7 @@ namespace :public do
       post 'calculate_pricing', as: 'calculate_pricing'
       post 'initiate_payment', as: 'initiate_payment'
       get 'check_payment_status', as: 'check_payment_status'
-      
+
       # Delivery type specific routes
       get 'fragile', action: :new, defaults: { delivery_type: 'fragile' }, as: 'fragile'
       get 'home', action: :new, defaults: { delivery_type: 'home' }, as: 'home_delivery'
@@ -843,7 +841,17 @@ namespace :public do
   end
 end
 
-  get 'api/v1/track/:code', to: 'api/v1/packages#public_tracking', as: :package_tracking
+# ==========================================
+# 🔗 API V1 TRACKING REDIRECT
+# ==========================================
+
+# Redirect API tracking requests to public tracking page
+namespace :api do
+  namespace :v1 do
+    # This route redirects to the public tracking view
+    get 'track/:code', to: redirect { |params, _request| "/public/track/#{params[:code]}" }
+  end
+end
 
   # ==========================================
   # 🔗 WEBHOOKS
