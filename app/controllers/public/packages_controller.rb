@@ -142,8 +142,14 @@ module Public
         delivery_type = request_data[:delivery_type]
         package_size = request_data[:package_size]
         
-        # Log received parameters for debugging
-        Rails.logger.info "Calculate Pricing Request - Origin: #{origin_area_id}, Dest: #{destination_area_id}, Type: #{delivery_type}, Size: #{package_size}"
+        # Enhanced logging for debugging
+        Rails.logger.info "===== CALCULATE PRICING REQUEST ====="
+        Rails.logger.info "Origin Area ID: #{origin_area_id}"
+        Rails.logger.info "Destination Area ID: #{destination_area_id}"
+        Rails.logger.info "Delivery Type: #{delivery_type}"
+        Rails.logger.info "Package Size: #{package_size}"
+        Rails.logger.info "Request Content-Type: #{request.content_type}"
+        Rails.logger.info "======================================"
         
         unless origin_area_id && destination_area_id && delivery_type && package_size
           return render json: {
@@ -175,7 +181,9 @@ module Public
         total_cost = calculate_delivery_cost(origin_area_id, destination_area_id, delivery_type, package_size)
         
         if total_cost
-          Rails.logger.info "Price calculated: KES #{total_cost}"
+          Rails.logger.info "✓ Price calculated successfully: KES #{total_cost}"
+          Rails.logger.info "  Route: #{origin_area.name} (#{origin_area.location.name}) → #{destination_area.name} (#{destination_area.location.name})"
+          Rails.logger.info "  Type: #{delivery_type}, Size: #{package_size}"
           
           render json: {
             success: true,
@@ -188,7 +196,8 @@ module Public
             }
           }
         else
-          Rails.logger.warn "Unable to calculate price for: origin_area_id=#{origin_area_id}, destination_area_id=#{destination_area_id}, delivery_type=#{delivery_type}, package_size=#{package_size}"
+          Rails.logger.error "✗ Failed to calculate price"
+          Rails.logger.error "  Origin: #{origin_area&.name}, Destination: #{destination_area&.name}"
           
           render json: {
             success: false,
