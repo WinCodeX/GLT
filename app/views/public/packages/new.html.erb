@@ -695,9 +695,6 @@
     const submitBtn = document.getElementById('submitBtn');
     const deliveryType = '<%= @delivery_type %>';
     
-    // Store the agent area URL template for JavaScript usage
-    const agentAreaUrlTemplate = '<%= public_agent_area_path('AGENT_ID_PLACEHOLDER') %>';
-    
     let estimatedCost = 0;
 
     // Elements that trigger price calculation
@@ -725,6 +722,9 @@
       const priceError = document.getElementById('priceError');
       const totalCostEl = document.getElementById('totalCost');
 
+      console.log('=== Starting Price Calculation ===');
+      console.log('Delivery Type:', deliveryType);
+
       // Gather form data
       const formData = new FormData(form);
       let originAreaId, destinationAreaId;
@@ -734,7 +734,11 @@
         const originAgentId = formData.get('package[origin_agent_id]');
         destinationAreaId = formData.get('package[destination_area_id]');
         
+        console.log('Home Delivery - Origin Agent:', originAgentId, 'Destination Area:', destinationAreaId);
+        
         if (!originAgentId || !destinationAreaId) {
+          console.log('Missing required fields for home delivery');
+          priceError.textContent = 'Please select both pickup office and delivery location';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
           submitBtn.disabled = true;
@@ -742,28 +746,58 @@
         }
 
         // Get origin area from agent
+        console.log('Fetching agent area for agent ID:', originAgentId);
         originAreaId = await getAgentArea(originAgentId);
+        console.log('Retrieved origin area ID:', originAreaId);
+        
+        if (!originAreaId) {
+          console.error('Failed to retrieve origin area from agent');
+          priceError.textContent = 'Failed to get agent location. Please try again.';
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
+          return;
+        }
         
       } else if (deliveryType === 'office') {
         const originAgentId = formData.get('package[origin_agent_id]');
         const destAgentId = formData.get('package[destination_agent_id]');
         
+        console.log('Office Delivery - Origin Agent:', originAgentId, 'Dest Agent:', destAgentId);
+        
         if (!originAgentId || !destAgentId) {
+          console.log('Missing required fields for office delivery');
+          priceError.textContent = 'Please select both origin and destination offices';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
           submitBtn.disabled = true;
           return;
         }
 
+        console.log('Fetching areas for both agents...');
         originAreaId = await getAgentArea(originAgentId);
         destinationAreaId = await getAgentArea(destAgentId);
+        console.log('Retrieved origin area ID:', originAreaId, 'destination area ID:', destinationAreaId);
+        
+        if (!originAreaId || !destinationAreaId) {
+          console.error('Failed to retrieve areas from agents');
+          priceError.textContent = 'Failed to get agent locations. Please try again.';
+          priceError.classList.remove('hidden');
+          priceBreakdown.classList.add('hidden');
+          submitBtn.disabled = true;
+          return;
+        }
         
       } else {
         // Fragile and Collection use area selectors
         originAreaId = formData.get('package[origin_area_id]');
         destinationAreaId = formData.get('package[destination_area_id]');
         
+        console.log('Area-based Delivery - Origin:', originAreaId, 'Destination:', destinationAreaId);
+        
         if (!originAreaId || !destinationAreaId) {
+          console.log('Missing required fields for area-based delivery');
+          priceError.textContent = 'Please select both origin and destination locations';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
           submitBtn.disabled = true;
@@ -773,7 +807,11 @@
 
       const packageSize = formData.get('package[package_size]');
       
+      console.log('Package size:', packageSize);
+      
       if (!packageSize) {
+        console.log('Missing package size');
+        priceError.textContent = 'Please select a package size';
         priceError.classList.remove('hidden');
         priceBreakdown.classList.add('hidden');
         submitBtn.disabled = true;
@@ -784,6 +822,13 @@
       priceLoading.classList.remove('hidden');
       priceBreakdown.classList.add('hidden');
       priceError.classList.add('hidden');
+
+      console.log('Calling calculate_pricing endpoint with:', {
+        delivery_type: deliveryType,
+        package_size: packageSize,
+        origin_area_id: originAreaId,
+        destination_area_id: destinationAreaId
+      });
 
       try {
         const response = await fetch('<%= calculate_pricing_public_packages_path %>', {
@@ -800,16 +845,20 @@
           })
         });
 
+        console.log('Response status:', response.status);
         const result = await response.json();
+        console.log('Response data:', result);
 
         if (result.success) {
           estimatedCost = result.data.total_cost;
+          console.log('Price calculated successfully:', estimatedCost);
           totalCostEl.textContent = `KES ${estimatedCost.toLocaleString()}`;
           
           priceBreakdown.classList.remove('hidden');
           priceError.classList.add('hidden');
           submitBtn.disabled = false;
         } else {
+          console.error('Pricing calculation failed:', result.message);
           priceError.textContent = result.message || 'Unable to calculate price';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
@@ -823,21 +872,38 @@
         submitBtn.disabled = true;
       } finally {
         priceLoading.classList.add('hidden');
+        console.log('=== Price Calculation Complete ===');
       }
     }
 
     async function getAgentArea(agentId) {
       try {
-        // Use the Rails route helper template and replace the placeholder with actual agent ID
-        const url = agentAreaUrlTemplate.replace('AGENT_ID_PLACEHOLDER', agentId);
+        console.log('Fetching area for agent:', agentId);
+        const url = `/public/agents/${agentId}/area`;
+        console.log('Request URL:', url);
         
         const response = await fetch(url, {
           headers: {
             'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
           }
         });
+        
+        console.log('Agent area response status:', response.status);
+        
+        if (!response.ok) {
+          console.error('Failed to fetch agent area. Status:', response.status);
+          return null;
+        }
+        
         const result = await response.json();
-        return result.area_id;
+        console.log('Agent area response:', result);
+        
+        if (result.success) {
+          return result.area_id;
+        } else {
+          console.error('Agent area request failed:', result.message);
+          return null;
+        }
       } catch (error) {
         console.error('Error fetching agent area:', error);
         return null;
