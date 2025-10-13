@@ -6,6 +6,10 @@ module Api
       before_action :set_package, only: [:show, :update, :destroy, :qr_code, :tracking_page, :pay, :submit, :resubmit, :reject, :resubmission_info]
       before_action :set_package_for_authenticated_user, only: [:pay, :submit, :update, :destroy, :qr_code, :resubmit]
       before_action :force_json_format
+      
+      # Skip authentication for public tracking redirect
+      skip_before_action :authenticate_user!, only: [:public_tracking]
+      skip_before_action :force_json_format, only: [:public_tracking]
 
       def index
         begin
@@ -605,6 +609,32 @@ module Api
         end
       end
 
+      # GET /api/v1/track/:code - Public tracking redirect
+      def public_tracking
+        package = Package.find_by(code: params[:code])
+        
+        if package
+          # Redirect to public tracking page
+          redirect_to public_package_tracking_path(package.code), allow_other_host: false
+        else
+          # Return 404 JSON if package not found
+          render json: {
+            success: false,
+            message: 'Package not found',
+            error: 'not_found'
+          }, status: :not_found
+        end
+      rescue => e
+        Rails.logger.error "Public tracking redirect error: #{e.message}"
+        Rails.logger.error e.backtrace.join("\n")
+        
+        render json: {
+          success: false,
+          message: 'Tracking redirect failed',
+          error: Rails.env.development? ? e.message : 'internal_error'
+        }, status: :internal_server_error
+      end
+
       def pay
         begin
           if @package.state == 'pending_unpaid'
@@ -1179,10 +1209,10 @@ module Api
       end
 
       def tracking_url_for(code)
-        "#{request.base_url}/track/#{code}"
+        "#{request.base_url}/public/track/#{code}"
       rescue => e
         Rails.logger.error "Tracking URL generation failed: #{e.message}"
-        "/track/#{code}"
+        "/public/track/#{code}"
       end
 
       def status_description(state)
