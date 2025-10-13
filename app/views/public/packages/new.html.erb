@@ -695,6 +695,9 @@
     const submitBtn = document.getElementById('submitBtn');
     const deliveryType = '<%= @delivery_type %>';
     
+    // Store the agent area URL template for JavaScript usage
+    const agentAreaUrlTemplate = '<%= public_agent_area_path('AGENT_ID_PLACEHOLDER') %>';
+    
     let estimatedCost = 0;
 
     // Elements that trigger price calculation
@@ -825,7 +828,10 @@
 
     async function getAgentArea(agentId) {
       try {
-        const response = await fetch(`/public/agents/${agentId}/area`, {
+        // Use the Rails route helper template and replace the placeholder with actual agent ID
+        const url = agentAreaUrlTemplate.replace('AGENT_ID_PLACEHOLDER', agentId);
+        
+        const response = await fetch(url, {
           headers: {
             'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
           }
