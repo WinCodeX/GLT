@@ -1,7 +1,5 @@
-# =====================================================
-# WORKING FIX: app/services/qr_code_generator.rb
-# Your original working code + simple organic enhancements
-# =====================================================
+# app/services/qr_code_generator.rb
+# FIXED: Generates QR codes with correct public tracking URL
 
 require 'rqrcode'
 require 'chunky_png'
@@ -75,26 +73,54 @@ class QrCodeGenerator
 
   def generate_tracking_url_safely
     begin
-      # Try to get configured host from application config
-      host = Rails.application.config.action_mailer.default_url_options[:host]
+      # Try multiple sources for the base URL in order of preference
+      base_url = nil
       
-      if host.present?
+      # 1. Try APP_BASE_URL environment variable (Render.com)
+      if ENV['APP_BASE_URL'].present?
+        base_url = ENV['APP_BASE_URL'].sub(/\/$/, '') # Remove trailing slash if present
+      end
+      
+      # 2. Try action_mailer configuration
+      if base_url.nil? && Rails.application.config.action_mailer.default_url_options[:host].present?
+        host = Rails.application.config.action_mailer.default_url_options[:host]
         protocol = Rails.env.production? ? 'https' : 'http'
         base_url = "#{protocol}://#{host}"
-      else
-        # Fallback to environment-based defaults
-        if Rails.env.production?
-          base_url = ENV['APP_URL'] || 'https://your-app.railway.app'
+      end
+      
+      # 3. Try APP_URL environment variable (alternative)
+      if base_url.nil? && ENV['APP_URL'].present?
+        base_url = ENV['APP_URL'].sub(/\/$/, '')
+      end
+      
+      # 4. Try RENDER_EXTERNAL_URL for Render.com deployments
+      if base_url.nil? && ENV['RENDER_EXTERNAL_URL'].present?
+        base_url = ENV['RENDER_EXTERNAL_URL'].sub(/\/$/, '')
+      end
+      
+      # 5. Try to detect from Rails configuration
+      if base_url.nil? && defined?(Rails.application.routes.default_url_options[:host])
+        host = Rails.application.routes.default_url_options[:host]
+        protocol = Rails.env.production? ? 'https' : 'http'
+        base_url = "#{protocol}://#{host}"
+      end
+      
+      # 6. Fallback defaults
+      if base_url.nil?
+        base_url = if Rails.env.production?
+          'https://glt-53x8.onrender.com' # Production default
         else
-          base_url = 'http://localhost:3000'
+          'http://localhost:3000' # Development default
         end
       end
       
-      "#{base_url}/track/#{package.code}"
+      # FIXED: Use /public/track/ instead of /track/
+      "#{base_url}/public/track/#{package.code}"
       
     rescue => e
       Rails.logger.warn "URL generation fallback triggered: #{e.message}"
-      "/track/#{package.code}"
+      # FIXED: Fallback also uses /public/track/
+      "/public/track/#{package.code}"
     end
   end
 
