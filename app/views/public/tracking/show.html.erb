@@ -431,6 +431,7 @@
       width: 100%;
       max-width: 300px;
       height: auto;
+      border-radius: 12px;
     }
 
     .qr-code-placeholder {
@@ -444,6 +445,20 @@
       color: #8b5cf6;
       font-size: 1rem;
       font-weight: 600;
+    }
+
+    .spinner {
+      border: 4px solid rgba(139, 92, 246, 0.2);
+      border-radius: 50%;
+      border-top: 4px solid #8b5cf6;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
 
     /* Responsive */
@@ -471,6 +486,27 @@
         height: 40px;
       }
     }
+
+    @media print {
+      .animated-bg,
+      .tracking-header,
+      .icon-button {
+        display: none;
+      }
+      
+      body {
+        background: white;
+        color: black;
+      }
+      
+      .package-card,
+      .timeline-card,
+      .qr-code-card {
+        border: 1px solid #ccc;
+        box-shadow: none;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -495,14 +531,14 @@
       </div>
 
       <div class="header-actions">
-        <button class="icon-button" onclick="window.print()">
+        <button class="icon-button" onclick="window.print()" title="Print">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 6 2 18 2 18 9"/>
             <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
             <rect x="6" y="14" width="12" height="8"/>
           </svg>
         </button>
-        <button class="icon-button" onclick="shareTracking()">
+        <button class="icon-button" onclick="shareTracking()" title="Share">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
             <polyline points="16 6 12 2 8 6"/>
@@ -622,17 +658,12 @@
       </div>
 
       <div class="qr-code-container">
-        <% if @package.respond_to?(:qr_code_url) && @package.qr_code_url.present? %>
-          <img src="<%= @package.qr_code_url %>" alt="QR Code for <%= @package.code %>" class="qr-code-image">
+        <% if @qr_code_base64.present? %>
+          <img src="<%= @qr_code_base64 %>" alt="QR Code for <%= @package.code %>" class="qr-code-image">
         <% else %>
           <div class="qr-code-placeholder">
-            <svg width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1">
-              <rect x="3" y="3" width="7" height="7"/>
-              <rect x="14" y="3" width="7" height="7"/>
-              <rect x="14" y="14" width="7" height="7"/>
-              <rect x="3" y="14" width="7" height="7"/>
-            </svg>
-            <p class="qr-placeholder-text">QR Code generating...</p>
+            <div class="spinner"></div>
+            <p class="qr-placeholder-text">Generating QR Code...</p>
           </div>
         <% end %>
       </div>
@@ -654,6 +685,8 @@
       } else {
         navigator.clipboard.writeText(url).then(() => {
           alert('Tracking link copied to clipboard!');
+        }).catch(err => {
+          console.log('Copy failed:', err);
         });
       }
     }
