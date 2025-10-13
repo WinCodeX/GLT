@@ -46,22 +46,15 @@ module Public
         end
         
         # Fetch price from database
-        price_record = Price.find_by(
-          origin_area_id: origin_area_id,
-          destination_area_id: destination_area_id,
-          delivery_type: package_data[:delivery_type],
-          package_size: package_data[:package_size]
-        )
+        estimated_cost = get_price_from_database(origin_area_id, destination_area_id, package_data[:delivery_type], package_data[:package_size])
         
-        unless price_record
+        unless estimated_cost
           return render json: {
             success: false,
             message: 'Pricing not available for this route',
             error: 'price_not_found'
           }, status: :unprocessable_entity
         end
-        
-        estimated_cost = price_record.cost
         
         # Verify payment
         unless payment_verified?(params[:mpesa_transaction_id])
@@ -131,16 +124,33 @@ module Public
     
     def calculate_pricing
       begin
-        origin_area_id = params[:origin_area_id]
-        destination_area_id = params[:destination_area_id]
-        delivery_type = params[:delivery_type]
-        package_size = params[:package_size]
+        # Parse JSON body if present, otherwise use params
+        request_data = if request.content_type&.include?('application/json') && request.body.read.present?
+          request.body.rewind
+          JSON.parse(request.body.read).with_indifferent_access
+        else
+          params
+        end
+        
+        origin_area_id = request_data[:origin_area_id]
+        destination_area_id = request_data[:destination_area_id]
+        delivery_type = request_data[:delivery_type]
+        package_size = request_data[:package_size]
+        
+        # Log received parameters for debugging
+        Rails.logger.info "Calculate Pricing Request - Origin: #{origin_area_id}, Dest: #{destination_area_id}, Type: #{delivery_type}, Size: #{package_size}"
         
         unless origin_area_id && destination_area_id && delivery_type && package_size
           return render json: {
             success: false,
             message: 'Missing required parameters',
-            error: 'validation_error'
+            error: 'validation_error',
+            received_params: {
+              origin_area_id: origin_area_id,
+              destination_area_id: destination_area_id,
+              delivery_type: delivery_type,
+              package_size: package_size
+            }
           }, status: :bad_request
         end
         
@@ -153,6 +163,8 @@ module Public
         )
         
         if price_record
+          Rails.logger.info "Price found: KES #{price_record.cost}"
+          
           render json: {
             success: true,
             data: {
@@ -164,14 +176,35 @@ module Public
             }
           }
         else
+          # Log the failed lookup for debugging
+          Rails.logger.warn "No price found for: origin_area_id=#{origin_area_id}, destination_area_id=#{destination_area_id}, delivery_type=#{delivery_type}, package_size=#{package_size}"
+          
+          # Check if areas exist
+          origin_area = Area.find_by(id: origin_area_id)
+          destination_area = Area.find_by(id: destination_area_id)
+          
           render json: {
             success: false,
             message: 'Pricing not available for this route and delivery type',
-            error: 'price_not_found'
+            error: 'price_not_found',
+            debug_info: Rails.env.development? ? {
+              origin_area_exists: origin_area.present?,
+              destination_area_exists: destination_area.present?,
+              origin_area_name: origin_area&.name,
+              destination_area_name: destination_area&.name
+            } : nil
           }, status: :not_found
         end
+      rescue JSON::ParserError => e
+        Rails.logger.error "JSON Parse Error: #{e.message}"
+        render json: {
+          success: false,
+          message: 'Invalid JSON format',
+          error: 'parse_error'
+        }, status: :bad_request
       rescue => e
         Rails.logger.error "Pricing calculation error: #{e.message}"
+        Rails.logger.error e.backtrace.join("\n")
         
         render json: {
           success: false,
@@ -371,6 +404,15 @@ module Public
       end
     end
     
+    # Fetch price from database for package creation
+    def get_price_from_database(origin_area_id, destination_area_id, delivery_type, package_size)
+      Price.find_by(
+        origin_area_id: origin_area_id,
+        destination_area_id: destination_area_id,
+        delivery_type: delivery_type,
+        package_size: package_size
+      )&.cost
+    end
     def payment_verified?(transaction_id)
       return false if transaction_id.blank?
       
