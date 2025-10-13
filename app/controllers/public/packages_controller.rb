@@ -433,15 +433,18 @@ module Public
     end
     
     def generate_package_code(package)
-      prefix = case package.delivery_type
-               when 'fragile' then 'FRG'
-               when 'collection' then 'COL'
-               when 'home' then 'HOM'
-               when 'office' then 'OFC'
-               else 'PKG'
-               end
+      # Use PackageCodeGenerator if available (same as API controller)
+      if defined?(PackageCodeGenerator)
+        begin
+          code_generator = PackageCodeGenerator.new(package)
+          return code_generator.generate
+        rescue => e
+          Rails.logger.warn "PackageCodeGenerator failed: #{e.message}"
+        end
+      end
       
-      "#{prefix}-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
+      # Fallback to simple format (consistent with API controller)
+      "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
     end
     
     def normalize_phone_number(phone)
