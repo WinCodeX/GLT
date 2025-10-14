@@ -151,12 +151,21 @@
     document.getElementById('initiatingPayment').style.display = 'block';
     
     try {
+      // Get CSRF token safely
+      const csrfToken = document.querySelector('[name="csrf-token"]')?.content || '';
+      
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      // Only add CSRF token if it exists
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+      
       const response = await fetch('/public/mpesa/initiate_payment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
-        },
+        headers: headers,
         body: JSON.stringify({
           phone_number: phone,
           amount: amount,
@@ -198,10 +207,18 @@
       }
       
       try {
+        // Get CSRF token safely
+        const csrfToken = document.querySelector('[name="csrf-token"]')?.content || '';
+        
+        const headers = {};
+        
+        // Only add CSRF token if it exists
+        if (csrfToken) {
+          headers['X-CSRF-Token'] = csrfToken;
+        }
+        
         const response = await fetch(`/public/mpesa/check_payment_status?checkout_request_id=${checkoutRequestId}`, {
-          headers: {
-            'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
-          }
+          headers: headers
         });
         
         const result = await response.json();
@@ -231,11 +248,19 @@
       const formData = window.pendingPackageData;
       formData.append('mpesa_transaction_id', checkoutRequestId);
       
+      // Get CSRF token safely
+      const csrfToken = document.querySelector('[name="csrf-token"]')?.content || '';
+      
+      const headers = {};
+      
+      // Only add CSRF token if it exists
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+      
       const response = await fetch('/public/packages', {
         method: 'POST',
-        headers: {
-          'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
-        },
+        headers: headers,
         body: formData
       });
       
