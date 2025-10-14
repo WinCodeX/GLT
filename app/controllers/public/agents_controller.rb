@@ -2,6 +2,7 @@
 module Public
   class AgentsController < WebApplicationController
     skip_before_action :authenticate_user!, only: [:area]
+    skip_before_action :verify_authenticity_token, only: [:area]
     
     # GET /public/agents/:id/area
     # Returns the area_id for a given agent (required for automatic pricing)
