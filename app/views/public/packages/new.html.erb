@@ -841,12 +841,18 @@
       console.log('📤 Sending pricing request:', requestPayload);
 
       try {
+        // Get CSRF token if it exists
+        const csrfToken = document.querySelector('[name="csrf-token"]');
+        const headers = {
+          'Content-Type': 'application/json'
+        };
+        if (csrfToken) {
+          headers['X-CSRF-Token'] = csrfToken.content;
+        }
+        
         const response = await fetch('<%= calculate_pricing_public_packages_path %>', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
-          },
+          headers: headers,
           body: JSON.stringify(requestPayload)
         });
 
@@ -886,11 +892,14 @@
         console.log('  🔄 Fetching area for agent:', agentId);
         const url = `/public/agents/${agentId}/area`;
         
-        const response = await fetch(url, {
-          headers: {
-            'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
-          }
-        });
+        // Get CSRF token if it exists
+        const csrfToken = document.querySelector('[name="csrf-token"]');
+        const headers = {};
+        if (csrfToken) {
+          headers['X-CSRF-Token'] = csrfToken.content;
+        }
+        
+        const response = await fetch(url, { headers });
         
         console.log('  📡 Agent area response:', response.status);
         
