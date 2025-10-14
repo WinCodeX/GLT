@@ -2,7 +2,7 @@
 module Public
   class PackagesController < WebApplicationController
     skip_before_action :authenticate_user!, only: [:new, :create, :calculate_pricing]
-    skip_before_action :verify_authenticity_token, only: [:calculate_pricing]
+    skip_before_action :verify_authenticity_token, only: [:create, :calculate_pricing]
     
     before_action :set_form_data, only: [:new]
     before_action :validate_package_params, only: [:create]
