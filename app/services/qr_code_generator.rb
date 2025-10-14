@@ -165,14 +165,14 @@ class QrCodeGenerator
     # Draw organic finder patterns separately
     draw_organic_finder_patterns(png, qr_modules, module_size, border_size)
     
-    # Add center logo if specified
-    if options[:center_logo]
-      add_center_logo(png, total_size)
-    end
-    
-    # Add enhanced gradient effect
+    # Add enhanced gradient effect BEFORE logo so it doesn't overwrite it
     if options[:gradient]
       apply_organic_gradient_effect(png)
+    end
+    
+    # Add center logo if specified (AFTER gradient)
+    if options[:center_logo]
+      add_center_logo(png, total_size)
     end
     
     Rails.logger.info "✅ PNG created successfully"
@@ -418,6 +418,7 @@ class QrCodeGenerator
       # Try to load logo from multiple possible paths
       logo_paths = [
         Rails.root.join('app', 'assets', 'images', 'logo.png'),
+        Rails.root.join('public', 'images', 'logo.png'),
         Rails.root.join('public', 'logo.png'),
         Rails.root.join('app', 'assets', 'images', 'logos', 'logo.png')
       ]
@@ -425,7 +426,8 @@ class QrCodeGenerator
       logo_path = logo_paths.find { |path| File.exist?(path) }
       
       unless logo_path
-        Rails.logger.warn "⚠️ Logo file not found in any of the expected paths"
+        Rails.logger.error "❌ Logo file not found! Searched in:"
+        logo_paths.each { |path| Rails.logger.error "  - #{path}" }
         return
       end
       
@@ -433,12 +435,15 @@ class QrCodeGenerator
       
       # Load logo image
       logo = ChunkyPNG::Image.from_file(logo_path)
+      Rails.logger.info "📏 Logo dimensions: #{logo.width}x#{logo.height}"
       
       # Calculate center position and size
       center_x = total_size / 2
       center_y = total_size / 2
       logo_size = options[:logo_size]
       zoom_factor = options[:logo_zoom] # Zoom in on the logo
+      
+      Rails.logger.info "🎯 Center: (#{center_x}, #{center_y}), Logo size: #{logo_size}, Zoom: #{zoom_factor}"
       
       # Calculate zoomed dimensions
       zoomed_size = (logo_size * zoom_factor).to_i
@@ -451,6 +456,7 @@ class QrCodeGenerator
       # Create white circular background for logo
       logo_radius = (logo_size / 2).to_i
       draw_circular_background(png, center_x, center_y, logo_radius)
+      Rails.logger.info "⚪ Circular background drawn, radius: #{logo_radius}"
       
       # Render logo as circular mask
       render_circular_logo(png, logo, center_x, center_y, logo_size, src_x, src_y, src_size)
