@@ -262,7 +262,7 @@
       box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
     }
 
-    .submit-btn:hover {
+    .submit-btn:hover:not(:disabled) {
       transform: translateY(-2px);
       box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5);
     }
@@ -271,6 +271,7 @@
       opacity: 0.5;
       cursor: not-allowed;
       transform: none;
+      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
     }
 
     .info-box {
@@ -371,12 +372,12 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label required">Sender Name</label>
-              <%= f.text_field :sender_name, class: 'form-input', placeholder: 'Your full name', required: true %>
+              <%= f.text_field :sender_name, class: 'form-input', required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Sender Phone</label>
-              <%= f.text_field :sender_phone, class: 'form-input', placeholder: '+254...', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
+              <%= f.text_field :sender_phone, class: 'form-input', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
             </div>
           </div>
         </div>
@@ -396,12 +397,12 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label required">Receiver Name</label>
-              <%= f.text_field :receiver_name, class: 'form-input', placeholder: 'Recipient full name', required: true %>
+              <%= f.text_field :receiver_name, class: 'form-input', required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Receiver Phone</label>
-              <%= f.text_field :receiver_phone, class: 'form-input', placeholder: '+254...', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
+              <%= f.text_field :receiver_phone, class: 'form-input', required: true, pattern: '^\+?254[0-9]{9}$|^0[0-9]{9}$' %>
             </div>
           </div>
         </div>
@@ -421,12 +422,12 @@
             </h3>
             
             <div class="form-group">
-              <label class="form-label required">Sending From (Agent Office)</label>
+              <label class="form-label required">Pickup Location</label>
               <%= f.collection_select :origin_agent_id, 
                 @form_data[:agents], 
                 :id, 
                 ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
-                { prompt: 'Select pickup office' },
+                { prompt: 'Select pickup location' },
                 { class: 'form-select', required: true, id: 'origin_agent_select' }
               %>
             </div>
@@ -444,7 +445,7 @@
 
             <div class="form-group">
               <label class="form-label required">Delivery Address</label>
-              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Full delivery address with building details', rows: 3, required: true %>
+              <%= f.text_area :delivery_location, class: 'form-textarea', rows: 3, required: true %>
             </div>
           </div>
         </div>
@@ -458,27 +459,27 @@
                 <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
                 <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
               </svg>
-              Office Transfer Details
+              Transfer Details
             </h3>
             
             <div class="form-group">
-              <label class="form-label required">From Agent Office</label>
+              <label class="form-label required">From Location</label>
               <%= f.collection_select :origin_agent_id, 
                 @form_data[:agents], 
                 :id, 
                 ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
-                { prompt: 'Select origin office' },
+                { prompt: 'Select origin' },
                 { class: 'form-select', required: true, id: 'origin_agent_select' }
               %>
             </div>
 
             <div class="form-group">
-              <label class="form-label required">To Agent Office</label>
+              <label class="form-label required">To Location</label>
               <%= f.collection_select :destination_agent_id, 
                 @form_data[:agents], 
                 :id, 
                 ->(agent) { "#{agent.name} - #{agent.area.name}, #{agent.area.location.name}" },
-                { prompt: 'Select destination office' },
+                { prompt: 'Select destination' },
                 { class: 'form-select', required: true, id: 'destination_agent_select' }
               %>
             </div>
@@ -511,7 +512,7 @@
 
             <div class="form-group">
               <label class="form-label required">Pickup Address</label>
-              <%= f.text_area :pickup_location, class: 'form-textarea', placeholder: 'Exact pickup address with building details', rows: 2, required: true %>
+              <%= f.text_area :pickup_location, class: 'form-textarea', rows: 2, required: true %>
             </div>
 
             <div class="form-group">
@@ -527,17 +528,17 @@
 
             <div class="form-group">
               <label class="form-label required">Delivery Address</label>
-              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Exact delivery address with building details', rows: 2, required: true %>
+              <%= f.text_area :delivery_location, class: 'form-textarea', rows: 2, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Item Description</label>
-              <%= f.text_area :item_description, class: 'form-textarea', placeholder: 'Describe the fragile items in detail', rows: 3, required: true %>
+              <%= f.text_area :item_description, class: 'form-textarea', rows: 3, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label">Estimated Value (KES)</label>
-              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01' %>
+              <%= f.number_field :item_value, class: 'form-input', min: 0, step: '0.01' %>
             </div>
           </div>
         </div>
@@ -558,12 +559,12 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label required">Shop/Store Name</label>
-                <%= f.text_field :shop_name, class: 'form-input', placeholder: 'Name of shop', required: true %>
+                <%= f.text_field :shop_name, class: 'form-input', required: true %>
               </div>
               
               <div class="form-group">
                 <label class="form-label">Shop Contact</label>
-                <%= f.text_field :shop_contact, class: 'form-input', placeholder: '+254...' %>
+                <%= f.text_field :shop_contact, class: 'form-input' %>
               </div>
             </div>
 
@@ -580,7 +581,7 @@
             
             <div class="form-group">
               <label class="form-label required">Collection Address</label>
-              <%= f.text_area :collection_address, class: 'form-textarea', placeholder: 'Full address of collection point', rows: 3, required: true %>
+              <%= f.text_area :collection_address, class: 'form-textarea', rows: 3, required: true %>
             </div>
 
             <div class="form-group">
@@ -596,17 +597,17 @@
 
             <div class="form-group">
               <label class="form-label required">Delivery Address</label>
-              <%= f.text_area :delivery_location, class: 'form-textarea', placeholder: 'Full delivery address', rows: 3, required: true %>
+              <%= f.text_area :delivery_location, class: 'form-textarea', rows: 3, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Items to Collect</label>
-              <%= f.text_area :items_to_collect, class: 'form-textarea', placeholder: 'Describe items to be collected', rows: 2, required: true %>
+              <%= f.text_area :items_to_collect, class: 'form-textarea', rows: 2, required: true %>
             </div>
             
             <div class="form-group">
               <label class="form-label required">Estimated Item Value (KES)</label>
-              <%= f.number_field :item_value, class: 'form-input', placeholder: '0', min: 0, step: '0.01', required: true %>
+              <%= f.number_field :item_value, class: 'form-input', min: 0, step: '0.01', required: true %>
             </div>
           </div>
         </div>
@@ -635,12 +636,12 @@
           
           <div class="form-group">
             <label class="form-label">Package Description</label>
-            <%= f.text_area :package_description, class: 'form-textarea', placeholder: 'Brief description of package contents (optional)', rows: 2 %>
+            <%= f.text_area :package_description, class: 'form-textarea', rows: 2 %>
           </div>
           
           <div class="form-group">
             <label class="form-label">Special Instructions</label>
-            <%= f.text_area :special_instructions, class: 'form-textarea', placeholder: 'Any special handling or delivery instructions', rows: 2 %>
+            <%= f.text_area :special_instructions, class: 'form-textarea', rows: 2 %>
           </div>
         </div>
       </div>
@@ -662,27 +663,13 @@
         </div>
 
         <div id="priceError" class="hidden" style="color: #ef4444; font-size: 0.875rem; margin-top: 1rem;">
-          Please fill in all required fields to calculate pricing
-        </div>
-      </div>
-
-      <!-- Info Box -->
-      <div class="info-box">
-        <div class="info-box-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="12" y1="16" x2="12" y2="12"/>
-            <line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-        </div>
-        <div class="info-box-text">
-          After clicking "Proceed to Payment", you'll receive an M-Pesa prompt on the phone number you provided. Please complete the payment to create your package.
+          Select all locations to calculate pricing
         </div>
       </div>
 
       <!-- Submit Button -->
       <button type="submit" class="submit-btn" id="submitBtn" disabled>
-        <span id="submitText">Proceed to Payment</span>
+        <span id="submitText">Complete all required fields (*) to proceed</span>
         <span id="submitSpinner" class="spinner hidden"></span>
       </button>
     <% end %>
@@ -693,9 +680,11 @@
   <script>
     const form = document.getElementById('packageForm');
     const submitBtn = document.getElementById('submitBtn');
+    const submitText = document.getElementById('submitText');
     const deliveryType = '<%= @delivery_type %>';
     
     let estimatedCost = 0;
+    let calculationTimeout = null;
 
     // Elements that trigger price calculation
     const priceInputs = [
@@ -706,15 +695,30 @@
       document.getElementById('package_size_select')
     ].filter(el => el !== null);
 
-    // Auto-calculate pricing when relevant fields change
+    console.log('🚀 Price calculation initialized');
+    console.log('📦 Delivery Type:', deliveryType);
+    console.log('🎯 Watching inputs:', priceInputs.map(el => el.id));
+
+    // Debounced calculation to prevent rapid-fire requests
+    function triggerCalculation() {
+      if (calculationTimeout) {
+        clearTimeout(calculationTimeout);
+      }
+      calculationTimeout = setTimeout(() => {
+        console.log('⏰ Debounce completed, calculating...');
+        calculatePricing();
+      }, 300);
+    }
+
+    // Attach event listeners with immediate feedback
     priceInputs.forEach(input => {
       if (input) {
-        input.addEventListener('change', calculatePricing);
+        input.addEventListener('change', function(e) {
+          console.log(`🔄 Field changed: ${e.target.id} = ${e.target.value}`);
+          triggerCalculation();
+        });
       }
     });
-
-    // Initial calculation on page load
-    setTimeout(calculatePricing, 500);
 
     async function calculatePricing() {
       const priceLoading = document.getElementById('priceLoading');
@@ -722,10 +726,9 @@
       const priceError = document.getElementById('priceError');
       const totalCostEl = document.getElementById('totalCost');
 
-      console.log('=== Starting Price Calculation ===');
+      console.log('\n═══ STARTING PRICE CALCULATION ═══');
       console.log('Delivery Type:', deliveryType);
 
-      // Gather form data
       const formData = new FormData(form);
       let originAreaId, destinationAreaId;
 
@@ -734,28 +737,29 @@
         const originAgentId = formData.get('package[origin_agent_id]');
         destinationAreaId = formData.get('package[destination_area_id]');
         
-        console.log('Home Delivery - Origin Agent:', originAgentId, 'Destination Area:', destinationAreaId);
+        console.log('📍 Home Delivery');
+        console.log('  → Origin Agent ID:', originAgentId);
+        console.log('  → Destination Area ID:', destinationAreaId);
         
         if (!originAgentId || !destinationAreaId) {
-          console.log('Missing required fields for home delivery');
-          priceError.textContent = 'Please select both pickup office and delivery location';
+          console.log('⚠️  Missing required fields');
+          priceError.textContent = 'Select pickup and delivery locations';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
           return;
         }
 
-        // Get origin area from agent
-        console.log('Fetching agent area for agent ID:', originAgentId);
+        console.log('🔍 Fetching agent area...');
         originAreaId = await getAgentArea(originAgentId);
-        console.log('Retrieved origin area ID:', originAreaId);
+        console.log('✓ Retrieved origin area ID:', originAreaId);
         
         if (!originAreaId) {
-          console.error('Failed to retrieve origin area from agent');
-          priceError.textContent = 'Failed to get agent location. Please try again.';
+          console.error('❌ Failed to retrieve origin area');
+          priceError.textContent = 'Failed to get location data. Please refresh and try again.';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
           return;
         }
         
@@ -763,28 +767,31 @@
         const originAgentId = formData.get('package[origin_agent_id]');
         const destAgentId = formData.get('package[destination_agent_id]');
         
-        console.log('Office Delivery - Origin Agent:', originAgentId, 'Dest Agent:', destAgentId);
+        console.log('🏢 Office Delivery');
+        console.log('  → Origin Agent ID:', originAgentId);
+        console.log('  → Destination Agent ID:', destAgentId);
         
         if (!originAgentId || !destAgentId) {
-          console.log('Missing required fields for office delivery');
-          priceError.textContent = 'Please select both origin and destination offices';
+          console.log('⚠️  Missing required fields');
+          priceError.textContent = 'Select both origin and destination';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
           return;
         }
 
-        console.log('Fetching areas for both agents...');
+        console.log('🔍 Fetching agent areas...');
         originAreaId = await getAgentArea(originAgentId);
         destinationAreaId = await getAgentArea(destAgentId);
-        console.log('Retrieved origin area ID:', originAreaId, 'destination area ID:', destinationAreaId);
+        console.log('✓ Origin area ID:', originAreaId);
+        console.log('✓ Destination area ID:', destinationAreaId);
         
         if (!originAreaId || !destinationAreaId) {
-          console.error('Failed to retrieve areas from agents');
-          priceError.textContent = 'Failed to get agent locations. Please try again.';
+          console.error('❌ Failed to retrieve agent areas');
+          priceError.textContent = 'Failed to get location data. Please refresh and try again.';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
           return;
         }
         
@@ -793,28 +800,29 @@
         originAreaId = formData.get('package[origin_area_id]');
         destinationAreaId = formData.get('package[destination_area_id]');
         
-        console.log('Area-based Delivery - Origin:', originAreaId, 'Destination:', destinationAreaId);
+        console.log('📦 Area-based Delivery');
+        console.log('  → Origin Area ID:', originAreaId);
+        console.log('  → Destination Area ID:', destinationAreaId);
         
         if (!originAreaId || !destinationAreaId) {
-          console.log('Missing required fields for area-based delivery');
-          priceError.textContent = 'Please select both origin and destination locations';
+          console.log('⚠️  Missing required fields');
+          priceError.textContent = 'Select pickup and delivery locations';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
           return;
         }
       }
 
       const packageSize = formData.get('package[package_size]');
-      
-      console.log('Package size:', packageSize);
+      console.log('📏 Package size:', packageSize);
       
       if (!packageSize) {
-        console.log('Missing package size');
-        priceError.textContent = 'Please select a package size';
+        console.log('⚠️  Missing package size');
+        priceError.textContent = 'Select a package size';
         priceError.classList.remove('hidden');
         priceBreakdown.classList.add('hidden');
-        submitBtn.disabled = true;
+        updateSubmitButton(false);
         return;
       }
 
@@ -823,12 +831,14 @@
       priceBreakdown.classList.add('hidden');
       priceError.classList.add('hidden');
 
-      console.log('Calling calculate_pricing endpoint with:', {
+      const requestPayload = {
         delivery_type: deliveryType,
         package_size: packageSize,
         origin_area_id: originAreaId,
         destination_area_id: destinationAreaId
-      });
+      };
+
+      console.log('📤 Sending pricing request:', requestPayload);
 
       try {
         const response = await fetch('<%= calculate_pricing_public_packages_path %>', {
@@ -837,50 +847,44 @@
             'Content-Type': 'application/json',
             'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
           },
-          body: JSON.stringify({
-            delivery_type: deliveryType,
-            package_size: packageSize,
-            origin_area_id: originAreaId,
-            destination_area_id: destinationAreaId
-          })
+          body: JSON.stringify(requestPayload)
         });
 
-        console.log('Response status:', response.status);
+        console.log('📥 Response status:', response.status);
         const result = await response.json();
-        console.log('Response data:', result);
+        console.log('📥 Response data:', result);
 
         if (result.success) {
           estimatedCost = result.data.total_cost;
-          console.log('Price calculated successfully:', estimatedCost);
+          console.log('✅ Price calculated:', estimatedCost, 'KES');
           totalCostEl.textContent = `KES ${estimatedCost.toLocaleString()}`;
           
           priceBreakdown.classList.remove('hidden');
           priceError.classList.add('hidden');
-          submitBtn.disabled = false;
+          updateSubmitButton(true);
         } else {
-          console.error('Pricing calculation failed:', result.message);
+          console.error('❌ Pricing failed:', result.message);
           priceError.textContent = result.message || 'Unable to calculate price';
           priceError.classList.remove('hidden');
           priceBreakdown.classList.add('hidden');
-          submitBtn.disabled = true;
+          updateSubmitButton(false);
         }
       } catch (error) {
-        console.error('Pricing calculation error:', error);
-        priceError.textContent = 'Error calculating price. Please try again.';
+        console.error('❌ Request error:', error);
+        priceError.textContent = 'Network error. Please check your connection.';
         priceError.classList.remove('hidden');
         priceBreakdown.classList.add('hidden');
-        submitBtn.disabled = true;
+        updateSubmitButton(false);
       } finally {
         priceLoading.classList.add('hidden');
-        console.log('=== Price Calculation Complete ===');
+        console.log('═══ CALCULATION COMPLETE ═══\n');
       }
     }
 
     async function getAgentArea(agentId) {
       try {
-        console.log('Fetching area for agent:', agentId);
+        console.log('  🔄 Fetching area for agent:', agentId);
         const url = `/public/agents/${agentId}/area`;
-        console.log('Request URL:', url);
         
         const response = await fetch(url, {
           headers: {
@@ -888,25 +892,36 @@
           }
         });
         
-        console.log('Agent area response status:', response.status);
+        console.log('  📡 Agent area response:', response.status);
         
         if (!response.ok) {
-          console.error('Failed to fetch agent area. Status:', response.status);
+          console.error('  ❌ HTTP error:', response.status);
           return null;
         }
         
         const result = await response.json();
-        console.log('Agent area response:', result);
+        console.log('  📦 Agent area data:', result);
         
         if (result.success) {
+          console.log('  ✅ Area ID retrieved:', result.area_id);
           return result.area_id;
         } else {
-          console.error('Agent area request failed:', result.message);
+          console.error('  ❌ Request failed:', result.message);
           return null;
         }
       } catch (error) {
-        console.error('Error fetching agent area:', error);
+        console.error('  ❌ Error:', error);
         return null;
+      }
+    }
+
+    function updateSubmitButton(enablePayment) {
+      if (enablePayment && estimatedCost > 0) {
+        submitBtn.disabled = false;
+        submitText.textContent = 'Proceed to Payment';
+      } else {
+        submitBtn.disabled = true;
+        submitText.textContent = 'Complete all required fields (*) to proceed';
       }
     }
 
@@ -914,7 +929,6 @@
     form.addEventListener('submit', async function(e) {
       e.preventDefault();
       
-      const submitText = document.getElementById('submitText');
       const submitSpinner = document.getElementById('submitSpinner');
       
       if (estimatedCost === 0) {
@@ -940,6 +954,8 @@
       
       window.pendingPackageData = packageData;
     }
+
+    console.log('✅ Form initialization complete');
   </script>
 </body>
 </html>
