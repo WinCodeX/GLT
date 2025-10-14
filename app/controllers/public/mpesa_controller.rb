@@ -26,6 +26,25 @@ module Public
           }, status: :bad_request
         end
         
+        # Validate phone number format (must be 254XXXXXXXXX)
+        unless phone_number.match?(/^254\d{9}$/)
+          Rails.logger.error "❌ Invalid phone format: #{phone_number}"
+          return render json: {
+            success: false,
+            message: "Invalid phone number format. Must be 254XXXXXXXXX (got: #{phone_number})",
+            error: 'invalid_phone_format'
+          }, status: :bad_request
+        end
+        
+        # Validate amount range
+        if amount < 1 || amount > 150000
+          return render json: {
+            success: false,
+            message: 'Amount must be between KES 1 and KES 150,000',
+            error: 'invalid_amount'
+          }, status: :bad_request
+        end
+        
         # Generate simple account reference: GLT-{first 5 digits of sender phone}
         account_reference = generate_account_reference(sender_phone)
         
@@ -42,8 +61,22 @@ module Public
         
         Rails.logger.info "📡 M-Pesa Response:"
         Rails.logger.info "Success: #{result[:success]}"
-        Rails.logger.info "Data: #{result[:data].inspect}" if result[:data]
-        Rails.logger.info "Message: #{result[:message]}" if result[:message]
+        
+        if result[:data]
+          Rails.logger.info "Data: #{result[:data].inspect}"
+        end
+        
+        if result[:message]
+          Rails.logger.error "❌ M-Pesa Error Message: #{result[:message]}"
+        end
+        
+        if result[:error]
+          Rails.logger.error "❌ M-Pesa Error Details: #{result[:error].inspect}"
+        end
+        
+        if result[:response]
+          Rails.logger.error "❌ Full M-Pesa Response: #{result[:response].inspect}"
+        end
         
         if result[:success]
           # Store payment details in session
@@ -68,10 +101,20 @@ module Public
         else
           Rails.logger.error "❌ M-Pesa STK Push failed: #{result[:message]}"
           
+          # Get more detailed error info
+          error_details = {
+            message: result[:message] || 'Failed to initiate payment',
+            error_code: result[:error_code],
+            mpesa_response: result[:response]
+          }
+          
+          Rails.logger.error "Full error details: #{error_details.inspect}"
+          
           render json: {
             success: false,
             message: result[:message] || 'Failed to initiate payment',
-            error: 'payment_initiation_failed'
+            error: 'payment_initiation_failed',
+            details: Rails.env.development? ? error_details : nil
           }, status: :unprocessable_entity
         end
         
@@ -220,8 +263,9 @@ module Public
       end
     end
     
-    # Generate account reference: GLT-{first 5 digits of phone}
-    # Examples: GLT-71229, GLT-72234, GLT-11122
+    # Generate account reference: GLT{first 5 digits of phone}
+    # NO HYPHENS - M-Pesa only accepts alphanumeric
+    # Examples: GLT71229, GLT72234, GLT11122
     def generate_account_reference(phone)
       clean_phone = phone.to_s.gsub(/\D/, '')
       
@@ -240,9 +284,10 @@ module Public
       # Ensure we have exactly 5 digits, pad with 0s if needed
       digits = digits.to_s.ljust(5, '0')[0..4]
       
-      reference = "GLT-#{digits}"
+      # NO HYPHEN - M-Pesa rejects special characters
+      reference = "GLT#{digits}"
       
-      # Max length check (should be 9 chars: GLT-12345)
+      # Max length check (should be 8 chars: GLT12345)
       reference[0..11] # Trim to 12 chars max just in case
     end
     
