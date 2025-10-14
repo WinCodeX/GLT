@@ -433,7 +433,13 @@ module Public
       pending_payment = session[:pending_package_payment]
       return false unless pending_payment
       
-      # Check if this is the correct checkout request
+      # Check if this is manual verification
+      if pending_payment[:verification_method] == 'manual'
+        # For manual verification, check if transaction code matches
+        return pending_payment[:transaction_code].to_s.upcase == transaction_id.to_s.upcase
+      end
+      
+      # Check if this is the correct checkout request (STK push)
       return false unless pending_payment[:checkout_request_id] == transaction_id
       
       # Query M-Pesa to verify payment
