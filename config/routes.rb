@@ -800,11 +800,10 @@ namespace :public do
   get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
 
   # M-Pesa payment endpoints for public packages
-  namespace :mpesa do
-    post 'initiate_payment', to: 'mpesa#initiate_payment', as: 'initiate_payment'
-    get 'check_payment_status', to: 'mpesa#check_payment_status', as: 'check_payment_status'
-    post 'callback', to: 'mpesa#callback', as: 'callback'
-  end
+  # FIXED: Remove nested namespace since controller is Public::MpesaController (not Public::Mpesa::MpesaController)
+  post 'mpesa/initiate_payment', to: 'mpesa#initiate_payment', as: 'mpesa_initiate_payment'
+  get 'mpesa/check_payment_status', to: 'mpesa#check_payment_status', as: 'mpesa_check_payment_status'
+  post 'mpesa/callback', to: 'mpesa#callback', as: 'mpesa_callback'
 
   # Package routes
   resources :packages, only: [:new, :create] do
