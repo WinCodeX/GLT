@@ -163,17 +163,22 @@
         headers['X-CSRF-Token'] = csrfToken;
       }
       
+      const requestData = {
+        phone_number: phone,
+        amount: amount,
+        sender_phone: senderPhone
+      };
+      
+      console.log('🚀 Initiating M-Pesa payment:', requestData);
+      
       const response = await fetch('/public/mpesa/initiate_payment', {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({
-          phone_number: phone,
-          amount: amount,
-          sender_phone: senderPhone
-        })
+        body: JSON.stringify(requestData)
       });
       
       const result = await response.json();
+      console.log('📡 M-Pesa API response:', result);
       
       if (result.success) {
         checkoutRequestId = result.checkout_request_id;
@@ -185,7 +190,10 @@
         // Start checking payment status
         startPaymentStatusCheck();
       } else {
-        showPaymentError(result.message || 'Failed to initiate payment');
+        console.error('Payment initiation failed:', result);
+        const errorMsg = result.message || 'Failed to initiate payment';
+        const errorDetails = result.details ? ` (${JSON.stringify(result.details)})` : '';
+        showPaymentError(errorMsg + errorDetails);
       }
     } catch (error) {
       console.error('Payment initiation error:', error);
