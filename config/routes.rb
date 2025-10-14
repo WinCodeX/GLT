@@ -785,7 +785,6 @@ end
     end
   end
 
-
 # ==========================================
 # 🌐 PUBLIC ENDPOINTS
 # ==========================================
@@ -800,13 +799,18 @@ namespace :public do
   # Agent area endpoint (REQUIRED for automatic pricing)
   get 'agents/:id/area', to: 'agents#area', as: 'agent_area'
 
+  # M-Pesa payment endpoints for public packages
+  namespace :mpesa do
+    post 'initiate_payment', to: 'mpesa#initiate_payment', as: 'initiate_payment'
+    get 'check_payment_status', to: 'mpesa#check_payment_status', as: 'check_payment_status'
+    post 'callback', to: 'mpesa#callback', as: 'callback'
+  end
+
   # Package routes
   resources :packages, only: [:new, :create] do
     collection do
       # These need explicit names for the path helpers to work
       post 'calculate_pricing', as: 'calculate_pricing'
-      post 'initiate_payment', as: 'initiate_payment'
-      get 'check_payment_status', as: 'check_payment_status'
 
       # Delivery type specific routes
       get 'fragile', action: :new, defaults: { delivery_type: 'fragile' }, as: 'fragile'
