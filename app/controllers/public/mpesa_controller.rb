@@ -1,8 +1,8 @@
 # app/controllers/public/mpesa_controller.rb
 module Public
   class MpesaController < WebApplicationController
-    skip_before_action :authenticate_user!, only: [:initiate_payment, :check_payment_status, :callback]
-    skip_before_action :verify_authenticity_token, only: [:initiate_payment, :check_payment_status, :callback]
+    skip_before_action :authenticate_user!, only: [:initiate_payment, :check_payment_status, :verify_manual, :callback]
+    skip_before_action :verify_authenticity_token, only: [:initiate_payment, :check_payment_status, :verify_manual, :callback]
     
     # POST /public/mpesa/initiate_payment
     def initiate_payment
@@ -178,6 +178,86 @@ module Public
         render json: {
           success: false,
           message: 'Failed to check payment status',
+          error: Rails.env.development? ? e.message : 'internal_error'
+        }, status: :internal_server_error
+      end
+    end
+    
+    # POST /public/mpesa/verify_manual - Manual verification for public packages
+    def verify_manual
+      begin
+        transaction_code = params[:transaction_code]&.upcase&.strip
+        amount = params[:amount]&.to_f
+        
+        Rails.logger.info "=" * 60
+        Rails.logger.info "🔍 PUBLIC MANUAL VERIFICATION"
+        Rails.logger.info "=" * 60
+        Rails.logger.info "Transaction Code: #{transaction_code}"
+        Rails.logger.info "Amount: #{amount}"
+        
+        unless transaction_code.present? && amount && amount > 0
+          return render json: {
+            success: false,
+            message: 'Missing required parameters'
+          }, status: :bad_request
+        end
+        
+        # Validate transaction code format (M-Pesa codes are 10 characters)
+        unless transaction_code.match?(/^[A-Z0-9]{10}$/)
+          return render json: {
+            success: false,
+            message: 'Invalid transaction code format. M-Pesa codes are 10 characters (e.g., TJ7P76Q8GV)'
+          }, status: :unprocessable_entity
+        end
+        
+        # Check if transaction code has already been used
+        # Search in session data or create a simple verification record
+        pending_payment = session[:pending_package_payment]
+        
+        # Simple verification for public packages
+        verification_result = MpesaService.verify_transaction_simple(
+          transaction_code: transaction_code,
+          amount: amount,
+          phone_number: params[:phone_number] || '254712000000' # Placeholder if not provided
+        )
+        
+        if verification_result[:success]
+          # Store verified payment in session for package creation
+          session[:pending_package_payment] = {
+            transaction_code: transaction_code,
+            amount: amount,
+            verified_at: Time.current.iso8601,
+            verification_method: 'manual'
+          }
+          
+          Rails.logger.info "✅ Manual verification successful: #{transaction_code}"
+          
+          render json: {
+            success: true,
+            message: 'Payment verified successfully',
+            data: {
+              transaction_code: transaction_code,
+              amount: amount,
+              verified: true
+            }
+          }
+        else
+          Rails.logger.warn "❌ Verification failed: #{verification_result[:message]}"
+          
+          render json: {
+            success: false,
+            message: verification_result[:message] || 'Transaction verification failed'
+          }, status: :unprocessable_entity
+        end
+        
+      rescue => e
+        Rails.logger.error "❌ MANUAL VERIFICATION ERROR"
+        Rails.logger.error "Error: #{e.class} - #{e.message}"
+        Rails.logger.error e.backtrace.join("\n")
+        
+        render json: {
+          success: false,
+          message: 'Verification failed',
           error: Rails.env.development? ? e.message : 'internal_error'
         }, status: :internal_server_error
       end
