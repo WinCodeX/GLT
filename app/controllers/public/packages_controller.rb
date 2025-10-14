@@ -1,7 +1,7 @@
 # app/controllers/public/packages_controller.rb
 module Public
   class PackagesController < WebApplicationController
-    skip_before_action :authenticate_user!, only: [:new, :create, :calculate_pricing, :initiate_payment, :check_payment_status]
+    skip_before_action :authenticate_user!, only: [:new, :create, :calculate_pricing]
     skip_before_action :verify_authenticity_token, only: [:calculate_pricing]
     
     before_action :set_form_data, only: [:new]
@@ -90,6 +90,9 @@ module Public
               created_via: 'web'
             }
           )
+          
+          # Clear payment session
+          session.delete(:pending_package_payment)
           
           send_creation_notification(package)
           
@@ -223,106 +226,6 @@ module Public
           message: 'Failed to calculate pricing',
           error: Rails.env.development? ? e.message : 'calculation_error'
         }, status: :unprocessable_entity
-      end
-    end
-    
-    def initiate_payment
-      begin
-        phone_number = normalize_phone_number(params[:phone_number])
-        amount = params[:amount].to_f
-        package_reference = params[:package_reference] || "PKG-#{SecureRandom.hex(4).upcase}"
-        
-        if phone_number.blank? || amount <= 0
-          return render json: {
-            success: false,
-            message: 'Invalid payment parameters',
-            error: 'validation_error'
-          }, status: :bad_request
-        end
-        
-        result = MpesaService.initiate_stk_push(
-          phone_number: phone_number,
-          amount: amount,
-          account_reference: package_reference,
-          transaction_desc: "Package payment - #{package_reference}"
-        )
-        
-        if result[:success]
-          session[:pending_package_payment] = {
-            checkout_request_id: result[:data][:CheckoutRequestID],
-            merchant_request_id: result[:data][:MerchantRequestID],
-            phone_number: phone_number,
-            amount: amount,
-            package_reference: package_reference,
-            initiated_at: Time.current
-          }
-          
-          render json: {
-            success: true,
-            message: 'Payment initiated. Please check your phone.',
-            checkout_request_id: result[:data][:CheckoutRequestID],
-            merchant_request_id: result[:data][:MerchantRequestID]
-          }
-        else
-          render json: {
-            success: false,
-            message: result[:message] || 'Failed to initiate payment',
-            error: 'payment_initiation_failed'
-          }, status: :unprocessable_entity
-        end
-        
-      rescue => e
-        Rails.logger.error "Payment initiation error: #{e.message}"
-        Rails.logger.error e.backtrace.join("\n")
-        
-        render json: {
-          success: false,
-          message: 'Payment initiation failed',
-          error: Rails.env.development? ? e.message : 'internal_error'
-        }, status: :internal_server_error
-      end
-    end
-    
-    def check_payment_status
-      begin
-        checkout_request_id = params[:checkout_request_id]
-        
-        unless checkout_request_id.present?
-          return render json: {
-            success: false,
-            message: 'Checkout request ID required',
-            error: 'validation_error'
-          }, status: :bad_request
-        end
-        
-        result = MpesaService.query_stk_status(checkout_request_id)
-        
-        if result[:success]
-          status = result[:data][:ResultCode] == '0' ? 'completed' : 'failed'
-          
-          render json: {
-            success: true,
-            payment_status: status,
-            result_code: result[:data][:ResultCode],
-            result_desc: result[:data][:ResultDesc],
-            can_proceed: status == 'completed'
-          }
-        else
-          render json: {
-            success: false,
-            message: 'Failed to check payment status',
-            error: 'status_check_failed'
-          }, status: :unprocessable_entity
-        end
-        
-      rescue => e
-        Rails.logger.error "Payment status check error: #{e.message}"
-        
-        render json: {
-          success: false,
-          message: 'Failed to check payment status',
-          error: Rails.env.development? ? e.message : 'internal_error'
-        }, status: :internal_server_error
       end
     end
     
@@ -530,13 +433,18 @@ module Public
       pending_payment = session[:pending_package_payment]
       return false unless pending_payment
       
-      result = MpesaService.query_stk_status(pending_payment[:checkout_request_id])
+      # Check if this is the correct checkout request
+      return false unless pending_payment[:checkout_request_id] == transaction_id
       
-      if result[:success] && result[:data][:ResultCode] == '0'
-        session.delete(:pending_package_payment)
+      # Query M-Pesa to verify payment
+      result = MpesaService.query_stk_status(transaction_id)
+      
+      if result[:success] && result[:data]['ResultCode'].to_i == 0
+        Rails.logger.info "✅ Payment verified for checkout_request_id: #{transaction_id}"
         return true
       end
       
+      Rails.logger.warn "❌ Payment verification failed for checkout_request_id: #{transaction_id}"
       false
     rescue => e
       Rails.logger.error "Payment verification error: #{e.message}"
@@ -556,22 +464,6 @@ module Public
       
       # Fallback to simple format (consistent with API controller)
       "PKG-#{SecureRandom.hex(4).upcase}-#{Time.current.strftime('%Y%m%d')}"
-    end
-    
-    def normalize_phone_number(phone)
-      return nil if phone.blank?
-      
-      clean_phone = phone.gsub(/\D/, '')
-      
-      if clean_phone.start_with?('254')
-        clean_phone
-      elsif clean_phone.start_with?('0')
-        "254#{clean_phone[1..-1]}"
-      elsif clean_phone.length == 9
-        "254#{clean_phone}"
-      else
-        clean_phone
-      end
     end
     
     def send_creation_notification(package)
