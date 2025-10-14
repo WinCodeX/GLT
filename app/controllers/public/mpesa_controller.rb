@@ -2,7 +2,7 @@
 module Public
   class MpesaController < WebApplicationController
     skip_before_action :authenticate_user!, only: [:initiate_payment, :check_payment_status, :callback]
-    skip_before_action :verify_authenticity_token, only: [:callback]
+    skip_before_action :verify_authenticity_token, only: [:initiate_payment, :check_payment_status, :callback]
     
     # POST /public/mpesa/initiate_payment
     def initiate_payment
