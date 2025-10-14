@@ -1,5 +1,5 @@
 # app/services/qr_code_generator.rb
-# FIXED: Generates QR codes with correct public tracking URL
+# FIXED: Generates QR codes with correct public tracking URL and company logo
 
 require 'rqrcode'
 require 'chunky_png'
@@ -412,108 +412,139 @@ class QrCodeGenerator
     ChunkyPNG::Color.rgb(r, g, b)
   end
 
-  # ENHANCED: Organic center logo
+  # MODIFIED: Load actual logo.png and render as circular with zoom
   def add_center_logo(png, total_size)
-    center_x = total_size / 2
-    center_y = total_size / 2
-    logo_size = options[:logo_size]
+    begin
+      # Try to load logo from multiple possible paths
+      logo_paths = [
+        Rails.root.join('app', 'assets', 'images', 'logo.png'),
+        Rails.root.join('public', 'logo.png'),
+        Rails.root.join('app', 'assets', 'images', 'logos', 'logo.png')
+      ]
+      
+      logo_path = logo_paths.find { |path| File.exist?(path) }
+      
+      unless logo_path
+        Rails.logger.warn "⚠️ Logo file not found in any of the expected paths"
+        return
+      end
+      
+      Rails.logger.info "📷 Loading logo from: #{logo_path}"
+      
+      # Load logo image
+      logo = ChunkyPNG::Image.from_file(logo_path)
+      
+      # Calculate center position and size
+      center_x = total_size / 2
+      center_y = total_size / 2
+      logo_size = options[:logo_size]
+      zoom_factor = options[:logo_zoom] # Zoom in on the logo
+      
+      # Calculate zoomed dimensions
+      zoomed_size = (logo_size * zoom_factor).to_i
+      
+      # Calculate source crop area (center of logo, zoomed)
+      src_size = (logo.width.to_f / zoom_factor).to_i
+      src_x = (logo.width - src_size) / 2
+      src_y = (logo.height - src_size) / 2
+      
+      # Create white circular background for logo
+      logo_radius = (logo_size / 2).to_i
+      draw_circular_background(png, center_x, center_y, logo_radius)
+      
+      # Render logo as circular mask
+      render_circular_logo(png, logo, center_x, center_y, logo_size, src_x, src_y, src_size)
+      
+      Rails.logger.info "✅ Logo added successfully"
+      
+    rescue => e
+      Rails.logger.error "❌ Error loading logo: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+    end
+  end
+
+  # Draw circular white background for logo
+  def draw_circular_background(png, center_x, center_y, radius)
+    background_color = options[:background_color]
     
-    # Create organic circular background
-    logo_radius = logo_size / 2
-    
-    # FIXED: Use integer range with to_i conversion
-    radius_int = logo_radius.to_i
-    
-    (-radius_int..radius_int).each do |x|
-      (-radius_int..radius_int).each do |y|
+    (-radius..radius).each do |x|
+      (-radius..radius).each do |y|
         distance = Math.sqrt(x * x + y * y)
-        next if distance > logo_radius
-        
-        # Organic alpha with smooth falloff
-        alpha = if distance <= logo_radius * 0.8
-          0.95
-        else
-          falloff = (distance - logo_radius * 0.8) / (logo_radius * 0.2)
-          0.95 * (1.0 - falloff)
-        end
-        
-        alpha = [alpha, 0.0].max
-        next if alpha < 0.1
+        next if distance > radius
         
         plot_x = center_x + x
         plot_y = center_y + y
         
         next if plot_x < 0 || plot_x >= png.width || plot_y < 0 || plot_y >= png.height
         
-        if alpha >= 0.9
-          png[plot_x, plot_y] = options[:logo_color]
+        png[plot_x, plot_y] = background_color
+      end
+    end
+  end
+
+  # Render logo with circular mask
+  def render_circular_logo(png, logo, center_x, center_y, target_size, src_x, src_y, src_size)
+    radius = (target_size / 2).to_i
+    
+    (-radius..radius).each do |x|
+      (-radius..radius).each do |y|
+        distance = Math.sqrt(x * x + y * y)
+        
+        # Skip pixels outside circle
+        next if distance > radius
+        
+        # Calculate anti-aliased alpha for smooth edges
+        alpha = if distance < radius - 1
+          1.0
+        else
+          1.0 - (distance - (radius - 1))
+        end
+        
+        alpha = [[alpha, 0.0].max, 1.0].min
+        next if alpha < 0.1
+        
+        # Calculate position on QR code
+        plot_x = center_x + x
+        plot_y = center_y + y
+        
+        next if plot_x < 0 || plot_x >= png.width || plot_y < 0 || plot_y >= png.height
+        
+        # Calculate position on source logo (with zoom)
+        logo_x = src_x + ((x + radius) * src_size / target_size).to_i
+        logo_y = src_y + ((y + radius) * src_size / target_size).to_i
+        
+        # Ensure logo coordinates are within bounds
+        logo_x = [[logo_x, 0].max, logo.width - 1].min
+        logo_y = [[logo_y, 0].max, logo.height - 1].min
+        
+        # Get logo pixel
+        logo_pixel = logo[logo_x, logo_y]
+        
+        # Apply circular mask with anti-aliasing
+        if alpha >= 0.99
+          png[plot_x, plot_y] = logo_pixel
         else
           existing_color = png[plot_x, plot_y]
-          blended_color = blend_colors_simple(existing_color, options[:logo_color], alpha)
+          blended_color = blend_colors_simple(existing_color, logo_pixel, alpha)
           png[plot_x, plot_y] = blended_color
         end
       end
     end
-    
-    # Draw simple paper plane icon
-    draw_simple_icon(png, center_x, center_y, logo_size)
-  end
-
-  def draw_simple_icon(png, center_x, center_y, size)
-    # Draw a simple paper plane icon
-    icon_color = ChunkyPNG::Color::WHITE
-    half_size = (size / 4).to_i
-    
-    # Simple triangle representing paper plane
-    (0..half_size).each do |i|
-      # Ensure coordinates are integers
-      x1 = (center_x - half_size + i).to_i
-      y1 = (center_y - i).to_i
-      y2 = (center_y + i).to_i
-      x2 = (center_x + i).to_i
-      y3 = center_y.to_i
-      
-      # Check bounds before drawing
-      png[x1, y1] = icon_color if x1 >= 0 && x1 < png.width && y1 >= 0 && y1 < png.height
-      png[x1, y2] = icon_color if x1 >= 0 && x1 < png.width && y2 >= 0 && y2 < png.height
-      png[x2, y3] = icon_color if x2 >= 0 && x2 < png.width && y3 >= 0 && y3 < png.height
-    end
-  end
-
-  # Keep your original methods but with organic enhancements
-  def calculate_corner_radius(modules, row, col)
-    calculate_organic_corner_radius(modules, row, col)
-  end
-
-  def draw_rounded_module(png, x, y, size, radius)
-    draw_organic_rounded_module(png, x, y, size, radius)
-  end
-
-  def draw_square_module(png, x, y, size)
-    draw_organic_square_module(png, x, y, size)
-  end
-
-  def apply_gradient_effect(png)
-    apply_organic_gradient_effect(png)
-  end
-
-  def interpolate_color(color1, color2, ratio)
-    interpolate_color_organic(color1, color2, ratio)
   end
 
   def default_options
     {
       module_size: 8,
       border_size: 20,
-      corner_radius: 5,            # Increased for more organic look
+      corner_radius: 5,
       qr_size: 6,
       background_color: ChunkyPNG::Color::WHITE,
       foreground_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
       data_type: :url,
       center_logo: true,
-      logo_size: 30,
-      logo_color: ChunkyPNG::Color.rgb(124, 58, 237), # Purple
-      gradient: true,              # Enable gradient for organic look
+      logo_size: 60,              # Larger to accommodate circular crop
+      logo_zoom: 1.3,             # Zoom in 30% on the logo
+      gradient: true,
       gradient_start: ChunkyPNG::Color.rgb(124, 58, 237), # Purple (#7c3aed)
       gradient_end: ChunkyPNG::Color.rgb(59, 130, 246)    # Blue (#3b82f6)
     }
