@@ -1,6 +1,6 @@
 <!-- app/views/public/packages/_payment_modal.html.erb -->
 <div id="paymentModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.8); z-index: 9999; align-items: center; justify-content: center;">
-  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 20px; padding: 2rem; max-width: 500px; width: 90%; border: 1px solid rgba(139, 92, 246, 0.3);">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 20px; padding: 2rem; max-width: 500px; width: 90%; border: 1px solid rgba(139, 92, 246, 0.3); max-height: 90vh; overflow-y: auto;">
     
     <!-- Modal Header -->
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
@@ -23,6 +23,24 @@
           <div style="width: 8px; height: 8px; border-radius: 50%; background: #8b5cf6; animation: pulse 1.5s ease-in-out infinite;"></div>
           <span style="font-size: 0.875rem;">Waiting for payment...</span>
         </div>
+        <!-- Cancel option -->
+        <button onclick="cancelPaymentCheck()" style="margin-top: 1rem; padding: 0.5rem 1rem; background: transparent; border: 1px solid #ef4444; border-radius: 8px; color: #ef4444; cursor: pointer; font-size: 0.875rem;">
+          Cancel
+        </button>
+      </div>
+
+      <div id="paymentCancelled" style="display: none; text-align: center; padding: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">⏹️</div>
+        <h4 style="color: #f59e0b; font-size: 1.25rem; margin-bottom: 0.5rem;">Payment Cancelled</h4>
+        <p id="cancelReason" style="color: #a1a1aa; margin-bottom: 1.5rem;">You cancelled the M-Pesa payment</p>
+        <div style="display: flex; gap: 0.5rem;">
+          <button onclick="retryPayment()" style="flex: 1; padding: 0.75rem; background: #8b5cf6; border: none; border-radius: 8px; color: #ffffff; font-weight: 600; cursor: pointer;">
+            Try Again
+          </button>
+          <button onclick="switchToManualVerification()" style="flex: 1; padding: 0.75rem; background: transparent; border: 1px solid #8b5cf6; border-radius: 8px; color: #8b5cf6; font-weight: 600; cursor: pointer;">
+            Verify Manually
+          </button>
+        </div>
       </div>
 
       <div id="paymentSuccess" style="display: none; text-align: center; padding: 2rem;">
@@ -35,14 +53,19 @@
         <div style="font-size: 3rem; margin-bottom: 1rem;">❌</div>
         <h4 style="color: #ef4444; font-size: 1.25rem; margin-bottom: 0.5rem;">Payment Failed</h4>
         <p id="failureReason" style="color: #a1a1aa; margin-bottom: 1.5rem;">Please try again</p>
-        <button onclick="retryPayment()" style="width: 100%; padding: 0.75rem; background: #8b5cf6; border: none; border-radius: 8px; color: #ffffff; font-weight: 600; cursor: pointer;">
-          Retry Payment
-        </button>
+        <div style="display: flex; gap: 0.5rem;">
+          <button onclick="retryPayment()" style="flex: 1; padding: 0.75rem; background: #8b5cf6; border: none; border-radius: 8px; color: #ffffff; font-weight: 600; cursor: pointer;">
+            Retry Payment
+          </button>
+          <button onclick="switchToManualVerification()" style="flex: 1; padding: 0.75rem; background: transparent; border: 1px solid #8b5cf6; border-radius: 8px; color: #8b5cf6; font-weight: 600; cursor: pointer;">
+            Verify Manually
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Payment Form -->
-    <div id="paymentForm">
+    <!-- STK Push Form -->
+    <div id="stkPushForm" style="display: block;">
       <div style="margin-bottom: 1rem;">
         <label style="display: block; color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.5rem;">M-Pesa Phone Number</label>
         <input 
@@ -63,9 +86,65 @@
       <button 
         id="initiatePaymentBtn" 
         onclick="initiatePayment()" 
-        style="width: 100%; padding: 1rem; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; border-radius: 12px; color: #ffffff; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);"
+        style="width: 100%; padding: 1rem; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none; border-radius: 12px; color: #ffffff; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4); margin-bottom: 1rem;"
       >
-        Pay with M-Pesa
+        📱 Send M-Pesa Prompt
+      </button>
+
+      <button 
+        onclick="switchToManualVerification()" 
+        style="width: 100%; padding: 1rem; background: transparent; border: 2px solid #8b5cf6; border-radius: 12px; color: #8b5cf6; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.3s;"
+      >
+        ✏️ Already Paid? Verify Manually
+      </button>
+    </div>
+
+    <!-- Manual Verification Form -->
+    <div id="manualVerificationForm" style="display: none;">
+      <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+        <h4 style="color: #8b5cf6; font-size: 1rem; margin-bottom: 0.5rem; font-weight: 600;">📝 Manual Verification</h4>
+        <p style="color: #a1a1aa; font-size: 0.875rem; line-height: 1.5; margin: 0;">
+          Already paid via M-Pesa? Enter your transaction code (e.g., TJ7P76Q8GV) to verify your payment.
+        </p>
+      </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.5rem;">M-Pesa Transaction Code</label>
+        <input 
+          type="text" 
+          id="transactionCode" 
+          placeholder="TJ7P76Q8GV" 
+          maxlength="10"
+          style="width: 100%; padding: 0.75rem; background: rgba(10, 10, 15, 0.6); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #ffffff; font-size: 1rem; text-transform: uppercase;"
+        />
+        <small style="color: #6b7280; font-size: 0.75rem; display: block; margin-top: 0.25rem;">
+          10-character code from M-Pesa SMS
+        </small>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; color: #a1a1aa; font-size: 0.875rem; margin-bottom: 0.5rem;">Amount Paid (KES)</label>
+        <input 
+          type="number" 
+          id="manualAmount" 
+          placeholder="300" 
+          style="width: 100%; padding: 0.75rem; background: rgba(10, 10, 15, 0.6); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 8px; color: #ffffff; font-size: 1rem;"
+        />
+      </div>
+
+      <button 
+        id="verifyManualBtn" 
+        onclick="verifyManualPayment()" 
+        style="width: 100%; padding: 1rem; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); border: none; border-radius: 12px; color: #ffffff; font-size: 1.125rem; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4); margin-bottom: 1rem;"
+      >
+        ✅ Verify Payment
+      </button>
+
+      <button 
+        onclick="switchToStkPush()" 
+        style="width: 100%; padding: 0.75rem; background: transparent; border: 1px solid #6b7280; border-radius: 8px; color: #a1a1aa; font-size: 0.875rem; cursor: pointer;"
+      >
+        ← Back to M-Pesa Prompt
       </button>
     </div>
 
@@ -78,7 +157,7 @@
           <line x1="12" y1="8" x2="12.01" y2="8"/>
         </svg>
         <p style="color: #93c5fd; font-size: 0.875rem; line-height: 1.5; margin: 0;">
-          You will receive an M-Pesa prompt on your phone. Enter your PIN to complete the payment. Your package will be created immediately after payment.
+          <span id="infoText">You will receive an M-Pesa prompt on your phone. Enter your PIN to complete the payment.</span>
         </p>
       </div>
     </div>
@@ -95,7 +174,7 @@
     50% { opacity: 0.5; transform: scale(0.8); }
   }
   
-  #initiatePaymentBtn:hover {
+  #initiatePaymentBtn:hover, #verifyManualBtn:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(16, 185, 129, 0.5);
   }
@@ -104,17 +183,14 @@
 <script>
   let checkoutRequestId = null;
   let paymentCheckInterval = null;
+  let currentAmount = 0;
 
   function closePaymentModal() {
     const modal = document.getElementById('paymentModal');
     modal.style.display = 'none';
     
     // Reset states
-    document.getElementById('paymentForm').style.display = 'block';
-    document.getElementById('initiatingPayment').style.display = 'none';
-    document.getElementById('awaitingPayment').style.display = 'none';
-    document.getElementById('paymentSuccess').style.display = 'none';
-    document.getElementById('paymentFailed').style.display = 'none';
+    resetModalState();
     
     // Clear interval if exists
     if (paymentCheckInterval) {
@@ -130,13 +206,55 @@
     if (submitBtn && submitText && submitSpinner) {
       submitText.textContent = 'Proceed to Payment';
       submitSpinner.classList.add('hidden');
-      submitBtn.disabled = true; // Keep disabled until they calculate again
+      submitBtn.disabled = true;
     }
+  }
+
+  function resetModalState() {
+    // Hide all status views
+    document.getElementById('stkPushForm').style.display = 'block';
+    document.getElementById('manualVerificationForm').style.display = 'none';
+    document.getElementById('initiatingPayment').style.display = 'none';
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentSuccess').style.display = 'none';
+    document.getElementById('paymentFailed').style.display = 'none';
+    document.getElementById('paymentCancelled').style.display = 'none';
+  }
+
+  function switchToManualVerification() {
+    resetModalState();
+    document.getElementById('stkPushForm').style.display = 'none';
+    document.getElementById('manualVerificationForm').style.display = 'block';
+    
+    // Pre-fill amount
+    document.getElementById('manualAmount').value = currentAmount;
+    
+    // Update info text
+    document.getElementById('infoText').textContent = 'Enter the transaction code from your M-Pesa SMS to verify your payment.';
+  }
+
+  function switchToStkPush() {
+    resetModalState();
+    document.getElementById('stkPushForm').style.display = 'block';
+    document.getElementById('manualVerificationForm').style.display = 'none';
+    document.getElementById('infoText').textContent = 'You will receive an M-Pesa prompt on your phone. Enter your PIN to complete the payment.';
+  }
+
+  function cancelPaymentCheck() {
+    if (paymentCheckInterval) {
+      clearInterval(paymentCheckInterval);
+      paymentCheckInterval = null;
+    }
+    
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentCancelled').style.display = 'block';
+    document.getElementById('cancelReason').textContent = 'Payment check cancelled. You can try again or verify manually if you already paid.';
   }
 
   async function initiatePayment() {
     const phone = document.getElementById('paymentPhone').value;
     const amount = parseFloat(document.getElementById('paymentAmount').textContent);
+    currentAmount = amount;
     
     // Get sender phone from the form (used for account reference generation)
     const senderPhone = document.getElementById('package_sender_phone')?.value || phone;
@@ -147,7 +265,7 @@
     }
     
     // Hide form, show initiating
-    document.getElementById('paymentForm').style.display = 'none';
+    document.getElementById('stkPushForm').style.display = 'none';
     document.getElementById('initiatingPayment').style.display = 'block';
     
     try {
@@ -210,7 +328,7 @@
       
       if (attempts > maxAttempts) {
         clearInterval(paymentCheckInterval);
-        showPaymentError('Payment timeout. Please try again.');
+        showPaymentCancelled('Payment timeout. Please try again or verify manually.');
         return;
       }
       
@@ -235,9 +353,12 @@
           if (result.payment_status === 'completed') {
             clearInterval(paymentCheckInterval);
             handlePaymentSuccess();
-          } else if (result.payment_status === 'failed' || result.payment_status === 'cancelled') {
+          } else if (result.payment_status === 'failed') {
             clearInterval(paymentCheckInterval);
             showPaymentError(result.result_desc || 'Payment failed');
+          } else if (result.payment_status === 'cancelled') {
+            clearInterval(paymentCheckInterval);
+            showPaymentCancelled(result.result_desc || 'You cancelled the M-Pesa payment on your phone');
           }
         }
       } catch (error) {
@@ -296,8 +417,97 @@
     document.getElementById('failureReason').textContent = message;
   }
 
+  function showPaymentCancelled(message) {
+    document.getElementById('initiatingPayment').style.display = 'none';
+    document.getElementById('awaitingPayment').style.display = 'none';
+    document.getElementById('paymentCancelled').style.display = 'block';
+    document.getElementById('cancelReason').textContent = message;
+  }
+
   function retryPayment() {
-    document.getElementById('paymentFailed').style.display = 'none';
-    document.getElementById('paymentForm').style.display = 'block';
+    resetModalState();
+    document.getElementById('stkPushForm').style.display = 'block';
+  }
+
+  async function verifyManualPayment() {
+    const transactionCode = document.getElementById('transactionCode').value.trim().toUpperCase();
+    const amount = parseFloat(document.getElementById('manualAmount').value);
+    
+    if (!transactionCode || transactionCode.length !== 10) {
+      alert('Please enter a valid 10-character M-Pesa transaction code');
+      return;
+    }
+    
+    if (!amount || amount <= 0) {
+      alert('Please enter the amount you paid');
+      return;
+    }
+    
+    // Show loading
+    const verifyBtn = document.getElementById('verifyManualBtn');
+    verifyBtn.disabled = true;
+    verifyBtn.innerHTML = '<span style="display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite;"></span> Verifying...';
+    
+    try {
+      const csrfToken = document.querySelector('[name="csrf-token"]')?.content || '';
+      
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+      
+      console.log('🔍 Verifying manual payment:', { transactionCode, amount });
+      
+      const response = await fetch('/public/mpesa/verify_manual', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          transaction_code: transactionCode,
+          amount: amount
+        })
+      });
+      
+      const result = await response.json();
+      console.log('📡 Verification response:', result);
+      
+      if (result.success) {
+        // Show success and create package
+        document.getElementById('manualVerificationForm').style.display = 'none';
+        document.getElementById('paymentSuccess').style.display = 'block';
+        
+        // Create package with manual verification
+        const formData = window.pendingPackageData;
+        formData.append('mpesa_transaction_id', transactionCode);
+        formData.append('verification_method', 'manual');
+        
+        const createResponse = await fetch('/public/packages', {
+          method: 'POST',
+          headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+          body: formData
+        });
+        
+        const createResult = await createResponse.json();
+        
+        if (createResult.success) {
+          setTimeout(() => {
+            window.location.href = createResult.data.tracking_url;
+          }, 2000);
+        } else {
+          throw new Error(createResult.message || 'Package creation failed');
+        }
+      } else {
+        alert(result.message || 'Verification failed. Please check your transaction code and try again.');
+        verifyBtn.disabled = false;
+        verifyBtn.textContent = '✅ Verify Payment';
+      }
+    } catch (error) {
+      console.error('Manual verification error:', error);
+      alert('Verification failed. Please try again or contact support.');
+      verifyBtn.disabled = false;
+      verifyBtn.textContent = '✅ Verify Payment';
+    }
   }
 </script>
