@@ -127,14 +127,19 @@
     const submitText = document.getElementById('submitText');
     const submitSpinner = document.getElementById('submitSpinner');
     
-    submitText.textContent = 'Proceed to Payment';
-    submitSpinner.classList.add('hidden');
-    submitBtn.disabled = true; // Keep disabled until they calculate again
+    if (submitBtn && submitText && submitSpinner) {
+      submitText.textContent = 'Proceed to Payment';
+      submitSpinner.classList.add('hidden');
+      submitBtn.disabled = true; // Keep disabled until they calculate again
+    }
   }
 
   async function initiatePayment() {
     const phone = document.getElementById('paymentPhone').value;
     const amount = parseFloat(document.getElementById('paymentAmount').textContent);
+    
+    // Get sender phone from the form (used for account reference generation)
+    const senderPhone = document.getElementById('package_sender_phone')?.value || phone;
     
     if (!phone || !amount) {
       alert('Please ensure phone number and amount are provided');
@@ -146,7 +151,7 @@
     document.getElementById('initiatingPayment').style.display = 'block';
     
     try {
-      const response = await fetch('/public/packages/initiate_payment', {
+      const response = await fetch('/public/mpesa/initiate_payment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,7 +160,7 @@
         body: JSON.stringify({
           phone_number: phone,
           amount: amount,
-          package_reference: 'WEB-' + Date.now()
+          sender_phone: senderPhone
         })
       });
       
@@ -193,7 +198,7 @@
       }
       
       try {
-        const response = await fetch(`/public/packages/check_payment_status?checkout_request_id=${checkoutRequestId}`, {
+        const response = await fetch(`/public/mpesa/check_payment_status?checkout_request_id=${checkoutRequestId}`, {
           headers: {
             'X-CSRF-Token': document.querySelector('[name="csrf-token"]').content
           }
@@ -205,7 +210,7 @@
           if (result.payment_status === 'completed') {
             clearInterval(paymentCheckInterval);
             handlePaymentSuccess();
-          } else if (result.payment_status === 'failed') {
+          } else if (result.payment_status === 'failed' || result.payment_status === 'cancelled') {
             clearInterval(paymentCheckInterval);
             showPaymentError(result.result_desc || 'Payment failed');
           }
@@ -247,7 +252,7 @@
     } catch (error) {
       console.error('Package creation error:', error);
       document.getElementById('paymentSuccess').style.display = 'none';
-      showPaymentError('Payment successful but package creation failed. Please contact support.');
+      showPaymentError('Payment successful but package creation failed. Please contact support with reference: ' + checkoutRequestId);
     }
   }
 
