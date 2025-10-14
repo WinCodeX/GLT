@@ -803,6 +803,7 @@ namespace :public do
   # FIXED: Remove nested namespace since controller is Public::MpesaController (not Public::Mpesa::MpesaController)
   post 'mpesa/initiate_payment', to: 'mpesa#initiate_payment', as: 'mpesa_initiate_payment'
   get 'mpesa/check_payment_status', to: 'mpesa#check_payment_status', as: 'mpesa_check_payment_status'
+  post 'mpesa/verify_manual', to: 'mpesa#verify_manual', as: 'mpesa_verify_manual'
   post 'mpesa/callback', to: 'mpesa#callback', as: 'mpesa_callback'
 
   # Package routes
