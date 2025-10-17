@@ -1,4 +1,4 @@
-# app/controllers/api/v1/scanning_controller.rb - FIXED: Enhanced debug logging
+# app/controllers/api/v1/scanning_controller.rb - FIXED: Area access authorization
 module Api
   module V1
     class ScanningController < ApplicationController
@@ -25,7 +25,7 @@ module Api
             }, status: :forbidden
           end
 
-          # FIXED: Get available actions based on current state and user role
+          # Get available actions based on current state and user role
           available_actions = get_available_scanning_actions(package, current_user)
           
           render json: {
@@ -88,7 +88,7 @@ module Api
 
           Rails.logger.info "✅ Access granted, creating scanning service"
 
-          # FIXED: Use PackageScanningService for consistent state management
+          # Use PackageScanningService for consistent state management
           scanning_service = PackageScanningService.new(
             package: package,
             user: current_user,
@@ -234,7 +234,7 @@ module Api
         end
       end
 
-      # NEW: Debug endpoint to test package and user states
+      # Debug endpoint to test package and user states
       def debug_package
         package_code = params[:package_code]&.strip
         action_type = params[:action_type]&.strip
@@ -255,19 +255,25 @@ module Api
               state: package.state,
               origin_area_id: package.origin_area_id,
               destination_area_id: package.destination_area_id,
-              user_id: package.user_id
+              user_id: package.user_id,
+              delivery_type: package.delivery_type,
+              is_location_based: package.location_based_delivery?
             },
             user: {
               id: current_user.id,
               role: current_user.primary_role,
-              email: current_user.email
+              email: current_user.email,
+              has_rider_records: current_user.riders.any?,
+              rider_area_ids: current_user.riders.pluck(:area_id).compact
             },
             action_type: action_type,
             validations: {
               can_access_package: current_user.can_access_package?(package),
               user_operates_in_origin: user_operates_in_area?(current_user, package.origin_area_id),
               user_operates_in_destination: user_operates_in_area?(current_user, package.destination_area_id),
-              package_owner: package.user_id == current_user.id
+              package_owner: package.user_id == current_user.id,
+              accessible_areas_count: current_user.accessible_areas.count,
+              has_unrestricted_access: current_user.send(:has_unrestricted_area_access?, current_user.accessible_areas)
             }
           }
 
@@ -329,7 +335,7 @@ module Api
         }
       end
 
-      # FIXED: Safe role-based action availability with method existence checks
+      # Get available scanning actions based on user role and package state
       def get_available_scanning_actions(package, user)
         actions = []
         
@@ -404,22 +410,58 @@ module Api
         end
       end
 
-      # FIXED: Safe area operation check
+      # FIXED: Check if user can operate in a specific area
+      # This matches the logic in User#operates_in_area?
       def user_operates_in_area?(user, area_id)
-        return false unless area_id
+        # Admin has access to all areas
         return true if user.primary_role == 'admin'
         
+        # Allow access to packages without area restrictions (location-based deliveries)
+        return true if area_id.nil?
+        
+        # Delegate to user's operates_in_area? method if available
         if user.respond_to?(:operates_in_area?)
           user.operates_in_area?(area_id)
         elsif user.respond_to?(:accessible_areas)
-          user.accessible_areas.exists?(id: area_id)
+          # Fallback: check accessible_areas directly
+          areas = user.accessible_areas
+          
+          # If user has unrestricted access, grant permission
+          return true if has_unrestricted_access?(user, areas)
+          
+          # Check if specific area is accessible
+          areas.exists?(id: area_id)
         else
-          # Fallback: assume user can operate in any area if no specific constraints
+          # Final fallback: no restrictions defined
           true
         end
       rescue => e
         Rails.logger.error "Error checking area operation: #{e.message}"
-        false
+        Rails.logger.error e.backtrace[0..5].join("\n")
+        # On error, deny access for non-admins
+        user.primary_role == 'admin'
+      end
+
+      # Check if user has unrestricted access to all areas
+      def has_unrestricted_access?(user, areas)
+        return false if areas.nil?
+        
+        # Check if areas relation represents all areas
+        begin
+          total_areas = Area.count
+          return false if total_areas.zero?
+          
+          # Compare SQL to detect Area.all relation
+          areas_sql = areas.to_sql
+          all_areas_sql = Area.all.to_sql
+          
+          return true if areas_sql == all_areas_sql
+          
+          # Fallback: check count (but avoid loading all records)
+          areas.limit(nil).count == total_areas
+        rescue
+          false
+        end
       end
 
       def package_tracking_url(code)
