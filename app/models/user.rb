@@ -550,7 +550,9 @@ class User < ApplicationRecord
 
   def operates_in_area?(area_id)
     return true if admin?
-    return false unless area_id
+    
+    # Allow access to packages without area restrictions (location-based deliveries)
+    return true if area_id.nil?
     
     accessible_areas.exists?(id: area_id)
   rescue => e
