@@ -14,17 +14,19 @@ module Api
           begin
             Rails.logger.info "Admin notifications index called by user #{current_user.id}"
             
-            # Simple pagination
             page = [params[:page].to_i, 1].max
             per_page = [params[:per_page].to_i, 20].max.clamp(1, 100)
             offset = (page - 1) * per_page
 
-            # Simple query - just get notifications
             @notifications = Notification.order(created_at: :desc)
-                                        .offset(offset)
-                                        .limit(per_page)
 
-            total_count = Notification.count
+            # Apply category filter if provided
+            if params[:category].present? && params[:category] != 'all'
+              @notifications = filter_by_category(@notifications, params[:category])
+            end
+
+            total_count = @notifications.count
+            @notifications = @notifications.offset(offset).limit(per_page)
             total_pages = (total_count.to_f / per_page).ceil
 
             Rails.logger.info "Found #{@notifications.count} notifications (#{total_count} total)"
@@ -37,7 +39,8 @@ module Api
                 total_pages: total_pages,
                 total_count: total_count,
                 per_page: per_page
-              }
+              },
+              category_counts: calculate_category_counts
             }, status: :ok
             
           rescue => e
@@ -65,13 +68,15 @@ module Api
             by_type = Notification.group(:notification_type).count
             by_priority = Notification.group(:priority).count
             by_status = Notification.group(:status).count
+            category_counts = calculate_category_counts
 
             render json: {
               success: true,
               data: stats_data.merge({
                 by_type: by_type,
                 by_priority: by_priority,
-                by_status: by_status
+                by_status: by_status,
+                category_counts: category_counts
               })
             }, status: :ok
             
@@ -94,7 +99,6 @@ module Api
               :expires_at, :action_url, :icon, :user_id, :package_id
             )
             
-            # Get push notification preference (default to true)
             send_push = params.dig(:notification, :send_push_notification) != false
 
             @notification = Notification.new(notification_params)
@@ -102,7 +106,9 @@ module Api
             if @notification.save
               Rails.logger.info "📝 Created notification #{@notification.id} for user #{@notification.user_id}"
               
-              # Send push notification if requested and user has push tokens
+              # Broadcast new notification to user
+              broadcast_notification_created(@notification)
+              
               if send_push && should_send_push_notification?(@notification)
                 send_push_notification_async(@notification)
               end
@@ -136,6 +142,9 @@ module Api
         # PATCH /api/v1/admin/notifications/:id/mark_as_read
         def mark_as_read
           @notification.update!(read: true, read_at: Time.current)
+          
+          # Broadcast read status
+          broadcast_notification_read(@notification)
           
           render json: {
             success: true,
@@ -197,7 +206,6 @@ module Api
               :expires_at, :action_url, :icon, user_ids: []
             )
             
-            # Get push notification preference (default to true)
             send_push = params.dig(:broadcast, :send_push_notification) != false
 
             target_users = if broadcast_params[:user_ids].present?
@@ -225,17 +233,14 @@ module Api
               notifications_created += 1
               created_notifications << notification
               
-              # Send push notification if requested and user has push tokens
+              # Broadcast new notification to user
+              broadcast_notification_created(notification)
+              
               if send_push && should_send_push_notification?(notification)
                 send_push_notification_async(notification)
                 push_notifications_sent += 1
               end
             end
-
-            # Optional: Send batch push notifications for better performance
-            # if send_push && created_notifications.any?
-            #   send_batch_push_notifications_async(created_notifications)
-            # end
 
             Rails.logger.info "📢 Broadcast completed: #{notifications_created} notifications created, #{push_notifications_sent} push notifications sent"
 
@@ -317,61 +322,117 @@ module Api
           end
         end
 
+        def filter_by_category(notifications, category)
+          case category
+          when 'customer_care'
+            notifications.where(notification_type: ['support_message', 'support_reply', 'ticket_update', 'system'])
+          when 'packages'
+            notifications.where(notification_type: [
+              'package_created', 'package_submitted', 'package_rejected', 
+              'package_expired', 'package_delivered', 'package_collected',
+              'delivery', 'assignment'
+            ])
+          when 'updates'
+            notifications.where(notification_type: [
+              'payment_received', 'payment_reminder', 'final_warning',
+              'resubmission_available', 'alert', 'announcement'
+            ])
+          else
+            notifications
+          end
+        end
+
+        def calculate_category_counts
+          base_query = Notification.where(read: false)
+          
+          {
+            all: base_query.count,
+            customer_care: filter_by_category(base_query, 'customer_care').count,
+            packages: filter_by_category(base_query, 'packages').count,
+            updates: filter_by_category(base_query, 'updates').count
+          }
+        end
+
+        def broadcast_notification_created(notification)
+          return unless notification.user_id
+          
+          ActionCable.server.broadcast(
+            "user_notifications_#{notification.user_id}",
+            {
+              type: 'new_notification',
+              notification: serialize_for_broadcast(notification),
+              user_id: notification.user_id,
+              category_counts: calculate_user_category_counts(notification.user_id),
+              timestamp: Time.current.iso8601
+            }
+          )
+        end
+
+        def broadcast_notification_read(notification)
+          return unless notification.user_id
+          
+          ActionCable.server.broadcast(
+            "user_notifications_#{notification.user_id}",
+            {
+              type: 'notification_read',
+              notification_id: notification.id,
+              user_id: notification.user_id,
+              timestamp: Time.current.iso8601
+            }
+          )
+        end
+
+        def calculate_user_category_counts(user_id)
+          base_query = Notification.where(user_id: user_id, read: false)
+          
+          {
+            all: base_query.count,
+            customer_care: filter_by_category(base_query, 'customer_care').count,
+            packages: filter_by_category(base_query, 'packages').count,
+            updates: filter_by_category(base_query, 'updates').count
+          }
+        end
+
+        def serialize_for_broadcast(notification)
+          {
+            id: notification.id,
+            title: notification.title || 'Untitled Notification',
+            message: notification.message || 'No message content',
+            notification_type: notification.notification_type || 'general',
+            priority: notification.priority || 0,
+            read: !!notification.read,
+            delivered: !!notification.delivered,
+            status: notification.status || 'pending',
+            created_at: notification.created_at&.iso8601,
+            expires_at: notification.expires_at&.iso8601,
+            icon: notification.icon || 'bell',
+            action_url: notification.action_url,
+            expired: notification.expires_at ? notification.expires_at <= Time.current : false,
+            time_since_creation: time_ago(notification.created_at),
+            package: notification.package ? {
+              id: notification.package.id,
+              code: notification.package.code,
+              state: notification.package.state
+            } : nil
+          }
+        end
+
         def should_send_push_notification?(notification)
           return false unless notification.user
           return false unless notification.user.push_tokens.active.any?
-          
-          # Optional: Add additional conditions
-          # return false if notification.channel == 'email_only'
-          # return false if notification.user.push_notifications_disabled?
-          
           true
         end
 
         def send_push_notification_async(notification)
-          # Send push notification in background to avoid blocking the request
           begin
             Rails.logger.info "🚀 Sending push notification for notification #{notification.id}"
-            
-            # Use a background job for better performance (recommended)
-            # PushNotificationJob.perform_later(notification.id)
-            
-            # Or send immediately (current approach)
             PushNotificationService.new.send_immediate(notification)
-            
             Rails.logger.info "✅ Push notification sent for notification #{notification.id}"
-            
           rescue => e
-            # Don't fail the main request if push notification fails
             Rails.logger.error "❌ Failed to send push notification for notification #{notification.id}: #{e.message}"
-            
-            # Optional: Mark notification as failed or update status
-            # notification.update_column(:push_failed, true)
           end
         end
 
-        def send_batch_push_notifications_async(notifications)
-          # Send batch push notifications for better performance
-          begin
-            eligible_notifications = notifications.select { |n| should_send_push_notification?(n) }
-            return if eligible_notifications.empty?
-            
-            Rails.logger.info "🚀 Sending batch push notifications for #{eligible_notifications.size} notifications"
-            
-            # Use background job for batch processing
-            # BatchPushNotificationJob.perform_later(eligible_notifications.map(&:id))
-            
-            # Or send immediately
-            PushNotificationService.new.send_batch(eligible_notifications)
-            
-            Rails.logger.info "✅ Batch push notifications sent for #{eligible_notifications.size} notifications"
-            
-          rescue => e
-            Rails.logger.error "❌ Failed to send batch push notifications: #{e.message}"
-          end
-        end
-
-        # Simple serialization - just the basics
         def simple_serialize(notification)
           {
             id: notification.id,
