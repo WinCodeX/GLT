@@ -1,4 +1,4 @@
-# app/models/user.rb - With Wallet Associations
+# app/models/user.rb - With Wallet Associations and Fixed Area Access
 class User < ApplicationRecord
   # ===========================================
   # 🔐 DEVISE CONFIGURATION
@@ -470,20 +470,25 @@ class User < ApplicationRecord
     case primary_role
     when 'agent'
       if agents.any?
-        Area.where(id: agents.pluck(:area_id).compact)
+        agent_area_ids = agents.pluck(:area_id).compact
+        # If agent has records but no area assignments, allow all areas
+        agent_area_ids.any? ? Area.where(id: agent_area_ids) : Area.all
       else
         Area.all
       end
     when 'rider'
       if riders.any?
-        Area.where(id: riders.pluck(:area_id).compact)
+        rider_area_ids = riders.pluck(:area_id).compact
+        # If rider has records but no area assignments, allow all areas
+        rider_area_ids.any? ? Area.where(id: rider_area_ids) : Area.all
       else
         Area.all
       end
     when 'warehouse'
       if warehouse_staff.any?
         location_ids = warehouse_staff.pluck(:location_id).compact
-        Area.where(location_id: location_ids)
+        # If warehouse staff has records but no location assignments, allow all areas
+        location_ids.any? ? Area.where(location_id: location_ids) : Area.all
       else
         Area.all
       end
@@ -554,7 +559,15 @@ class User < ApplicationRecord
     # Allow access to packages without area restrictions (location-based deliveries)
     return true if area_id.nil?
     
-    accessible_areas.exists?(id: area_id)
+    # Get accessible areas for this user
+    areas = accessible_areas
+    
+    # If user has access to all areas (no restrictions), grant access
+    # This handles riders/agents with no Rider/Agent records OR records without area assignments
+    return true if has_unrestricted_area_access?(areas)
+    
+    # Check if the specific area is accessible
+    areas.exists?(id: area_id)
   rescue => e
     Rails.logger.error "Error checking area operation for user #{id}: #{e.message}"
     admin?
@@ -597,7 +610,7 @@ class User < ApplicationRecord
     when 'client'
       packages.where(state: 'delivered').count
     else
-      accessible_packages.where(state: 'delivered').count
+      accessible_packages.where(state: ['delivered']).count
     end
   rescue => e
     Rails.logger.error "Error getting delivered packages count: #{e.message}"
@@ -757,6 +770,29 @@ class User < ApplicationRecord
     # After normalization, ensure it matches the expected format
     unless phone_number.match(/^\+254[17]\d{8}$/)
       errors.add(:phone_number, "must be a valid Kenyan phone number (e.g., +254712345678)")
+    end
+  end
+
+  # Check if user has unrestricted access to all areas
+  def has_unrestricted_area_access?(areas)
+    return false if areas.nil?
+    
+    # If the relation represents all areas, grant unrestricted access
+    # This handles cases where accessible_areas returns Area.all
+    begin
+      total_areas = Area.count
+      return false if total_areas.zero?
+      
+      # Compare SQL to detect if it's querying all records
+      areas_sql = areas.to_sql
+      all_areas_sql = Area.all.to_sql
+      
+      return true if areas_sql == all_areas_sql
+      
+      # Fallback: check if count matches (but avoid loading all records)
+      areas.limit(nil).count == total_areas
+    rescue
+      false
     end
   end
 end
