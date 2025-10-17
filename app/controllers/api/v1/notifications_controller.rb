@@ -17,18 +17,20 @@ module Api
           @notifications = current_user.notifications
                                       .includes(:package)
                                       .order(created_at: :desc)
-                                      .offset(offset)
-                                      .limit(per_page)
 
+          # Apply filters
+          @notifications = @notifications.where(read: false) if params[:unread_only] == 'true'
+          @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
+          
           # Apply category filter
-          if params[:category].present? && params[:category] != 'all'
+          if params[:category].present?
             @notifications = filter_by_category(@notifications, params[:category])
           end
 
-          # Apply unread filter
-          @notifications = @notifications.where(read: false) if params[:unread_only] == 'true'
+          # Paginate
+          total_count = @notifications.count
+          @notifications = @notifications.offset(offset).limit(per_page)
 
-          total_count = current_user.notifications.count
           total_pages = (total_count.to_f / per_page).ceil
           unread_count = current_user.notifications.where(read: false).count
 
@@ -45,6 +47,7 @@ module Api
           }, status: :ok
         rescue => e
           Rails.logger.error "NotificationsController#index error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           
           render json: {
             success: false,
@@ -54,19 +57,27 @@ module Api
         end
       end
 
+      # GET /api/v1/notifications/:id
+      def show
+        render json: {
+          success: true,
+          data: serialize_notification(@notification, include_full_details: true)
+        }, status: :ok
+      rescue => e
+        Rails.logger.error "NotificationsController#show error: #{e.message}"
+        render json: {
+          success: false,
+          message: 'Failed to fetch notification',
+          error: Rails.env.development? ? e.message : 'Internal server error'
+        }, status: :internal_server_error
+      end
+
       # PATCH /api/v1/notifications/:id/mark_as_read
       def mark_as_read
         @notification.update!(read: true, read_at: Time.current)
         
-        # Broadcast to user channel
-        ActionCable.server.broadcast(
-          "user_notifications_#{current_user.id}",
-          {
-            type: 'notification_read',
-            notification_id: @notification.id,
-            timestamp: Time.current.iso8601
-          }
-        )
+        # Broadcast notification read status
+        broadcast_notification_read(@notification)
         
         render json: {
           success: true,
@@ -82,48 +93,84 @@ module Api
         }, status: :internal_server_error
       end
 
-      # PATCH /api/v1/notifications/mark_multiple_as_read
-      def mark_multiple_as_read
+      # PATCH /api/v1/notifications/mark_all_as_read
+      def mark_all_as_read
+        begin
+          count = current_user.notifications.where(read: false).count
+          notification_ids = current_user.notifications.where(read: false).pluck(:id)
+          
+          current_user.notifications.where(read: false).update_all(
+            read: true,
+            read_at: Time.current
+          )
+
+          # Broadcast all notifications read
+          broadcast_all_notifications_read(notification_ids)
+
+          render json: {
+            success: true,
+            message: "#{count} notifications marked as read"
+          }, status: :ok
+        rescue => e
+          Rails.logger.error "NotificationsController#mark_all_as_read error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Failed to mark all notifications as read',
+            error: Rails.env.development? ? e.message : 'Internal server error'
+          }, status: :internal_server_error
+        end
+      end
+
+      # POST /api/v1/notifications/mark_visible_as_read
+      def mark_visible_as_read
         begin
           notification_ids = params[:notification_ids] || []
           
           if notification_ids.empty?
-            return render json: {
+            render json: {
               success: false,
               message: 'No notification IDs provided'
             }, status: :unprocessable_entity
+            return
           end
 
-          notifications = current_user.notifications.where(id: notification_ids, read: false)
-          count = notifications.count
+          # Only mark notifications that belong to current user and are unread
+          notifications_to_update = current_user.notifications
+                                                .where(id: notification_ids)
+                                                .where(read: false)
           
-          notifications.update_all(
+          updated_ids = notifications_to_update.pluck(:id)
+          
+          notifications_to_update.update_all(
             read: true,
             read_at: Time.current
           )
 
           # Broadcast each notification as read
-          notification_ids.each do |notification_id|
+          updated_ids.each do |notification_id|
             ActionCable.server.broadcast(
               "user_notifications_#{current_user.id}",
               {
                 type: 'notification_read',
                 notification_id: notification_id,
+                user_id: current_user.id,
                 timestamp: Time.current.iso8601
               }
             )
           end
 
+          Rails.logger.info "📖 Marked #{updated_ids.size} visible notifications as read for user #{current_user.id}"
+
           render json: {
             success: true,
-            message: "#{count} notifications marked as read",
-            count: count
+            message: "#{updated_ids.size} notifications marked as read",
+            marked_ids: updated_ids
           }, status: :ok
         rescue => e
-          Rails.logger.error "NotificationsController#mark_multiple_as_read error: #{e.message}"
+          Rails.logger.error "NotificationsController#mark_visible_as_read error: #{e.message}"
           render json: {
             success: false,
-            message: 'Failed to mark notifications as read',
+            message: 'Failed to mark visible notifications as read',
             error: Rails.env.development? ? e.message : 'Internal server error'
           }, status: :internal_server_error
         end
@@ -149,7 +196,11 @@ module Api
       # GET /api/v1/notifications/unread_count
       def unread_count
         begin
+          Rails.logger.info "Fetching unread notification count for user #{current_user.id}"
+          
           count = current_user.notifications.where(read: false).count
+          
+          Rails.logger.info "Found #{count} unread notifications"
           
           render json: {
             success: true,
@@ -157,10 +208,39 @@ module Api
           }, status: :ok
         rescue => e
           Rails.logger.error "NotificationsController#unread_count error: #{e.message}"
+          Rails.logger.error e.backtrace.join("\n")
           
           render json: {
             success: false,
             message: 'Failed to get unread count',
+            error: Rails.env.development? ? e.message : 'Internal server error'
+          }, status: :internal_server_error
+        end
+      end
+
+      # GET /api/v1/notifications/summary
+      def summary
+        begin
+          notifications = current_user.notifications
+                                     .order(created_at: :desc)
+                                     .limit(5)
+          
+          unread_count = current_user.notifications.where(read: false).count
+          total_count = current_user.notifications.count
+          
+          render json: {
+            success: true,
+            data: {
+              recent_notifications: notifications.map { |n| serialize_notification(n) },
+              unread_count: unread_count,
+              total_count: total_count
+            }
+          }, status: :ok
+        rescue => e
+          Rails.logger.error "NotificationsController#summary error: #{e.message}"
+          render json: {
+            success: false,
+            message: 'Failed to get notifications summary',
             error: Rails.env.development? ? e.message : 'Internal server error'
           }, status: :internal_server_error
         end
@@ -178,21 +258,54 @@ module Api
       end
 
       def filter_by_category(notifications, category)
-        case category.downcase
+        case category
         when 'customer_care'
-          notifications.where(notification_type: ['support', 'message', 'conversation', 'system'])
+          notifications.where(notification_type: ['support', 'message', 'inquiry', 'complaint'])
         when 'packages'
-          notifications.where("notification_type LIKE ? OR notification_type IN (?)", 
-                            'package_%', ['delivery', 'assignment'])
+          notifications.where(notification_type: [
+            'package_created', 'package_submitted', 'package_rejected', 
+            'package_expired', 'package_delivered', 'package_collected',
+            'delivery', 'assignment'
+          ])
         when 'updates'
-          notifications.where(notification_type: ['alert', 'payment_received', 'payment_reminder', 
-                                                 'final_warning', 'resubmission_available'])
+          notifications.where(notification_type: [
+            'system', 'announcement', 'update', 'maintenance', 
+            'feature', 'promotion'
+          ])
         else
           notifications
         end
       end
 
-      def serialize_notification(notification)
+      def broadcast_notification_read(notification)
+        ActionCable.server.broadcast(
+          "user_notifications_#{current_user.id}",
+          {
+            type: 'notification_read',
+            notification_id: notification.id,
+            user_id: current_user.id,
+            timestamp: Time.current.iso8601
+          }
+        )
+
+        Rails.logger.info "📡 Broadcasted notification_read for notification #{notification.id}"
+      end
+
+      def broadcast_all_notifications_read(notification_ids)
+        ActionCable.server.broadcast(
+          "user_notifications_#{current_user.id}",
+          {
+            type: 'all_notifications_read',
+            notification_ids: notification_ids,
+            user_id: current_user.id,
+            timestamp: Time.current.iso8601
+          }
+        )
+
+        Rails.logger.info "📡 Broadcasted all_notifications_read for #{notification_ids.size} notifications"
+      end
+
+      def serialize_notification(notification, include_full_details: false)
         result = {
           id: notification.id,
           title: notification.title.presence || 'Notification',
@@ -224,6 +337,25 @@ module Api
             state: notification.package.state,
             state_display: notification.package.state.humanize
           }
+        elsif notification.package_id && notification.metadata.is_a?(Hash)
+          package_code = notification.metadata['package_code'] || notification.metadata[:package_code]
+          if package_code
+            result[:package] = {
+              code: package_code,
+              state: 'deleted',
+              state_display: 'Deleted'
+            }
+          end
+        end
+
+        if include_full_details
+          result.merge!(
+            metadata: notification.metadata || {},
+            read_at: notification.read_at&.iso8601,
+            delivered_at: notification.delivered_at&.iso8601,
+            status: notification.status.presence || 'pending',
+            channel: notification.channel.presence || 'in_app'
+          )
         end
 
         result
