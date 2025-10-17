@@ -461,11 +461,12 @@ end
         end
         
         collection do
-          patch :mark_all_as_read
-          get :unread_count
-          get :summary
+           patch :mark_all_as_read
+           post :mark_visible_as_read  # NEW ROUTE
+           get :unread_count
+           get :summary
+          end
         end
-      end
 
       resources :push_tokens, only: [:create, :destroy], param: :token
 
