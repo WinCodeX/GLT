@@ -19,14 +19,10 @@ module Api
             offset = (page - 1) * per_page
 
             @notifications = Notification.order(created_at: :desc)
+                                        .offset(offset)
+                                        .limit(per_page)
 
-            # Apply category filter if provided
-            if params[:category].present? && params[:category] != 'all'
-              @notifications = filter_by_category(@notifications, params[:category])
-            end
-
-            total_count = @notifications.count
-            @notifications = @notifications.offset(offset).limit(per_page)
+            total_count = Notification.count
             total_pages = (total_count.to_f / per_page).ceil
 
             Rails.logger.info "Found #{@notifications.count} notifications (#{total_count} total)"
@@ -39,8 +35,7 @@ module Api
                 total_pages: total_pages,
                 total_count: total_count,
                 per_page: per_page
-              },
-              category_counts: calculate_category_counts
+              }
             }, status: :ok
             
           rescue => e
@@ -68,15 +63,13 @@ module Api
             by_type = Notification.group(:notification_type).count
             by_priority = Notification.group(:priority).count
             by_status = Notification.group(:status).count
-            category_counts = calculate_category_counts
 
             render json: {
               success: true,
               data: stats_data.merge({
                 by_type: by_type,
                 by_priority: by_priority,
-                by_status: by_status,
-                category_counts: category_counts
+                by_status: by_status
               })
             }, status: :ok
             
@@ -105,9 +98,6 @@ module Api
             
             if @notification.save
               Rails.logger.info "📝 Created notification #{@notification.id} for user #{@notification.user_id}"
-              
-              # Broadcast new notification to user
-              broadcast_notification_created(@notification)
               
               if send_push && should_send_push_notification?(@notification)
                 send_push_notification_async(@notification)
@@ -143,7 +133,7 @@ module Api
         def mark_as_read
           @notification.update!(read: true, read_at: Time.current)
           
-          # Broadcast read status
+          # Broadcast notification read status
           broadcast_notification_read(@notification)
           
           render json: {
@@ -164,6 +154,9 @@ module Api
         # PATCH /api/v1/admin/notifications/:id/mark_as_unread
         def mark_as_unread
           @notification.update!(read: false, read_at: nil)
+          
+          # Broadcast notification unread status
+          broadcast_notification_unread(@notification)
           
           render json: {
             success: true,
@@ -232,9 +225,6 @@ module Api
               
               notifications_created += 1
               created_notifications << notification
-              
-              # Broadcast new notification to user
-              broadcast_notification_created(notification)
               
               if send_push && should_send_push_notification?(notification)
                 send_push_notification_async(notification)
@@ -322,55 +312,29 @@ module Api
           end
         end
 
-        def filter_by_category(notifications, category)
-          case category
-          when 'customer_care'
-            notifications.where(notification_type: ['support_message', 'support_reply', 'ticket_update', 'system'])
-          when 'packages'
-            notifications.where(notification_type: [
-              'package_created', 'package_submitted', 'package_rejected', 
-              'package_expired', 'package_delivered', 'package_collected',
-              'delivery', 'assignment'
-            ])
-          when 'updates'
-            notifications.where(notification_type: [
-              'payment_received', 'payment_reminder', 'final_warning',
-              'resubmission_available', 'alert', 'announcement'
-            ])
-          else
-            notifications
+        def should_send_push_notification?(notification)
+          return false unless notification.user
+          return false unless notification.user.push_tokens.active.any?
+          
+          true
+        end
+
+        def send_push_notification_async(notification)
+          begin
+            Rails.logger.info "🚀 Sending push notification for notification #{notification.id}"
+            
+            PushNotificationService.new.send_immediate(notification)
+            
+            Rails.logger.info "✅ Push notification sent for notification #{notification.id}"
+            
+          rescue => e
+            Rails.logger.error "❌ Failed to send push notification for notification #{notification.id}: #{e.message}"
           end
-        end
-
-        def calculate_category_counts
-          base_query = Notification.where(read: false)
-          
-          {
-            all: base_query.count,
-            customer_care: filter_by_category(base_query, 'customer_care').count,
-            packages: filter_by_category(base_query, 'packages').count,
-            updates: filter_by_category(base_query, 'updates').count
-          }
-        end
-
-        def broadcast_notification_created(notification)
-          return unless notification.user_id
-          
-          ActionCable.server.broadcast(
-            "user_notifications_#{notification.user_id}",
-            {
-              type: 'new_notification',
-              notification: serialize_for_broadcast(notification),
-              user_id: notification.user_id,
-              category_counts: calculate_user_category_counts(notification.user_id),
-              timestamp: Time.current.iso8601
-            }
-          )
         end
 
         def broadcast_notification_read(notification)
           return unless notification.user_id
-          
+
           ActionCable.server.broadcast(
             "user_notifications_#{notification.user_id}",
             {
@@ -380,57 +344,24 @@ module Api
               timestamp: Time.current.iso8601
             }
           )
+
+          Rails.logger.info "📡 Broadcasted notification_read for notification #{notification.id}"
         end
 
-        def calculate_user_category_counts(user_id)
-          base_query = Notification.where(user_id: user_id, read: false)
-          
-          {
-            all: base_query.count,
-            customer_care: filter_by_category(base_query, 'customer_care').count,
-            packages: filter_by_category(base_query, 'packages').count,
-            updates: filter_by_category(base_query, 'updates').count
-          }
-        end
+        def broadcast_notification_unread(notification)
+          return unless notification.user_id
 
-        def serialize_for_broadcast(notification)
-          {
-            id: notification.id,
-            title: notification.title || 'Untitled Notification',
-            message: notification.message || 'No message content',
-            notification_type: notification.notification_type || 'general',
-            priority: notification.priority || 0,
-            read: !!notification.read,
-            delivered: !!notification.delivered,
-            status: notification.status || 'pending',
-            created_at: notification.created_at&.iso8601,
-            expires_at: notification.expires_at&.iso8601,
-            icon: notification.icon || 'bell',
-            action_url: notification.action_url,
-            expired: notification.expires_at ? notification.expires_at <= Time.current : false,
-            time_since_creation: time_ago(notification.created_at),
-            package: notification.package ? {
-              id: notification.package.id,
-              code: notification.package.code,
-              state: notification.package.state
-            } : nil
-          }
-        end
+          ActionCable.server.broadcast(
+            "user_notifications_#{notification.user_id}",
+            {
+              type: 'notification_unread',
+              notification_id: notification.id,
+              user_id: notification.user_id,
+              timestamp: Time.current.iso8601
+            }
+          )
 
-        def should_send_push_notification?(notification)
-          return false unless notification.user
-          return false unless notification.user.push_tokens.active.any?
-          true
-        end
-
-        def send_push_notification_async(notification)
-          begin
-            Rails.logger.info "🚀 Sending push notification for notification #{notification.id}"
-            PushNotificationService.new.send_immediate(notification)
-            Rails.logger.info "✅ Push notification sent for notification #{notification.id}"
-          rescue => e
-            Rails.logger.error "❌ Failed to send push notification for notification #{notification.id}: #{e.message}"
-          end
+          Rails.logger.info "📡 Broadcasted notification_unread for notification #{notification.id}"
         end
 
         def simple_serialize(notification)
