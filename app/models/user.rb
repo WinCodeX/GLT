@@ -1,4 +1,4 @@
-# app/models/user.rb - With Wallet Associations and Fixed Package Access
+# app/models/user.rb - Pure Role-Based Authorization (No Area Models)
 class User < ApplicationRecord
   # ===========================================
   # 🔐 DEVISE CONFIGURATION
@@ -26,9 +26,6 @@ class User < ApplicationRecord
 
   # Package delivery system relationships
   has_many :packages, dependent: :destroy
-  has_many :agents, dependent: :destroy
-  has_many :riders, dependent: :destroy
-  has_many :warehouse_staff, dependent: :destroy
   has_many :package_tracking_events, dependent: :destroy
   has_many :package_print_logs, dependent: :destroy
 
@@ -40,12 +37,12 @@ class User < ApplicationRecord
   has_many :conversations, through: :conversation_participants
   has_many :messages, dependent: :destroy
 
-  # Wallet relationships - NEW
+  # Wallet relationships
   has_one :wallet, dependent: :destroy
   has_many :wallet_transactions, through: :wallet, source: :transactions
   has_many :withdrawals, through: :wallet
 
-  # Rider reports - NEW
+  # Rider reports
   has_many :rider_reports, dependent: :destroy
 
   # Rolify for roles
@@ -397,7 +394,7 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 💰 WALLET METHODS - NEW
+  # 💰 WALLET METHODS
   # ===========================================
 
   def ensure_wallet!
@@ -428,48 +425,16 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 📦 PACKAGE ACCESS METHODS - FIXED
+  # 📦 PACKAGE ACCESS METHODS - ROLE-BASED ONLY
   # ===========================================
 
   def accessible_packages
     case primary_role
     when 'client'
+      # Clients can only see their own packages
       packages
-    when 'agent'
-      # Get accessible areas first
-      areas = accessible_areas
-      
-      # If agent has unrestricted access, return all packages
-      return Package.all if has_unrestricted_area_access?(areas)
-      
-      # If agent has specific area restrictions
-      if areas.any?
-        area_ids = areas.pluck(:id)
-        # Include packages in assigned areas OR packages without area restrictions (location-based)
-        Package.where(origin_area_id: area_ids)
-               .or(Package.where(destination_area_id: area_ids))
-               .or(Package.where(origin_area_id: nil, destination_area_id: nil))
-      else
-        Package.all
-      end
-    when 'rider'
-      # Get accessible areas first
-      areas = accessible_areas
-      
-      # If rider has unrestricted access, return all packages
-      return Package.all if has_unrestricted_area_access?(areas)
-      
-      # If rider has specific area restrictions
-      if areas.any?
-        area_ids = areas.pluck(:id)
-        # Include packages in assigned areas OR packages without area restrictions (location-based)
-        Package.where(origin_area_id: area_ids)
-               .or(Package.where(destination_area_id: area_ids))
-               .or(Package.where(origin_area_id: nil, destination_area_id: nil))
-      else
-        Package.all
-      end
-    when 'warehouse', 'admin', 'support'
+    when 'agent', 'rider', 'warehouse', 'admin', 'support'
+      # All staff can see all packages
       Package.all
     else
       packages
@@ -486,31 +451,8 @@ class User < ApplicationRecord
 
   def accessible_areas
     case primary_role
-    when 'agent'
-      if agents.any?
-        agent_area_ids = agents.pluck(:area_id).compact
-        # If agent has records but no area assignments, allow all areas
-        agent_area_ids.any? ? Area.where(id: agent_area_ids) : Area.all
-      else
-        Area.all
-      end
-    when 'rider'
-      if riders.any?
-        rider_area_ids = riders.pluck(:area_id).compact
-        # If rider has records but no area assignments, allow all areas
-        rider_area_ids.any? ? Area.where(id: rider_area_ids) : Area.all
-      else
-        Area.all
-      end
-    when 'warehouse'
-      if warehouse_staff.any?
-        location_ids = warehouse_staff.pluck(:location_id).compact
-        # If warehouse staff has records but no location assignments, allow all areas
-        location_ids.any? ? Area.where(location_id: location_ids) : Area.all
-      else
-        Area.all
-      end
-    when 'admin'
+    when 'agent', 'rider', 'warehouse', 'admin'
+      # All staff have access to all areas
       Area.all
     else
       Area.none
@@ -522,16 +464,13 @@ class User < ApplicationRecord
 
   def accessible_locations
     case primary_role
-    when 'warehouse'
-      if warehouse_staff.any?
-        Location.where(id: warehouse_staff.pluck(:location_id).compact)
-      else
-        Location.all
-      end
-    when 'admin'
+    when 'warehouse', 'admin'
       Location.all
+    when 'agent', 'rider'
+      # Staff can see all locations through areas
+      Area.all.includes(:location).map(&:location).uniq.compact
     else
-      accessible_areas.includes(:location).map(&:location).uniq.compact
+      []
     end
   rescue => e
     Rails.logger.error "Error getting accessible locations for user #{id}: #{e.message}"
@@ -559,12 +498,10 @@ class User < ApplicationRecord
     
     case primary_role
     when 'client'
+      # Clients can only access their own packages
       package.user_id == id
-    when 'agent'
-      operates_in_area?(package.origin_area_id) || operates_in_area?(package.destination_area_id)
-    when 'rider'
-      operates_in_area?(package.origin_area_id) || operates_in_area?(package.destination_area_id)
-    when 'warehouse', 'admin', 'support'
+    when 'agent', 'rider', 'warehouse', 'admin', 'support'
+      # All staff can access all packages
       true
     else
       false
@@ -572,20 +509,11 @@ class User < ApplicationRecord
   end
 
   def operates_in_area?(area_id)
-    return true if admin?
+    # For role-based system: all staff operate in all areas
+    return true if staff?
     
-    # Allow access to packages without area restrictions (location-based deliveries)
-    return true if area_id.nil?
-    
-    # Get accessible areas for this user
-    areas = accessible_areas
-    
-    # If user has access to all areas (no restrictions), grant access
-    # This handles riders/agents with no Rider/Agent records OR records without area assignments
-    return true if has_unrestricted_area_access?(areas)
-    
-    # Check if the specific area is accessible
-    areas.exists?(id: area_id)
+    # Clients don't operate in any areas
+    false
   rescue => e
     Rails.logger.error "Error checking area operation for user #{id}: #{e.message}"
     admin?
@@ -788,29 +716,6 @@ class User < ApplicationRecord
     # After normalization, ensure it matches the expected format
     unless phone_number.match(/^\+254[17]\d{8}$/)
       errors.add(:phone_number, "must be a valid Kenyan phone number (e.g., +254712345678)")
-    end
-  end
-
-  # Check if user has unrestricted access to all areas
-  def has_unrestricted_area_access?(areas)
-    return false if areas.nil?
-    
-    # If the relation represents all areas, grant unrestricted access
-    # This handles cases where accessible_areas returns Area.all
-    begin
-      total_areas = Area.count
-      return false if total_areas.zero?
-      
-      # Compare SQL to detect if it's querying all records
-      areas_sql = areas.to_sql
-      all_areas_sql = Area.all.to_sql
-      
-      return true if areas_sql == all_areas_sql
-      
-      # Fallback: check if count matches (but avoid loading all records)
-      areas.limit(nil).count == total_areas
-    rescue
-      false
     end
   end
 end
