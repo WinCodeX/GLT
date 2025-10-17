@@ -1,4 +1,4 @@
-# app/models/user.rb - With Wallet Associations and Fixed Area Access
+# app/models/user.rb - With Wallet Associations and Fixed Package Access
 class User < ApplicationRecord
   # ===========================================
   # 🔐 DEVISE CONFIGURATION
@@ -428,7 +428,7 @@ class User < ApplicationRecord
   end
 
   # ===========================================
-  # 📦 PACKAGE ACCESS METHODS
+  # 📦 PACKAGE ACCESS METHODS - FIXED
   # ===========================================
 
   def accessible_packages
@@ -436,18 +436,36 @@ class User < ApplicationRecord
     when 'client'
       packages
     when 'agent'
-      if respond_to?(:accessible_areas) && accessible_areas.any?
-        area_ids = accessible_areas.pluck(:id)
+      # Get accessible areas first
+      areas = accessible_areas
+      
+      # If agent has unrestricted access, return all packages
+      return Package.all if has_unrestricted_area_access?(areas)
+      
+      # If agent has specific area restrictions
+      if areas.any?
+        area_ids = areas.pluck(:id)
+        # Include packages in assigned areas OR packages without area restrictions (location-based)
         Package.where(origin_area_id: area_ids)
                .or(Package.where(destination_area_id: area_ids))
+               .or(Package.where(origin_area_id: nil, destination_area_id: nil))
       else
         Package.all
       end
     when 'rider'
-      if respond_to?(:accessible_areas) && accessible_areas.any?
-        area_ids = accessible_areas.pluck(:id)
+      # Get accessible areas first
+      areas = accessible_areas
+      
+      # If rider has unrestricted access, return all packages
+      return Package.all if has_unrestricted_area_access?(areas)
+      
+      # If rider has specific area restrictions
+      if areas.any?
+        area_ids = areas.pluck(:id)
+        # Include packages in assigned areas OR packages without area restrictions (location-based)
         Package.where(origin_area_id: area_ids)
                .or(Package.where(destination_area_id: area_ids))
+               .or(Package.where(origin_area_id: nil, destination_area_id: nil))
       else
         Package.all
       end
