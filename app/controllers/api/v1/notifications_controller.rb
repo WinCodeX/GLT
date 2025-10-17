@@ -1,17 +1,15 @@
-# app/controllers/api/v1/notifications_controller.rb - Fixed with forced JSON responses
+# app/controllers/api/v1/notifications_controller.rb
 module Api
   module V1
     class NotificationsController < ApplicationController
       before_action :authenticate_user!
       before_action :set_notification, only: [:show, :mark_as_read, :destroy]
       
-      # Force JSON responses for all actions
       respond_to :json
 
       # GET /api/v1/notifications
       def index
         begin
-          # Fixed pagination - use offset/limit instead of kaminari to avoid dependency issues
           page = [params[:page].to_i, 1].max
           per_page = [params[:per_page].to_i, 20].max.clamp(1, 100)
           offset = (page - 1) * per_page
@@ -22,15 +20,16 @@ module Api
                                       .offset(offset)
                                       .limit(per_page)
 
-          # Apply filters safely
-          @notifications = @notifications.where(read: false) if params[:unread_only] == 'true'
-          @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
+          # Apply category filter
+          if params[:category].present? && params[:category] != 'all'
+            @notifications = filter_by_category(@notifications, params[:category])
+          end
 
-          # Get total count for pagination
+          # Apply unread filter
+          @notifications = @notifications.where(read: false) if params[:unread_only] == 'true'
+
           total_count = current_user.notifications.count
           total_pages = (total_count.to_f / per_page).ceil
-
-          # Calculate unread count safely
           unread_count = current_user.notifications.where(read: false).count
 
           render json: {
@@ -46,7 +45,6 @@ module Api
           }, status: :ok
         rescue => e
           Rails.logger.error "NotificationsController#index error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
           
           render json: {
             success: false,
@@ -56,24 +54,19 @@ module Api
         end
       end
 
-      # GET /api/v1/notifications/:id
-      def show
-        render json: {
-          success: true,
-          data: serialize_notification(@notification, include_full_details: true)
-        }, status: :ok
-      rescue => e
-        Rails.logger.error "NotificationsController#show error: #{e.message}"
-        render json: {
-          success: false,
-          message: 'Failed to fetch notification',
-          error: Rails.env.development? ? e.message : 'Internal server error'
-        }, status: :internal_server_error
-      end
-
       # PATCH /api/v1/notifications/:id/mark_as_read
       def mark_as_read
         @notification.update!(read: true, read_at: Time.current)
+        
+        # Broadcast to user channel
+        ActionCable.server.broadcast(
+          "user_notifications_#{current_user.id}",
+          {
+            type: 'notification_read',
+            notification_id: @notification.id,
+            timestamp: Time.current.iso8601
+          }
+        )
         
         render json: {
           success: true,
@@ -89,24 +82,48 @@ module Api
         }, status: :internal_server_error
       end
 
-      # PATCH /api/v1/notifications/mark_all_as_read
-      def mark_all_as_read
+      # PATCH /api/v1/notifications/mark_multiple_as_read
+      def mark_multiple_as_read
         begin
-          count = current_user.notifications.where(read: false).count
-          current_user.notifications.where(read: false).update_all(
+          notification_ids = params[:notification_ids] || []
+          
+          if notification_ids.empty?
+            return render json: {
+              success: false,
+              message: 'No notification IDs provided'
+            }, status: :unprocessable_entity
+          end
+
+          notifications = current_user.notifications.where(id: notification_ids, read: false)
+          count = notifications.count
+          
+          notifications.update_all(
             read: true,
             read_at: Time.current
           )
 
+          # Broadcast each notification as read
+          notification_ids.each do |notification_id|
+            ActionCable.server.broadcast(
+              "user_notifications_#{current_user.id}",
+              {
+                type: 'notification_read',
+                notification_id: notification_id,
+                timestamp: Time.current.iso8601
+              }
+            )
+          end
+
           render json: {
             success: true,
-            message: "#{count} notifications marked as read"
+            message: "#{count} notifications marked as read",
+            count: count
           }, status: :ok
         rescue => e
-          Rails.logger.error "NotificationsController#mark_all_as_read error: #{e.message}"
+          Rails.logger.error "NotificationsController#mark_multiple_as_read error: #{e.message}"
           render json: {
             success: false,
-            message: 'Failed to mark all notifications as read',
+            message: 'Failed to mark notifications as read',
             error: Rails.env.development? ? e.message : 'Internal server error'
           }, status: :internal_server_error
         end
@@ -129,15 +146,10 @@ module Api
         }, status: :internal_server_error
       end
 
-      # GET /api/v1/notifications/unread_count - FIXED: Simplified implementation
+      # GET /api/v1/notifications/unread_count
       def unread_count
         begin
-          Rails.logger.info "Fetching unread notification count for user #{current_user.id}"
-          
-          # Simple, direct query
           count = current_user.notifications.where(read: false).count
-          
-          Rails.logger.info "Found #{count} unread notifications"
           
           render json: {
             success: true,
@@ -145,39 +157,10 @@ module Api
           }, status: :ok
         rescue => e
           Rails.logger.error "NotificationsController#unread_count error: #{e.message}"
-          Rails.logger.error e.backtrace.join("\n")
           
           render json: {
             success: false,
             message: 'Failed to get unread count',
-            error: Rails.env.development? ? e.message : 'Internal server error'
-          }, status: :internal_server_error
-        end
-      end
-
-      # GET /api/v1/notifications/summary
-      def summary
-        begin
-          notifications = current_user.notifications
-                                     .order(created_at: :desc)
-                                     .limit(5)
-          
-          unread_count = current_user.notifications.where(read: false).count
-          total_count = current_user.notifications.count
-          
-          render json: {
-            success: true,
-            data: {
-              recent_notifications: notifications.map { |n| serialize_notification(n) },
-              unread_count: unread_count,
-              total_count: total_count
-            }
-          }, status: :ok
-        rescue => e
-          Rails.logger.error "NotificationsController#summary error: #{e.message}"
-          render json: {
-            success: false,
-            message: 'Failed to get notifications summary',
             error: Rails.env.development? ? e.message : 'Internal server error'
           }, status: :internal_server_error
         end
@@ -194,9 +177,22 @@ module Api
         }, status: :not_found
       end
 
-      # Simplified serialization to prevent errors
-      def serialize_notification(notification, include_full_details: false)
-        # Safe attribute access with fallbacks
+      def filter_by_category(notifications, category)
+        case category.downcase
+        when 'customer_care'
+          notifications.where(notification_type: ['support', 'message', 'conversation', 'system'])
+        when 'packages'
+          notifications.where("notification_type LIKE ? OR notification_type IN (?)", 
+                            'package_%', ['delivery', 'assignment'])
+        when 'updates'
+          notifications.where(notification_type: ['alert', 'payment_received', 'payment_reminder', 
+                                                 'final_warning', 'resubmission_available'])
+        else
+          notifications
+        end
+      end
+
+      def serialize_notification(notification)
         result = {
           id: notification.id,
           title: notification.title.presence || 'Notification',
@@ -211,7 +207,6 @@ module Api
           expires_at: notification.expires_at&.iso8601
         }
 
-        # Add time calculations safely
         if notification.created_at
           result[:time_since_creation] = time_ago_in_words(notification.created_at)
           result[:formatted_created_at] = notification.created_at.strftime('%B %d, %Y at %I:%M %p')
@@ -220,10 +215,8 @@ module Api
           result[:formatted_created_at] = 'Unknown date'
         end
 
-        # Add expiration status
         result[:expired] = notification.expires_at ? notification.expires_at <= Time.current : false
 
-        # Include package information safely
         if notification.package
           result[:package] = {
             id: notification.package.id,
@@ -231,32 +224,11 @@ module Api
             state: notification.package.state,
             state_display: notification.package.state.humanize
           }
-        elsif notification.package_id && notification.metadata.is_a?(Hash)
-          package_code = notification.metadata['package_code'] || notification.metadata[:package_code]
-          if package_code
-            result[:package] = {
-              code: package_code,
-              state: 'deleted',
-              state_display: 'Deleted'
-            }
-          end
-        end
-
-        # Include full details if requested
-        if include_full_details
-          result.merge!(
-            metadata: notification.metadata || {},
-            read_at: notification.read_at&.iso8601,
-            delivered_at: notification.delivered_at&.iso8601,
-            status: notification.status.presence || 'pending',
-            channel: notification.channel.presence || 'in_app'
-          )
         end
 
         result
       rescue => e
         Rails.logger.error "Error serializing notification #{notification.id}: #{e.message}"
-        # Return minimal safe data if serialization fails
         {
           id: notification.id,
           title: 'Notification',
@@ -267,7 +239,6 @@ module Api
         }
       end
 
-      # Simple time ago calculation
       def time_ago_in_words(time)
         return 'just now' unless time
         
