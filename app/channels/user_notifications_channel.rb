@@ -1400,4 +1400,67 @@ class UserNotificationsChannel < ApplicationCable::Channel
     Rails.logger.error "Error getting avatar URL: #{e.message}"
     nil
   end
+
+
+
+def mark_visible_as_read(data)
+  begin
+    notification_ids = data['notification_ids'] || []
+    
+    if notification_ids.empty?
+      transmit({
+        type: 'error',
+        message: 'No notification IDs provided',
+        error_code: 'INVALID_REQUEST'
+      })
+      return
+    end
+
+    # Only mark notifications that belong to current user and are unread
+    notifications_to_update = current_user.notifications
+                                          .where(id: notification_ids)
+                                          .where(read: false)
+    
+    updated_ids = notifications_to_update.pluck(:id)
+    
+    if updated_ids.any?
+      notifications_to_update.update_all(
+        read: true,
+        read_at: Time.current
+      )
+
+      # Broadcast each notification as read
+      updated_ids.each do |notification_id|
+        ActionCable.server.broadcast(
+          "user_notifications_#{current_user.id}",
+          {
+            type: 'notification_read',
+            notification_id: notification_id,
+            user_id: current_user.id,
+            timestamp: Time.current.iso8601
+          }
+        )
+      end
+
+      # Update notification count
+      broadcast_notification_counts
+
+      Rails.logger.info "📖 Marked #{updated_ids.size} visible notifications as read for user #{current_user.id} via ActionCable"
+    end
+
+    transmit({
+      type: 'mark_visible_success',
+      marked_count: updated_ids.size,
+      notification_ids: updated_ids,
+      timestamp: Time.current.iso8601
+    })
+    
+  rescue => e
+    Rails.logger.error "Failed to mark visible notifications as read: #{e.message}"
+    transmit({
+      type: 'error',
+      message: 'Failed to mark notifications as read',
+      error_code: 'MARK_VISIBLE_FAILED'
+    })
+  end
 end
