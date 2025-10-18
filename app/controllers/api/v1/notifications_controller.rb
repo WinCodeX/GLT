@@ -1,4 +1,5 @@
 # app/controllers/api/v1/notifications_controller.rb
+
 module Api
   module V1
     class NotificationsController < ApplicationController
@@ -7,7 +8,6 @@ module Api
       
       respond_to :json
 
-      # GET /api/v1/notifications
       def index
         begin
           page = [params[:page].to_i, 1].max
@@ -18,16 +18,13 @@ module Api
                                       .includes(:package)
                                       .order(created_at: :desc)
 
-          # Apply filters
           @notifications = @notifications.where(read: false) if params[:unread_only] == 'true'
           @notifications = @notifications.where(notification_type: params[:type]) if params[:type].present?
           
-          # Apply category filter
           if params[:category].present?
             @notifications = filter_by_category(@notifications, params[:category])
           end
 
-          # Paginate
           total_count = @notifications.count
           @notifications = @notifications.offset(offset).limit(per_page)
 
@@ -57,7 +54,6 @@ module Api
         end
       end
 
-      # GET /api/v1/notifications/:id
       def show
         render json: {
           success: true,
@@ -72,11 +68,9 @@ module Api
         }, status: :internal_server_error
       end
 
-      # PATCH /api/v1/notifications/:id/mark_as_read
       def mark_as_read
         @notification.update!(read: true, read_at: Time.current)
         
-        # Broadcast notification read status
         broadcast_notification_read(@notification)
         
         render json: {
@@ -93,7 +87,6 @@ module Api
         }, status: :internal_server_error
       end
 
-      # PATCH /api/v1/notifications/mark_all_as_read
       def mark_all_as_read
         begin
           count = current_user.notifications.where(read: false).count
@@ -104,7 +97,6 @@ module Api
             read_at: Time.current
           )
 
-          # Broadcast all notifications read
           broadcast_all_notifications_read(notification_ids)
 
           render json: {
@@ -121,7 +113,6 @@ module Api
         end
       end
 
-      # POST /api/v1/notifications/mark_visible_as_read
       def mark_visible_as_read
         begin
           notification_ids = params[:notification_ids] || []
@@ -134,7 +125,6 @@ module Api
             return
           end
 
-          # Only mark notifications that belong to current user and are unread
           notifications_to_update = current_user.notifications
                                                 .where(id: notification_ids)
                                                 .where(read: false)
@@ -146,7 +136,6 @@ module Api
             read_at: Time.current
           )
 
-          # Broadcast each notification as read
           updated_ids.each do |notification_id|
             ActionCable.server.broadcast(
               "user_notifications_#{current_user.id}",
@@ -176,7 +165,6 @@ module Api
         end
       end
 
-      # DELETE /api/v1/notifications/:id
       def destroy
         @notification.destroy!
         
@@ -193,7 +181,6 @@ module Api
         }, status: :internal_server_error
       end
 
-      # GET /api/v1/notifications/unread_count
       def unread_count
         begin
           Rails.logger.info "Fetching unread notification count for user #{current_user.id}"
@@ -218,7 +205,6 @@ module Api
         end
       end
 
-      # GET /api/v1/notifications/summary
       def summary
         begin
           notifications = current_user.notifications
