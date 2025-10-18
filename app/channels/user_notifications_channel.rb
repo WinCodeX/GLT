@@ -1,4 +1,4 @@
-# app/channels/user_notifications_channel.rb - FIXED: Message read broadcast with individual acknowledgments + Wallet Broadcasting
+# app/channels/user_notifications_channel.rb
 
 class UserNotificationsChannel < ApplicationCable::Channel
   def subscribed
@@ -177,19 +177,16 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # CRITICAL FIX: Broadcast individual message acknowledgments
   def mark_message_read(data)
     begin
       conversation_id = data['conversation_id']
       conversation = current_user.conversations.find(conversation_id)
       
-      # Get unread messages and their IDs BEFORE updating
       unread_messages = conversation.messages.where(read_at: nil).where.not(user_id: current_user.id)
       unread_message_ids = unread_messages.pluck(:id)
       
       now = Time.current
       
-      # Update all unread messages
       unread_messages.update_all(
         delivered_at: now,
         read_at: now
@@ -198,7 +195,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       conversation.mark_read_by(current_user) if conversation.respond_to?(:mark_read_by)
       broadcast_message_counts
       
-      # Broadcast conversation_read (for overall conversation status)
       ActionCable.server.broadcast(
         "conversation_#{conversation_id}",
         {
@@ -211,7 +207,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
         }
       )
       
-      # CRITICAL FIX: Broadcast individual message acknowledgments for blue ticks
       unread_message_ids.each do |message_id|
         ActionCable.server.broadcast(
           "conversation_#{conversation_id}",
@@ -505,7 +500,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # WALLET METHODS START
   def request_wallet_balance(data)
     begin
       wallet = get_user_wallet
@@ -575,7 +569,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       })
     end
   end
-  # WALLET METHODS END
 
   def self.broadcast_new_message(message)
     begin
@@ -638,7 +631,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
     end
   end
 
-  # WALLET BROADCASTING METHODS START
   def self.broadcast_balance_update(user_id, wallet_data)
     begin
       ActionCable.server.broadcast(
@@ -752,7 +744,6 @@ class UserNotificationsChannel < ApplicationCable::Channel
       completed_at: withdrawal.completed_at&.iso8601
     }
   end
-  # WALLET BROADCASTING METHODS END
 
   private
 
@@ -1399,68 +1390,5 @@ class UserNotificationsChannel < ApplicationCable::Channel
   rescue => e
     Rails.logger.error "Error getting avatar URL: #{e.message}"
     nil
-  end
-
-
-
-def mark_visible_as_read(data)
-  begin
-    notification_ids = data['notification_ids'] || []
-    
-    if notification_ids.empty?
-      transmit({
-        type: 'error',
-        message: 'No notification IDs provided',
-        error_code: 'INVALID_REQUEST'
-      })
-      return
-    end
-
-    # Only mark notifications that belong to current user and are unread
-    notifications_to_update = current_user.notifications
-                                          .where(id: notification_ids)
-                                          .where(read: false)
-    
-    updated_ids = notifications_to_update.pluck(:id)
-    
-    if updated_ids.any?
-      notifications_to_update.update_all(
-        read: true,
-        read_at: Time.current
-      )
-
-      # Broadcast each notification as read
-      updated_ids.each do |notification_id|
-        ActionCable.server.broadcast(
-          "user_notifications_#{current_user.id}",
-          {
-            type: 'notification_read',
-            notification_id: notification_id,
-            user_id: current_user.id,
-            timestamp: Time.current.iso8601
-          }
-        )
-      end
-
-      # Update notification count
-      broadcast_notification_counts
-
-      Rails.logger.info "📖 Marked #{updated_ids.size} visible notifications as read for user #{current_user.id} via ActionCable"
-    end
-
-    transmit({
-      type: 'mark_visible_success',
-      marked_count: updated_ids.size,
-      notification_ids: updated_ids,
-      timestamp: Time.current.iso8601
-    })
-    
-  rescue => e
-    Rails.logger.error "Failed to mark visible notifications as read: #{e.message}"
-    transmit({
-      type: 'error',
-      message: 'Failed to mark notifications as read',
-      error_code: 'MARK_VISIBLE_FAILED'
-    })
   end
 end
