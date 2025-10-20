@@ -144,6 +144,34 @@ get '/logout', to: 'sessions#destroy'
   namespace :api, defaults: { format: :json } do
     namespace :v1 do
 
+      # ==========================================
+      #  👨‍💼 Staff Routes
+      # ==========================================
+
+       namespace :staff do
+        # Dashboard
+        get 'dashboard/stats', to: 'staff#dashboard_stats'
+        
+        # Packages
+        get 'packages', to: 'staff#packages'
+        get 'packages/:id', to: 'staff#show_package'
+        get 'packages/:id/track', to: 'staff#track_package'
+        post 'packages/:id/reject', to: 'staff#reject_package'
+        
+        # Scan Events
+        get 'scan_events', to: 'staff#scan_events'
+        post 'scan_events', to: 'staff#create_scan_event'
+        
+        # Activities
+        get 'activities', to: 'staff#activities'
+        
+        # Rejections
+        get 'rejections', to: 'staff#rejections'
+      end
+
+
+
+
        # ==========================================
       # 👛 Wallet Routes
       # ==========================================
