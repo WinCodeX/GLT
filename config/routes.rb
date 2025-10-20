@@ -28,6 +28,9 @@ Rails.application.routes.draw do
   namespace :admin do
   root 'updates#index'
 
+
+resources :sms_messaging, only: [:index, :create]
+
   # Updates (existing)
   resources :updates do
     member do
