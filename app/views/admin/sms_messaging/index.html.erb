@@ -4,67 +4,156 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="<%= form_authenticity_token %>">
-    <title>Africa's Talking SMS Tester</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>SMS Messaging - Admin Panel</title>
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+        .header h1 { font-size: 2rem; margin-bottom: 10px; }
+        
+        .section { background: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .section h2 { margin-bottom: 20px; color: #1f2937; }
+        
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; }
+        .form-group input,
+        .form-group textarea { 
+            width: 100%; 
+            padding: 12px; 
+            border: 1px solid #d1d5db; 
+            border-radius: 5px; 
+            font-size: 1rem;
+            font-family: 'Segoe UI', sans-serif;
         }
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #06b6d4;
+            box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+        }
+        .form-group small { display: block; margin-top: 5px; color: #6b7280; font-size: 0.875rem; }
+        
+        .btn { padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; font-weight: 600; transition: all 0.3s; }
+        .btn-primary { background: #06b6d4; color: white; }
+        .btn-primary:hover { background: #0891b2; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+        
+        .btn-full { width: 100%; font-size: 1rem; }
+        
+        .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,.3); border-radius: 50%; border-top-color: white; animation: spin 1s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
         .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
             visibility: hidden;
             opacity: 0;
-            transition: opacity 0.3s, transform 0.3s, visibility 0.3s;
             transform: translateY(20px);
+            transition: all 0.3s;
+            z-index: 1000;
+            max-width: 400px;
         }
         .toast.show {
             visibility: visible;
             opacity: 1;
             transform: translateY(0);
         }
+        .toast-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .toast-icon.success { background: #d1fae5; color: #10b981; }
+        .toast-icon.error { background: #fee2e2; color: #ef4444; }
+        .toast-message { color: #374151; font-weight: 500; }
+        
+        .info-box {
+            background: #dbeafe;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 4px solid #3b82f6;
+            margin-bottom: 20px;
+        }
+        .info-box h3 { color: #1e40af; margin-bottom: 10px; }
+        .info-box p { color: #1e3a8a; line-height: 1.6; }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body>
 
-    <div class="w-full max-w-md bg-white rounded-xl shadow-lg p-8">
-        <div class="text-center mb-8">
-            <h1 class="text-2xl font-bold text-gray-800">SMS Messenger</h1>
-            <p class="text-gray-500">Send a test message via Africa's Talking</p>
+    <div class="container">
+        <div class="header">
+            <h1>📱 SMS Messaging</h1>
+            <p>Send test messages via Africa's Talking API</p>
+            <div style="margin-top: 20px;">
+                <a href="<%= admin_root_path %>" class="btn btn-primary">← Back to Admin</a>
+            </div>
         </div>
 
-        <form id="smsForm">
-            <!-- Phone Number Input -->
-            <div class="mb-5">
-                <label for="phone_number" class="block mb-2 text-sm font-medium text-gray-700">Phone Number</label>
-                <input type="tel" id="phone_number" name="phone_number" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5" placeholder="+2547XXXXXXXX" required>
-                <p class="text-xs text-gray-500 mt-1">Include country code (e.g., +254).</p>
-            </div>
+        <div class="info-box">
+            <h3>ℹ️ About SMS Messaging</h3>
+            <p>Use this interface to send test SMS messages through the Africa's Talking API. Enter a phone number with country code (e.g., +254712345678) and your message to test the SMS delivery system.</p>
+        </div>
 
-            <!-- Message Textarea -->
-            <div class="mb-6">
-                <label for="message" class="block mb-2 text-sm font-medium text-gray-700">Message</label>
-                <textarea id="message" name="message" rows="4" class="block p-2.5 w-full text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-indigo-500 focus:border-indigo-500" required>Hi 👋 Glen, your package has been dropped at our agent and is being processed for delivery.</textarea>
-            </div>
+        <div class="section">
+            <h2>📨 Send SMS Message</h2>
+            
+            <form id="smsForm">
+                <div class="form-group">
+                    <label for="phone_number">Phone Number</label>
+                    <input 
+                        type="tel" 
+                        id="phone_number" 
+                        name="phone_number" 
+                        placeholder="+2547XXXXXXXX" 
+                        required
+                    >
+                    <small>Include country code (e.g., +254 for Kenya, +256 for Uganda)</small>
+                </div>
 
-            <!-- Submit Button -->
-            <button type="submit" id="submitBtn" class="w-full text-white bg-indigo-600 hover:bg-indigo-700 focus:ring-4 focus:outline-none focus:ring-indigo-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors duration-300">
-                <span id="btnText">Send Message</span>
-                <span id="btnSpinner" class="hidden">
-                    <svg class="animate-spin h-5 w-5 text-white mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                </span>
-            </button>
-        </form>
+                <div class="form-group">
+                    <label for="message">Message</label>
+                    <textarea 
+                        id="message" 
+                        name="message" 
+                        rows="5" 
+                        required
+                        placeholder="Enter your message here..."
+                    >Hi 👋 Glen, your package has been dropped at our agent and is being processed for delivery.</textarea>
+                    <small>SMS messages are typically limited to 160 characters per segment</small>
+                </div>
+
+                <button type="submit" id="submitBtn" class="btn btn-success btn-full">
+                    <span id="btnText">📤 Send Message</span>
+                    <span id="btnSpinner" style="display: none;">
+                        <span class="spinner"></span>
+                    </span>
+                </button>
+            </form>
+        </div>
     </div>
 
     <!-- Toast Notification -->
-    <div id="toast" class="toast fixed bottom-5 right-5 flex items-center w-full max-w-xs p-4 text-gray-500 bg-white rounded-lg shadow-lg" role="alert">
-        <div id="toast-icon" class="inline-flex items-center justify-center flex-shrink-0 w-8 h-8 text-green-500 bg-green-100 rounded-lg">
+    <div id="toast" class="toast">
+        <div id="toast-icon" class="toast-icon success">
             <!-- Icon will be set by JS -->
         </div>
-        <div id="toast-message" class="ml-3 text-sm font-normal">Message sent successfully.</div>
+        <div id="toast-message" class="toast-message">Message sent successfully.</div>
     </div>
 
     <script>
@@ -80,8 +169,8 @@
             event.preventDefault();
 
             // Show loading state
-            btnText.classList.add('hidden');
-            btnSpinner.classList.remove('hidden');
+            btnText.style.display = 'none';
+            btnSpinner.style.display = 'inline-block';
             submitBtn.disabled = true;
 
             const formData = new FormData(smsForm);
@@ -115,8 +204,8 @@
                 showToast('error', error.message);
             } finally {
                 // Restore button state
-                btnText.classList.remove('hidden');
-                btnSpinner.classList.add('hidden');
+                btnText.style.display = 'inline';
+                btnSpinner.style.display = 'none';
                 submitBtn.disabled = false;
             }
         });
@@ -124,18 +213,18 @@
         function showToast(type, message) {
             // Reset classes
             toastIcon.innerHTML = '';
-            toastIcon.className = 'inline-flex items-center justify-center flex-shrink-0 w-8 h-8 rounded-lg';
+            toastIcon.className = 'toast-icon';
 
             if (type === 'success') {
-                toastIcon.classList.add('text-green-500', 'bg-green-100');
+                toastIcon.classList.add('success');
                 toastIcon.innerHTML = `
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
                     </svg>`;
             } else {
-                toastIcon.classList.add('text-red-500', 'bg-red-100');
+                toastIcon.classList.add('error');
                 toastIcon.innerHTML = `
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
                     </svg>`;
             }
