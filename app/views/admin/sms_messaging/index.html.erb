@@ -1,9 +1,9 @@
-<!-- app/views/admin/sms_messaging/index.html.erb -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<%= form_authenticity_token %>">
     <title>Africa's Talking SMS Tester</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -91,14 +91,10 @@
             };
 
             try {
-                // This is the backend endpoint you will create in your Rails app.
-                const response = await fetch('/admin/send_test_sms', {
+                const response = await fetch('/admin/sms_messaging', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        // Rails requires a CSRF token for POST requests from non-Rails forms.
-                        // You'll need to get this token from your Rails view if embedding.
-                        // For a standalone page, you might need to disable CSRF for this specific route (not recommended for production).
                         'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
                     },
                     body: JSON.stringify(data)
@@ -106,8 +102,10 @@
 
                 const result = await response.json();
 
-                if (response.ok) {
+                if (response.ok && result.success) {
                     showToast('success', result.message || 'SMS sent successfully!');
+                    // Clear the phone number field on success
+                    document.getElementById('phone_number').value = '';
                 } else {
                     throw new Error(result.error || 'An unknown error occurred.');
                 }
@@ -134,7 +132,7 @@
                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
                     </svg>`;
-            } else { // error
+            } else {
                 toastIcon.classList.add('text-red-500', 'bg-red-100');
                 toastIcon.innerHTML = `
                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -153,4 +151,3 @@
 
 </body>
 </html>
-
