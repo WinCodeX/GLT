@@ -92,10 +92,10 @@ gem 'jwt', '~> 2.7'
 gem 'httparty'
 # For better JSON handling (if not already present)
 gem 'json'
-gem "sidekiq", "~> 8.0"
-gem 'googleauth', '~> 1.8'
+gem "sidekiq"
+gem 'googleauth'
 
-gem 'actioncable', '~> 7.1.0'
+gem 'actioncable'
 
 #Africastalking bulk sms
 gem 'sinatra'
