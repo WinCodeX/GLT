@@ -1,8 +1,7 @@
 # app/controllers/admin/sms_messaging_controller.rb
 module Admin
-  class SmsMessagingController < ApplicationController
-    before_action :authenticate_user!
-    skip_before_action :verify_authenticity_token, only: [:create]
+  class SmsMessagingController < AdminController
+    protect_from_forgery with: :null_session, only: [:create]
 
     def index
       # This renders the HTML view
