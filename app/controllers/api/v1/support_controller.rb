@@ -1,4 +1,3 @@
-# app/controllers/api/v1/support_controller.rb
 class Api::V1::SupportController < ApplicationController
   include AvatarHelper
   
@@ -27,7 +26,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to load dashboard data'
+        message: 'Failed to load dashboard data',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -35,17 +35,24 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/tickets
   def tickets
     begin
+      Rails.logger.info "📋 Loading tickets for support user: #{current_user.id} (#{current_user.display_name})"
+      Rails.logger.info "User roles: #{current_user.roles.pluck(:name).join(', ')}"
+      
       tickets_query = build_tickets_query
       tickets_query = apply_ticket_filters(tickets_query)
       
       page = [params[:page].to_i, 1].max
-      limit = [params[:limit].to_i, 20].max.clamp(1, 100)
+      limit = [params[:limit].to_i, 50].max.clamp(1, 100)
+      
+      Rails.logger.info "Fetching tickets - Page: #{page}, Limit: #{limit}"
       
       tickets = tickets_query.includes(:conversation_participants, :users, :messages)
                             .limit(limit)
                             .offset((page - 1) * limit)
       
       total_count = tickets_query.count
+      
+      Rails.logger.info "Found #{total_count} total tickets, returning #{tickets.count} for this page"
       
       render json: {
         success: true,
@@ -61,11 +68,12 @@ class Api::V1::SupportController < ApplicationController
         }
       }
     rescue => e
-      Rails.logger.error "Error loading support tickets: #{e.message}"
+      Rails.logger.error "❌ Error loading support tickets: #{e.message}"
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to load support tickets'
+        message: 'Failed to load support tickets',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -73,12 +81,17 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/my_tickets
   def my_tickets
     begin
+      Rails.logger.info "📋 Loading my tickets for agent: #{current_user.id}"
+      
+      # Get tickets where current user is assigned as agent
       my_tickets = Conversation.where(conversation_type: 'support_ticket')
                               .joins(:conversation_participants)
                               .where(conversation_participants: { role: 'agent', user_id: current_user.id })
                               .includes(:users, :messages)
                               .order(updated_at: :desc)
                               .limit(50)
+
+      Rails.logger.info "Found #{my_tickets.count} assigned tickets"
 
       render json: {
         success: true,
@@ -92,7 +105,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to load your tickets'
+        message: 'Failed to load your tickets',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -109,7 +123,9 @@ class Api::V1::SupportController < ApplicationController
         }, status: :unprocessable_entity
       end
 
-      agent = User.with_role(:support).find(agent_id)
+      agent = User.joins(:roles).where(roles: { name: 'support' }).find(agent_id)
+      
+      Rails.logger.info "Assigning ticket #{@conversation.id} to agent #{agent.id} (#{agent.display_name})"
       
       # Remove existing agent assignment
       existing_agent = @conversation.conversation_participants.find_by(role: 'agent')
@@ -162,7 +178,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to assign ticket'
+        message: 'Failed to assign ticket',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -213,7 +230,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to escalate ticket'
+        message: 'Failed to escalate ticket',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -258,7 +276,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to add note'
+        message: 'Failed to add note',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -313,7 +332,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to update priority'
+        message: 'Failed to update priority',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -321,7 +341,8 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/agents
   def agents
     begin
-      agents = User.with_role(:support)
+      agents = User.joins(:roles)
+                  .where(roles: { name: 'support' })
                   .includes(:conversation_participants)
                   .order(:first_name, :last_name)
 
@@ -347,7 +368,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to load agents'
+        message: 'Failed to load agents',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -378,7 +400,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to perform bulk action'
+        message: 'Failed to perform bulk action',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -398,7 +421,8 @@ class Api::V1::SupportController < ApplicationController
       Rails.logger.error e.backtrace.join("\n")
       render json: {
         success: false,
-        message: 'Failed to load statistics'
+        message: 'Failed to load statistics',
+        error: e.message
       }, status: :internal_server_error
     end
   end
@@ -406,7 +430,7 @@ class Api::V1::SupportController < ApplicationController
   private
 
   def set_conversation
-    @conversation = accessible_conversations.find(params[:id])
+    @conversation = Conversation.where(conversation_type: 'support_ticket').find(params[:id])
   rescue ActiveRecord::RecordNotFound
     render json: {
       success: false,
@@ -415,7 +439,8 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def ensure_support_access!
-    unless current_user.support_staff?
+    unless current_user.has_role?(:support) || current_user.has_role?(:admin)
+      Rails.logger.warn "Access denied for user #{current_user.id} - missing support role"
       render json: {
         success: false,
         message: 'Access denied. Support role required.'
@@ -423,46 +448,66 @@ class Api::V1::SupportController < ApplicationController
     end
   end
 
-  def accessible_conversations
-    if current_user.admin?
-      Conversation.where(conversation_type: 'support_ticket')
-    else
-      Conversation.where(conversation_type: 'support_ticket')
-                  .joins(:conversation_participants)
-                  .where(conversation_participants: { role: 'agent', user_id: current_user.id })
-                  .distinct
-    end
-  end
-
   def build_tickets_query
-    accessible_conversations.includes(:conversation_participants, :users, :messages).order(updated_at: :desc)
+    # ALL support staff can see ALL support tickets
+    # This is the key fix - support staff need to see unassigned tickets to claim them
+    Conversation.where(conversation_type: 'support_ticket')
+                .includes(:conversation_participants, :users, :messages)
+                .order(updated_at: :desc)
   end
 
   def apply_ticket_filters(query)
-    query = query.where("conversations.metadata->>'status' = ?", params[:status]) if params[:status].present?
-    query = query.where("conversations.metadata->>'priority' = ?", params[:priority]) if params[:priority].present?
-    query = query.where("conversations.metadata->>'category' = ?", params[:category]) if params[:category].present?
+    # Status filter
+    if params[:status].present?
+      query = query.where("conversations.metadata->>'status' = ?", params[:status])
+    end
+    
+    # Priority filter
+    if params[:priority].present?
+      query = query.where("conversations.metadata->>'priority' = ?", params[:priority])
+    end
+    
+    # Category filter
+    if params[:category].present?
+      query = query.where("conversations.metadata->>'category' = ?", params[:category])
+    end
 
+    # Agent filter - show only tickets assigned to specific agent
     if params[:agent_id].present?
       query = query.joins(:conversation_participants)
                   .where(conversation_participants: { user_id: params[:agent_id], role: 'agent' })
     end
 
+    # Unassigned filter - show only unassigned tickets
     if params[:unassigned] == 'true'
-      query = query.left_joins(:conversation_participants)
-                  .where("conversation_participants.role = 'agent' AND conversation_participants.id IS NULL")
+      subquery = ConversationParticipant.where(role: 'agent')
+                                        .where('conversation_participants.conversation_id = conversations.id')
+                                        .select('1')
+      query = query.where.not(id: Conversation.where('EXISTS (?)', subquery))
     end
 
-    query = query.where('conversations.created_at >= ?', params[:created_after]) if params[:created_after].present?
-    query = query.where('conversations.created_at <= ?', params[:created_before]) if params[:created_before].present?
+    # Date filters
+    if params[:created_after].present?
+      query = query.where('conversations.created_at >= ?', params[:created_after])
+    end
+    
+    if params[:created_before].present?
+      query = query.where('conversations.created_at <= ?', params[:created_before])
+    end
 
+    # Search filter
     if params[:search].present?
       search_term = "%#{params[:search]}%"
-      query = query.joins(:users)
+      query = query.left_joins(:users)
                   .where(
-                    "conversations.title ILIKE ? OR users.first_name ILIKE ? OR users.last_name ILIKE ? OR conversations.metadata->>'ticket_id' ILIKE ?",
-                    search_term, search_term, search_term, search_term
+                    "conversations.title ILIKE ? OR 
+                     users.first_name ILIKE ? OR 
+                     users.last_name ILIKE ? OR 
+                     users.email ILIKE ? OR
+                     conversations.metadata->>'ticket_id' ILIKE ?",
+                    search_term, search_term, search_term, search_term, search_term
                   )
+                  .distinct
     end
 
     query
@@ -489,6 +534,13 @@ class Api::V1::SupportController < ApplicationController
   def get_customer_from_conversation(conversation)
     # Find the customer participant (the one who initiated the conversation)
     customer_participant = conversation.conversation_participants.find { |p| p.role == 'customer' }
+    
+    # If no customer role, find the first non-support user
+    if customer_participant.nil?
+      non_support_users = conversation.users.reject { |u| u.has_role?(:support) || u.has_role?(:admin) }
+      return non_support_users.first
+    end
+    
     customer_participant&.user
   end
 
@@ -499,11 +551,15 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def get_last_message(conversation)
-    conversation.messages.order(created_at: :desc).first
+    conversation.messages.where.not(is_system: true).order(created_at: :desc).first
   end
 
   def calculate_unread_count(conversation, user)
-    conversation.messages.where.not(user: user).where(read_at: nil).count
+    conversation.messages
+                .where.not(user: user)
+                .where(read_at: nil)
+                .where.not(is_system: true)
+                .count
   end
 
   def broadcast_agent_assignment(agent)
@@ -540,7 +596,7 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def broadcast_ticket_status_update
-    status = @conversation.metadata&.dig('status') || 'open'
+    status = @conversation.metadata&.dig('status') || 'pending'
     
     ActionCable.server.broadcast(
       "support_dashboard",
@@ -604,7 +660,7 @@ class Api::V1::SupportController < ApplicationController
       user: {
         id: message.user.id,
         name: message.user.display_name,
-        role: message.user.primary_role
+        role: message.user.roles.first&.name || 'user'
       },
       metadata: message.metadata || {}
     }
@@ -638,32 +694,32 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_dashboard_stats
-    base_tickets = accessible_conversations
-
+    all_support_tickets = Conversation.where(conversation_type: 'support_ticket')
+    
     {
-      total_tickets: base_tickets.count,
-      pending_tickets: base_tickets.where("conversations.metadata->>'status' = ?", 'pending').count,
-      in_progress_tickets: base_tickets.where("conversations.metadata->>'status' = ?", 'in_progress').count,
-      resolved_today: base_tickets.where("conversations.metadata->>'status' = ?", 'resolved')
-                                 .where('conversations.updated_at >= ?', Time.current.beginning_of_day).count,
+      total_tickets: all_support_tickets.count,
+      pending_tickets: all_support_tickets.where("conversations.metadata->>'status' = ? OR conversations.metadata->>'status' IS NULL", 'pending').count,
+      in_progress_tickets: all_support_tickets.where("conversations.metadata->>'status' = ?", 'in_progress').count,
+      assigned_tickets: all_support_tickets.where("conversations.metadata->>'status' = ?", 'assigned').count,
+      resolved_today: all_support_tickets.where("conversations.metadata->>'status' = ?", 'resolved')
+                                        .where('conversations.updated_at >= ?', Time.current.beginning_of_day).count,
       avg_response_time: calculate_avg_response_time,
       satisfaction_score: calculate_satisfaction_score,
       tickets_by_priority: {
-        high: base_tickets.where("conversations.metadata->>'priority' = ?", 'high').count,
-        normal: base_tickets.where("conversations.metadata->>'priority' = ?", 'normal').count,
-        low: base_tickets.where("conversations.metadata->>'priority' = ?", 'low').count
-      },
-      tickets_by_category: calculate_tickets_by_category,
-      trends: calculate_ticket_trends
+        high: all_support_tickets.where("conversations.metadata->>'priority' = ?", 'high').count,
+        normal: all_support_tickets.where("conversations.metadata->>'priority' = ? OR conversations.metadata->>'priority' IS NULL", 'normal').count,
+        low: all_support_tickets.where("conversations.metadata->>'priority' = ?", 'low').count,
+        urgent: all_support_tickets.where("conversations.metadata->>'priority' = ?", 'urgent').count
+      }
     }
   end
 
   def get_recent_activity
-    recent_tickets = accessible_conversations
-                    .includes(:users, :messages)
-                    .where('conversations.updated_at >= ?', 24.hours.ago)
-                    .order('conversations.updated_at DESC')
-                    .limit(10)
+    recent_tickets = Conversation.where(conversation_type: 'support_ticket')
+                                .includes(:users, :messages)
+                                .where('conversations.updated_at >= ?', 24.hours.ago)
+                                .order('conversations.updated_at DESC')
+                                .limit(10)
 
     recent_tickets.map do |ticket|
       {
@@ -702,11 +758,14 @@ class Api::V1::SupportController < ApplicationController
     assigned_agent = get_assigned_agent_from_conversation(conversation)
     last_msg = get_last_message(conversation)
     
+    # Default status to 'pending' if not set
+    status = conversation.metadata&.dig('status') || 'pending'
+    
     {
       id: conversation.id,
       ticket_id: conversation.metadata&.dig('ticket_id') || "T-#{conversation.id}",
       title: conversation.title || 'Support Ticket',
-      status: conversation.metadata&.dig('status') || 'open',
+      status: status,
       priority: conversation.metadata&.dig('priority') || 'normal',
       category: conversation.metadata&.dig('category') || 'general',
       created_at: conversation.created_at,
@@ -717,7 +776,12 @@ class Api::V1::SupportController < ApplicationController
         name: customer.display_name,
         email: customer.email,
         avatar_url: avatar_api_url(customer)
-      } : nil,
+      } : {
+        id: nil,
+        name: 'Unknown Customer',
+        email: 'unknown@example.com',
+        avatar_url: nil
+      },
       assigned_agent: assigned_agent ? {
         id: assigned_agent.id,
         name: assigned_agent.display_name,
@@ -726,10 +790,10 @@ class Api::V1::SupportController < ApplicationController
       last_message: last_msg ? {
         content: last_msg.content,
         created_at: last_msg.created_at,
-        from_support: last_msg.user.support_staff?
+        from_support: last_msg.user&.has_role?(:support) || false
       } : nil,
       unread_count: calculate_unread_count(conversation, current_user),
-      message_count: conversation.messages.count,
+      message_count: conversation.messages.where.not(is_system: true).count,
       escalated: conversation.metadata&.dig('escalated') || false,
       package_id: conversation.metadata&.dig('package_id'),
       metadata: conversation.metadata || {}
@@ -743,7 +807,7 @@ class Api::V1::SupportController < ApplicationController
       email: agent.email,
       online: agent.online?,
       avatar_url: avatar_api_url(agent),
-      role: agent.primary_role,
+      role: agent.roles.first&.name || 'user',
       last_seen_at: agent.last_seen_at
     }
   end
@@ -764,7 +828,7 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def perform_bulk_action(action, ticket_ids)
-    conversations = accessible_conversations.where(id: ticket_ids)
+    conversations = Conversation.where(conversation_type: 'support_ticket', id: ticket_ids)
     results = { success: 0, failed: 0, errors: [] }
     
     conversations.each do |conversation|
@@ -847,27 +911,17 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def calculate_avg_response_time
-    "2.5 hours"
+    # Placeholder - implement actual calculation based on your requirements
+    "15m"
   end
 
   def calculate_satisfaction_score
+    # Placeholder - implement actual calculation based on your requirements
     4.2
   end
 
-  def calculate_tickets_by_category
-    accessible_conversations.group("conversations.metadata->>'category'").count
-  end
-
-  def calculate_ticket_trends
-    {
-      daily_trend: "↑12%",
-      weekly_trend: "↓3%",
-      resolution_trend: "↑8%"
-    }
-  end
-
   def determine_last_action(ticket)
-    last_message = get_last_message(ticket)
+    last_message = ticket.messages.order(created_at: :desc).first
     return 'No activity' unless last_message
     
     if last_message.is_system?
@@ -878,26 +932,29 @@ class Api::V1::SupportController < ApplicationController
       else 'System update'
       end
     else
-      last_message.user.support_staff? ? 'Agent replied' : 'Customer replied'
+      last_message.user&.has_role?(:support) ? 'Agent replied' : 'Customer replied'
     end
   end
 
   def calculate_agent_avg_resolution_time(agent)
-    "1.8 hours"
+    # Placeholder - implement actual calculation based on your requirements
+    "1h 30m"
   end
 
   def calculate_agent_satisfaction(agent)
+    # Placeholder - implement actual calculation based on your requirements
     4.3
   end
 
   def calculate_detailed_stats(time_range)
+    # Placeholder - implement actual calculation based on your requirements
     {
       time_range: time_range,
       tickets_created: 45,
       tickets_resolved: 38,
-      avg_resolution_time: "2.1 hours",
+      avg_resolution_time: "2h 15m",
       satisfaction_score: 4.1,
-      first_response_time: "12 minutes"
+      first_response_time: "12m"
     }
   end
 end
