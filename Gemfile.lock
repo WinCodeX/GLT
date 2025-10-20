@@ -91,8 +91,6 @@ GEM
       tzinfo (~> 2.0)
     addressable (2.8.7)
       public_suffix (>= 2.0.2, < 7.0)
-    africastalking (0.1.1)
-      httparty (~> 0.13.7)
     aws-eventstream (1.4.0)
     aws-partitions (1.1150.0)
     aws-sdk-core (3.230.0)
@@ -126,7 +124,7 @@ GEM
     concurrent-ruby (1.3.5)
     connection_pool (2.5.3)
     crass (1.0.6)
-    daemons (1.4.1)
+    csv (3.3.5)
     date (3.4.1)
     debug (1.11.0)
       irb (~> 1.10)
@@ -157,7 +155,6 @@ GEM
       zeitwerk (~> 2.6)
     erb (5.0.2)
     erubi (1.13.1)
-    eventmachine (1.2.7)
     faraday (2.13.4)
       faraday-net_http (>= 2.0, < 3.5)
       json
@@ -192,8 +189,9 @@ GEM
       signet (>= 0.16, < 2.a)
     hashie (5.0.0)
     hiredis (0.6.3)
-    httparty (0.13.7)
-      json (~> 1.8)
+    httparty (0.23.2)
+      csv
+      mini_mime (>= 1.0.0)
       multi_xml (>= 0.5.2)
     i18n (1.14.7)
       concurrent-ruby (~> 1.0)
@@ -206,7 +204,7 @@ GEM
       rdoc (>= 4.0.0)
       reline (>= 0.4.2)
     jmespath (1.6.2)
-    json (1.8.6)
+    json (2.15.1)
     jsonapi-renderer (0.2.2)
     jwt (2.10.2)
       base64
@@ -228,8 +226,6 @@ GEM
     multi_json (1.17.0)
     multi_xml (0.7.2)
       bigdecimal (~> 3.1)
-    mustermann (3.0.4)
-      ruby2_keywords (~> 0.0.1)
     mutex_m (0.3.0)
     net-http (0.6.0)
       uri
@@ -364,37 +360,23 @@ GEM
     ruby-vips (2.2.5)
       ffi (~> 1.12)
       logger
-    ruby2_keywords (0.0.5)
     securerandom (0.4.1)
-    sidekiq (7.3.9)
-      base64
-      connection_pool (>= 2.3.0)
-      logger
-      rack (>= 2.2.4)
-      redis-client (>= 0.22.2)
+    sidekiq (8.0.8)
+      connection_pool (>= 2.5.0)
+      json (>= 2.9.0)
+      logger (>= 1.6.2)
+      rack (>= 3.1.0)
+      redis-client (>= 0.23.2)
     signet (0.21.0)
       addressable (~> 2.8)
       faraday (>= 0.17.5, < 3.a)
       jwt (>= 1.5, < 4.0)
       multi_json (~> 1.10)
-    sinatra (4.2.1)
-      logger (>= 1.6.0)
-      mustermann (~> 3.0)
-      rack (>= 3.0.0, < 4)
-      rack-protection (= 4.2.1)
-      rack-session (>= 2.0.0, < 3)
-      tilt (~> 2.0)
     snaky_hash (2.0.3)
       hashie (>= 0.1.0, < 6)
       version_gem (>= 1.1.8, < 3)
     stringio (3.1.7)
-    thin (2.0.1)
-      daemons (~> 1.0, >= 1.0.9)
-      eventmachine (~> 1.0, >= 1.0.4)
-      logger
-      rack (>= 1, < 4)
     thor (1.3.2)
-    tilt (2.6.1)
     timeout (0.4.3)
     tzinfo (2.0.6)
       concurrent-ruby (~> 1.0)
@@ -425,10 +407,9 @@ PLATFORMS
   x86_64-linux-musl
 
 DEPENDENCIES
-  actioncable
+  actioncable (~> 7.1.0)
   active_model_serializers
   active_storage_validations
-  africastalking
   aws-sdk-s3
   bootsnap
   cancancan
@@ -439,11 +420,11 @@ DEPENDENCIES
   dotenv-rails (~> 3.1)
   fast_jsonapi
   google-id-token
-  googleauth
+  googleauth (~> 1.8)
   hiredis
-  httparty
+  httparty (~> 0.21)
   image_processing (~> 1.2)
-  json
+  json (~> 2.6)
   jwt (~> 2.7)
   mini_magick
   omniauth (~> 2.1)
@@ -458,9 +439,7 @@ DEPENDENCIES
   render_build_setup (~> 0.0.1)
   rolify
   rqrcode
-  sidekiq
-  sinatra
-  thin
+  sidekiq (~> 8.0)
   tzinfo-data
 
 RUBY VERSION
