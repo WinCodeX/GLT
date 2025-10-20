@@ -73,7 +73,7 @@ class Api::V1::SupportController < ApplicationController
   # GET /api/v1/support/my_tickets
   def my_tickets
     begin
-      my_tickets = Conversation.support_tickets
+      my_tickets = Conversation.where(conversation_type: 'support_ticket')
                               .joins(:conversation_participants)
                               .where(conversation_participants: { role: 'agent', user_id: current_user.id })
                               .includes(:users, :messages)
@@ -111,17 +111,23 @@ class Api::V1::SupportController < ApplicationController
 
       agent = User.with_role(:support).find(agent_id)
       
+      # Remove existing agent assignment
       existing_agent = @conversation.conversation_participants.find_by(role: 'agent')
       existing_agent&.destroy
 
+      # Assign new agent
       @conversation.conversation_participants.create!(
         user: agent,
         role: 'agent',
         joined_at: Time.current
       )
 
-      @conversation.update_support_status('assigned')
+      # Update conversation status
+      current_metadata = @conversation.metadata || {}
+      @conversation.metadata = current_metadata.merge('status' => 'assigned')
+      @conversation.save!
 
+      # Create system message
       system_message = @conversation.messages.create!(
         user: current_user,
         content: "Ticket assigned to #{agent.display_name} by #{current_user.display_name}",
@@ -194,8 +200,6 @@ class Api::V1::SupportController < ApplicationController
       broadcast_ticket_escalated(escalate_to, escalation_reason)
       broadcast_system_message(system_message)
       broadcast_dashboard_stats_update
-
-      notify_escalation_team(escalate_to, @conversation, escalation_reason)
 
       render json: {
         success: true,
@@ -271,7 +275,7 @@ class Api::V1::SupportController < ApplicationController
         }, status: :unprocessable_entity
       end
 
-      old_priority = @conversation.priority
+      old_priority = @conversation.metadata&.dig('priority') || 'normal'
       current_metadata = @conversation.metadata || {}
       @conversation.metadata = current_metadata.merge(
         'priority' => new_priority,
@@ -293,7 +297,7 @@ class Api::V1::SupportController < ApplicationController
         }
       )
 
-      broadcast_ticket_status_update(@conversation.status)
+      broadcast_ticket_status_update
       broadcast_system_message(system_message)
       broadcast_dashboard_stats_update
 
@@ -322,7 +326,7 @@ class Api::V1::SupportController < ApplicationController
                   .order(:first_name, :last_name)
 
       agents_data = agents.map do |agent|
-        agent_tickets = Conversation.support_tickets
+        agent_tickets = Conversation.where(conversation_type: 'support_ticket')
                                    .joins(:conversation_participants)
                                    .where(conversation_participants: { role: 'agent', user_id: agent.id })
         
@@ -421,9 +425,9 @@ class Api::V1::SupportController < ApplicationController
 
   def accessible_conversations
     if current_user.admin?
-      Conversation.support_tickets
+      Conversation.where(conversation_type: 'support_ticket')
     else
-      Conversation.support_tickets
+      Conversation.where(conversation_type: 'support_ticket')
                   .joins(:conversation_participants)
                   .where(conversation_participants: { role: 'agent', user_id: current_user.id })
                   .distinct
@@ -482,6 +486,26 @@ class Api::V1::SupportController < ApplicationController
     filters
   end
 
+  def get_customer_from_conversation(conversation)
+    # Find the customer participant (the one who initiated the conversation)
+    customer_participant = conversation.conversation_participants.find { |p| p.role == 'customer' }
+    customer_participant&.user
+  end
+
+  def get_assigned_agent_from_conversation(conversation)
+    # Find the agent participant
+    agent_participant = conversation.conversation_participants.find { |p| p.role == 'agent' }
+    agent_participant&.user
+  end
+
+  def get_last_message(conversation)
+    conversation.messages.order(created_at: :desc).first
+  end
+
+  def calculate_unread_count(conversation, user)
+    conversation.messages.where.not(user: user).where(read_at: nil).count
+  end
+
   def broadcast_agent_assignment(agent)
     ActionCable.server.broadcast(
       "support_dashboard",
@@ -515,13 +539,15 @@ class Api::V1::SupportController < ApplicationController
     Rails.logger.info "✅ Agent assignment broadcast to dashboard and conversation #{@conversation.id}"
   end
 
-  def broadcast_ticket_status_update(new_status)
+  def broadcast_ticket_status_update
+    status = @conversation.metadata&.dig('status') || 'open'
+    
     ActionCable.server.broadcast(
       "support_dashboard",
       {
         type: 'ticket_status_update',
         ticket_id: @conversation.id,
-        status: new_status,
+        status: status,
         timestamp: Time.current.iso8601
       }
     )
@@ -531,12 +557,12 @@ class Api::V1::SupportController < ApplicationController
       {
         type: 'ticket_status_changed',
         conversation_id: @conversation.id,
-        new_status: new_status,
+        new_status: status,
         timestamp: Time.current.iso8601
       }
     )
     
-    Rails.logger.info "✅ Status update broadcast to dashboard: #{new_status}"
+    Rails.logger.info "✅ Status update broadcast to dashboard: #{status}"
   end
 
   def broadcast_ticket_escalated(escalate_to, reason)
@@ -641,11 +667,11 @@ class Api::V1::SupportController < ApplicationController
 
     recent_tickets.map do |ticket|
       {
-        ticket_id: ticket.ticket_id,
-        customer_name: ticket.customer&.display_name,
+        ticket_id: ticket.metadata&.dig('ticket_id') || "T-#{ticket.id}",
+        customer_name: get_customer_from_conversation(ticket)&.display_name || 'Unknown',
         action: determine_last_action(ticket),
         timestamp: ticket.updated_at,
-        agent: ticket.assigned_agent&.display_name
+        agent: get_assigned_agent_from_conversation(ticket)&.display_name
       }
     end
   end
@@ -653,7 +679,7 @@ class Api::V1::SupportController < ApplicationController
   def get_agent_performance_stats(agent = nil)
     target_agent = agent || current_user
     
-    agent_tickets = Conversation.support_tickets
+    agent_tickets = Conversation.where(conversation_type: 'support_ticket')
                                 .joins(:conversation_participants)
                                 .where(conversation_participants: { role: 'agent', user_id: target_agent.id })
     
@@ -672,33 +698,37 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def format_support_ticket(conversation)
+    customer = get_customer_from_conversation(conversation)
+    assigned_agent = get_assigned_agent_from_conversation(conversation)
+    last_msg = get_last_message(conversation)
+    
     {
       id: conversation.id,
-      ticket_id: conversation.ticket_id,
-      title: conversation.title,
-      status: conversation.status,
-      priority: conversation.priority || 'normal',
-      category: conversation.category || 'general',
+      ticket_id: conversation.metadata&.dig('ticket_id') || "T-#{conversation.id}",
+      title: conversation.title || 'Support Ticket',
+      status: conversation.metadata&.dig('status') || 'open',
+      priority: conversation.metadata&.dig('priority') || 'normal',
+      category: conversation.metadata&.dig('category') || 'general',
       created_at: conversation.created_at,
       updated_at: conversation.updated_at,
-      last_activity_at: conversation.last_activity_at,
-      customer: conversation.customer ? {
-        id: conversation.customer.id,
-        name: conversation.customer.display_name,
-        email: conversation.customer.email,
-        avatar_url: avatar_api_url(conversation.customer)
+      last_activity_at: conversation.updated_at,
+      customer: customer ? {
+        id: customer.id,
+        name: customer.display_name,
+        email: customer.email,
+        avatar_url: avatar_api_url(customer)
       } : nil,
-      assigned_agent: conversation.assigned_agent ? {
-        id: conversation.assigned_agent.id,
-        name: conversation.assigned_agent.display_name,
-        email: conversation.assigned_agent.email
+      assigned_agent: assigned_agent ? {
+        id: assigned_agent.id,
+        name: assigned_agent.display_name,
+        email: assigned_agent.email
       } : nil,
-      last_message: conversation.last_message ? {
-        content: conversation.last_message.content,
-        created_at: conversation.last_message.created_at,
-        from_support: conversation.last_message.from_support?
+      last_message: last_msg ? {
+        content: last_msg.content,
+        created_at: last_msg.created_at,
+        from_support: last_msg.user.support_staff?
       } : nil,
-      unread_count: conversation.unread_count_for(current_user),
+      unread_count: calculate_unread_count(conversation, current_user),
       message_count: conversation.messages.count,
       escalated: conversation.metadata&.dig('escalated') || false,
       package_id: conversation.metadata&.dig('package_id'),
@@ -743,19 +773,19 @@ class Api::V1::SupportController < ApplicationController
         
         case action
         when 'close'
-          conversation.update_support_status('closed')
+          update_conversation_status(conversation, 'closed')
           add_bulk_action_message(conversation, 'closed')
-          broadcast_ticket_status_update('closed')
+          broadcast_ticket_status_update
         when 'assign_to_me'
           assign_ticket_to_agent(conversation, current_user)
           broadcast_agent_assignment(current_user)
         when 'mark_resolved'
-          conversation.update_support_status('resolved')
+          update_conversation_status(conversation, 'resolved')
           add_bulk_action_message(conversation, 'resolved')
-          broadcast_ticket_status_update('resolved')
+          broadcast_ticket_status_update
         when 'set_priority_high'
           update_conversation_priority(conversation, 'high')
-          broadcast_ticket_status_update(conversation.status)
+          broadcast_ticket_status_update
         else
           raise "Unknown action: #{action}"
         end
@@ -763,11 +793,17 @@ class Api::V1::SupportController < ApplicationController
         results[:success] += 1
       rescue => e
         results[:failed] += 1
-        results[:errors] << { ticket_id: conversation.ticket_id, error: e.message }
+        results[:errors] << { ticket_id: conversation.metadata&.dig('ticket_id') || conversation.id, error: e.message }
       end
     end
     
     results
+  end
+
+  def update_conversation_status(conversation, status)
+    current_metadata = conversation.metadata || {}
+    conversation.metadata = current_metadata.merge('status' => status)
+    conversation.save!
   end
 
   def assign_ticket_to_agent(conversation, agent)
@@ -780,7 +816,7 @@ class Api::V1::SupportController < ApplicationController
       joined_at: Time.current
     )
 
-    conversation.update_support_status('assigned')
+    update_conversation_status(conversation, 'assigned')
   end
 
   def add_bulk_action_message(conversation, action)
@@ -831,7 +867,7 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def determine_last_action(ticket)
-    last_message = ticket.messages.order(:created_at).last
+    last_message = get_last_message(ticket)
     return 'No activity' unless last_message
     
     if last_message.is_system?
@@ -842,7 +878,7 @@ class Api::V1::SupportController < ApplicationController
       else 'System update'
       end
     else
-      last_message.from_support? ? 'Agent replied' : 'Customer replied'
+      last_message.user.support_staff? ? 'Agent replied' : 'Customer replied'
     end
   end
 
@@ -863,9 +899,5 @@ class Api::V1::SupportController < ApplicationController
       satisfaction_score: 4.1,
       first_response_time: "12 minutes"
     }
-  end
-
-  def notify_escalation_team(team, conversation, reason)
-    Rails.logger.info "Ticket #{conversation.ticket_id} escalated to #{team} team: #{reason}"
   end
 end
