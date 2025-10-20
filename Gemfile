@@ -89,13 +89,13 @@ gem "aws-sdk-s3", require: false
 gem 'jwt', '~> 2.7'
 
 # HTTP client for API requests (if not already present)
-gem 'httparty'
+gem 'httparty', '~> 0.21'  #
 # For better JSON handling (if not already present)
-gem 'json'
-gem "sidekiq"
-gem 'googleauth'
+gem 'json', '~> 2.6'
+gem "sidekiq", "~> 8.0"
+gem 'googleauth', '~> 1.8'
 
-gem 'actioncable'
+gem 'actioncable', '~> 7.1.0'
 
 #Africastalking bulk sms
 gem 'sinatra'
