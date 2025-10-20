@@ -96,3 +96,10 @@ gem "sidekiq", "~> 8.0"
 gem 'googleauth', '~> 1.8'
 
 gem 'actioncable', '~> 7.1.0'
+
+#Africastalking bulk sms
+gem 'sinatra'
+
+gem 'thin'
+
+gem 'africastalking'
