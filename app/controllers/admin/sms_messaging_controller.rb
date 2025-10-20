@@ -1,32 +1,52 @@
 # app/controllers/admin/sms_messaging_controller.rb
 module Admin
   class SmsMessagingController < ApplicationController
-    before_action :authenticate_user! # optional security
+    before_action :authenticate_user!
+    skip_before_action :verify_authenticity_token, only: [:create]
 
     def index
-      @default_message = "Hi 👋 Glen, your package has been dropped at our agent and is being processed for delivery."
+      # This renders the HTML view
     end
 
     def create
-      @recipients = params[:recipients].to_s.split(',').map(&:strip)
-      @message = params[:message]
+      phone_number = params[:phone_number].to_s.strip
+      message = params[:message].to_s.strip
 
-      if @recipients.blank? || @message.blank?
-        flash[:alert] = "Recipients and message cannot be empty."
-        redirect_to admin_sms_messaging_index_path and return
+      if phone_number.blank? || message.blank?
+        render json: { 
+          success: false, 
+          error: "Phone number and message cannot be empty." 
+        }, status: :unprocessable_entity
+        return
       end
 
       begin
-        at = Africastalking::Initialize.new(ENV['AT_USERNAME'], ENV['AT_API_KEY'])
-        sms = at.sms
-        response = sms.send(message: @message, to: @recipients)
+        service = AfricasTalkingService.new
+        response = service.send_sms(
+          to: phone_number,
+          message: message
+        )
 
-        flash[:notice] = "Bulk SMS queued successfully! Response: #{response.inspect}"
+        if response[:error]
+          render json: { 
+            success: false, 
+            error: "Failed to send SMS: #{response[:message]}" 
+          }, status: :unprocessable_entity
+        else
+          render json: { 
+            success: true, 
+            message: "SMS sent successfully!",
+            details: response
+          }, status: :ok
+        end
+
       rescue => e
-        flash[:alert] = "Failed to send SMS: #{e.message}"
+        Rails.logger.error "SMS Error: #{e.message}"
+        render json: { 
+          success: false, 
+          error: "Failed to send SMS: #{e.message}" 
+        }, status: :internal_server_error
       end
-
-      redirect_to admin_sms_messaging_index_path
     end
   end
 end
