@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Africa's Talking SMS Tester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .toast {
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s, visibility 0.3s;
+            transform: translateY(20px);
+        }
+        .toast.show {
+            visibility: visible;
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-md bg-white rounded-xl shadow-lg p-8">
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-gray-800">SMS Messenger</h1>
+            <p class="text-gray-500">Send a test message via Africa's Talking</p>
+        </div>
+
+        <form id="smsForm">
+            <!-- Phone Number Input -->
+            <div class="mb-5">
+                <label for="phone_number" class="block mb-2 text-sm font-medium text-gray-700">Phone Number</label>
+                <input type="tel" id="phone_number" name="phone_number" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5" placeholder="+2547XXXXXXXX" required>
+                <p class="text-xs text-gray-500 mt-1">Include country code (e.g., +254).</p>
+            </div>
+
+            <!-- Message Textarea -->
+            <div class="mb-6">
+                <label for="message" class="block mb-2 text-sm font-medium text-gray-700">Message</label>
+                <textarea id="message" name="message" rows="4" class="block p-2.5 w-full text-sm text-gray-900 bg-gray-50 rounded-lg border border-gray-300 focus:ring-indigo-500 focus:border-indigo-500" required>Hi 👋 Glen, your package has been dropped at our agent and is being processed for delivery.</textarea>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit" id="submitBtn" class="w-full text-white bg-indigo-600 hover:bg-indigo-700 focus:ring-4 focus:outline-none focus:ring-indigo-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors duration-300">
+                <span id="btnText">Send Message</span>
+                <span id="btnSpinner" class="hidden">
+                    <svg class="animate-spin h-5 w-5 text-white mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
+            </button>
+        </form>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast fixed bottom-5 right-5 flex items-center w-full max-w-xs p-4 text-gray-500 bg-white rounded-lg shadow-lg" role="alert">
+        <div id="toast-icon" class="inline-flex items-center justify-center flex-shrink-0 w-8 h-8 text-green-500 bg-green-100 rounded-lg">
+            <!-- Icon will be set by JS -->
+        </div>
+        <div id="toast-message" class="ml-3 text-sm font-normal">Message sent successfully.</div>
+    </div>
+
+    <script>
+        const smsForm = document.getElementById('smsForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const btnText = document.getElementById('btnText');
+        const btnSpinner = document.getElementById('btnSpinner');
+        const toast = document.getElementById('toast');
+        const toastIcon = document.getElementById('toast-icon');
+        const toastMessage = document.getElementById('toast-message');
+
+        smsForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            // Show loading state
+            btnText.classList.add('hidden');
+            btnSpinner.classList.remove('hidden');
+            submitBtn.disabled = true;
+
+            const formData = new FormData(smsForm);
+            const data = {
+                phone_number: formData.get('phone_number'),
+                message: formData.get('message'),
+            };
+
+            try {
+                // This is the backend endpoint you will create in your Rails app.
+                const response = await fetch('/admin/send_test_sms', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // Rails requires a CSRF token for POST requests from non-Rails forms.
+                        // You'll need to get this token from your Rails view if embedding.
+                        // For a standalone page, you might need to disable CSRF for this specific route (not recommended for production).
+                        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showToast('success', result.message || 'SMS sent successfully!');
+                } else {
+                    throw new Error(result.error || 'An unknown error occurred.');
+                }
+
+            } catch (error) {
+                console.error('Error sending SMS:', error);
+                showToast('error', error.message);
+            } finally {
+                // Restore button state
+                btnText.classList.remove('hidden');
+                btnSpinner.classList.add('hidden');
+                submitBtn.disabled = false;
+            }
+        });
+
+        function showToast(type, message) {
+            // Reset classes
+            toastIcon.innerHTML = '';
+            toastIcon.className = 'inline-flex items-center justify-center flex-shrink-0 w-8 h-8 rounded-lg';
+
+            if (type === 'success') {
+                toastIcon.classList.add('text-green-500', 'bg-green-100');
+                toastIcon.innerHTML = `
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                    </svg>`;
+            } else { // error
+                toastIcon.classList.add('text-red-500', 'bg-red-100');
+                toastIcon.innerHTML = `
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>`;
+            }
+            
+            toastMessage.textContent = message;
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+
+</body>
+</html>
+
