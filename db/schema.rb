@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
+ActiveRecord::Schema[7.1].define(version: 2025_10_07_160422) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -222,7 +222,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
 
   create_table "mpesa_transactions", force: :cascade do |t|
     t.bigint "user_id", null: false
-    t.bigint "package_id", null: false
+    t.bigint "package_id"
     t.string "checkout_request_id", null: false
     t.string "merchant_request_id", null: false
     t.string "phone_number", null: false
@@ -235,14 +235,26 @@ ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
     t.decimal "callback_amount", precision: 10, scale: 2
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "wallet_id"
+    t.string "transaction_type", default: "package_payment"
+    t.string "account_reference"
+    t.datetime "initiated_at"
+    t.datetime "completed_at"
+    t.datetime "failed_at"
+    t.text "result_description"
+    t.jsonb "transaction_metadata", default: {}
+    t.index ["account_reference"], name: "index_mpesa_transactions_on_account_reference"
     t.index ["checkout_request_id"], name: "index_mpesa_transactions_on_checkout_request_id", unique: true
     t.index ["merchant_request_id"], name: "index_mpesa_transactions_on_merchant_request_id"
     t.index ["mpesa_receipt_number"], name: "index_mpesa_transactions_on_mpesa_receipt_number"
     t.index ["package_id", "status"], name: "index_mpesa_transactions_on_package_id_and_status"
     t.index ["package_id"], name: "index_mpesa_transactions_on_package_id"
     t.index ["status"], name: "index_mpesa_transactions_on_status"
+    t.index ["transaction_metadata"], name: "index_mpesa_transactions_on_transaction_metadata", using: :gin
+    t.index ["transaction_type"], name: "index_mpesa_transactions_on_transaction_type"
     t.index ["user_id", "status"], name: "index_mpesa_transactions_on_user_id_and_status"
     t.index ["user_id"], name: "index_mpesa_transactions_on_user_id"
+    t.index ["wallet_id"], name: "index_mpesa_transactions_on_wallet_id"
   end
 
   create_table "notifications", force: :cascade do |t|
@@ -605,7 +617,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
   add_foreign_key "agents", "users"
   add_foreign_key "areas", "locations"
   add_foreign_key "business_activities", "businesses"
-  add_foreign_key "business_activities", "packages"
+  add_foreign_key "business_activities", "packages", on_delete: :cascade
   add_foreign_key "business_activities", "users"
   add_foreign_key "business_activities", "users", column: "target_user_id"
   add_foreign_key "business_categories", "businesses"
@@ -620,6 +632,7 @@ ActiveRecord::Schema[7.1].define(version: 2025_10_07_160420) do
   add_foreign_key "messages", "users"
   add_foreign_key "mpesa_transactions", "packages"
   add_foreign_key "mpesa_transactions", "users"
+  add_foreign_key "mpesa_transactions", "wallets"
   add_foreign_key "notifications", "packages"
   add_foreign_key "notifications", "users"
   add_foreign_key "package_print_logs", "packages"
