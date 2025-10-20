@@ -92,7 +92,7 @@ gem 'jwt', '~> 2.7'
 gem 'httparty'
 # For better JSON handling (if not already present)
 gem 'json', '~> 1.8'
-gem "sidekiq", "~> 8.0"
+gem "sidekiq"
 gem 'googleauth', '~> 1.8'
 
 gem 'actioncable', '~> 7.1.0'
