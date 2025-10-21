@@ -148,10 +148,8 @@ get '/logout', to: 'sessions#destroy'
     namespace :v1 do
 
       # ==========================================
-#  👨‍💼 Staff Routes
-# ==========================================
-namespace :api do
-  namespace :v1 do
+      #  👨‍💼 Staff Routes
+      # ==========================================
     # Dashboard
     get 'staff/dashboard/stats', to: 'staff#dashboard_stats'
 
