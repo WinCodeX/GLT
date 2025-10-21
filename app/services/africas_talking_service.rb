@@ -19,7 +19,7 @@ class AfricasTalkingService
     }
   end
 
-  def send_sms(to:, message:, from: nil)
+  def send_sms(to:, message:, from: 'Gltapp')
     body = {
       username: @username,
       to: to,
@@ -35,7 +35,7 @@ class AfricasTalkingService
     handle_response(response)
   end
 
-  def send_bulk_sms(recipients:, message:, from: nil)
+  def send_bulk_sms(recipients:, message:, from: 'Gltapp')
     to = recipients.is_a?(Array) ? recipients.join(',') : recipients
     send_sms(to: to, message: message, from: from)
   end
