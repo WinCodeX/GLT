@@ -540,46 +540,59 @@ class Api::V1::StaffController < ApplicationController
     # Revenue today (sum of package costs for completed packages today)
     revenue_today = base_packages.where(state: ['delivered', 'collected'])
                                 .where(updated_at: today_start..today_end)
-                                .sum(:cost)
+                                .sum(:cost) || 0
     
     # Pending packages count
     pending_packages_count = base_packages.where(state: ['pending', 'pending_unpaid', 'submitted']).count
     
     # Pending packages grouped by sender location/agent
-    pending_packages_grouped = base_packages.where(state: ['pending', 'pending_unpaid', 'submitted'])
-                                           .includes(:origin_area, :origin_agent)
-                                           .group_by do |pkg|
-      if pkg.origin_agent
-        {
-          type: 'agent',
-          id: pkg.origin_agent.id,
-          name: pkg.origin_agent.name,
-          location: pkg.origin_area&.full_name || 'Unknown'
-        }
-      elsif pkg.origin_area
-        {
-          type: 'area',
-          id: pkg.origin_area.id,
-          name: pkg.origin_area.name,
-          location: pkg.origin_area.full_name
-        }
-      else
-        {
-          type: 'unknown',
-          id: nil,
-          name: 'Unknown Location',
-          location: 'Unknown'
-        }
+    pending_packages_grouped = {}
+    
+    if pending_packages_count > 0
+      pending_packages = base_packages.where(state: ['pending', 'pending_unpaid', 'submitted'])
+                                     .includes(:origin_area, :origin_agent)
+      
+      pending_packages_grouped = pending_packages.group_by do |pkg|
+        # Handle location-based packages (fragile, collection)
+        if pkg.location_based_delivery?
+          {
+            type: 'location',
+            id: "loc_#{pkg.id}",
+            name: pkg.pickup_location.present? ? pkg.pickup_location : 'Location-based Delivery',
+            location: pkg.pickup_location.presence || 'Custom Pickup Location'
+          }
+        elsif pkg.origin_agent.present?
+          {
+            type: 'agent',
+            id: pkg.origin_agent.id,
+            name: pkg.origin_agent.name,
+            location: pkg.origin_area&.full_name || pkg.origin_agent.display_name || 'Unknown'
+          }
+        elsif pkg.origin_area.present?
+          {
+            type: 'area',
+            id: pkg.origin_area.id,
+            name: pkg.origin_area.name,
+            location: pkg.origin_area.full_name || pkg.origin_area.name
+          }
+        else
+          {
+            type: 'unknown',
+            id: "unknown_#{pkg.id}",
+            name: 'Unknown Location',
+            location: 'Location information not available'
+          }
+        end
       end
     end
     
     pending_by_location = pending_packages_grouped.map do |location_info, packages|
       {
-        office_name: location_info[:name],
-        location: location_info[:location],
-        type: location_info[:type],
-        count: packages.count,
-        packages: packages.map { |pkg| format_package_summary(pkg) }
+        office_name: location_info[:name] || 'Unknown',
+        location: location_info[:location] || 'Unknown',
+        type: location_info[:type] || 'unknown',
+        count: packages&.count || 0,
+        packages: (packages || []).map { |pkg| format_package_summary(pkg) }
       }
     end.sort_by { |loc| -loc[:count] }
     
@@ -605,66 +618,168 @@ class Api::V1::StaffController < ApplicationController
                                            .select(:package_id).distinct.count
       }
     }
+  rescue => e
+    Rails.logger.error "Error calculating staff dashboard stats: #{e.message}"
+    Rails.logger.error e.backtrace.join("\n")
+    
+    # Return safe defaults on error
+    {
+      active_deliveries: 0,
+      completed_today: 0,
+      revenue_today: 0,
+      pending_packages: {
+        total: 0,
+        by_location: []
+      },
+      staff_info: {
+        id: current_user.id,
+        name: current_user.display_name,
+        role: current_user.primary_role,
+        role_display: current_user.role_display_name
+      },
+      activity_summary: {
+        scans_today: 0,
+        prints_today: 0,
+        packages_handled_today: 0
+      }
+    }
   end
 
   def format_package_for_staff(package)
+    return nil unless package
+    
+    # Determine origin
+    origin = if package.location_based_delivery?
+               package.pickup_location.presence || 'Location-based Pickup'
+             else
+               package.origin_area&.full_name || 'Unknown Origin'
+             end
+    
+    # Determine destination
+    destination = if package.location_based_delivery?
+                   package.delivery_location.presence || 'Location-based Delivery'
+                 else
+                   package.destination_area&.full_name || 'Unknown Destination'
+                 end
+    
+    # Route description with fallback
+    route_description = begin
+      package.route_description
+    rescue => e
+      Rails.logger.error "Error getting route description: #{e.message}"
+      "#{origin} → #{destination}"
+    end
+    
     {
       id: package.id,
-      code: package.code,
-      state: package.state,
-      state_display: package.state.humanize,
-      delivery_type: package.delivery_type,
-      delivery_type_display: package.delivery_type_display,
+      code: package.code || "PKG-#{package.id}",
+      state: package.state || 'unknown',
+      state_display: (package.state || 'unknown').humanize,
+      delivery_type: package.delivery_type || 'doorstep',
+      delivery_type_display: package.delivery_type_display || 'Standard Delivery',
       package_size: package.package_size,
-      cost: package.cost,
+      cost: package.cost || 0,
       created_at: package.created_at,
       updated_at: package.updated_at,
       sender: {
-        name: package.user.display_name,
-        phone: package.user.phone_number
+        name: package.user&.display_name || 'Unknown',
+        phone: package.user&.phone_number || 'N/A'
       },
       receiver: {
-        name: package.receiver_name,
-        phone: package.receiver_phone
+        name: package.receiver_name || 'Unknown',
+        phone: package.receiver_phone || 'N/A'
       },
       route: {
-        origin: package.location_based_delivery? ? package.pickup_location : package.origin_area&.full_name,
-        destination: package.location_based_delivery? ? package.delivery_location : package.destination_area&.full_name,
-        description: package.route_description
+        origin: origin,
+        destination: destination,
+        description: route_description
       },
-      requires_special_handling: package.requires_special_handling?,
-      priority_level: package.priority_level,
+      requires_special_handling: package.requires_special_handling? || false,
+      priority_level: package.priority_level || 'standard',
       can_be_rejected: ['pending', 'submitted'].include?(package.state)
+    }
+  rescue => e
+    Rails.logger.error "Error formatting package for staff: #{e.message}"
+    Rails.logger.error e.backtrace.join("\n")
+    
+    # Return minimal safe data
+    {
+      id: package.id,
+      code: package.code || "PKG-#{package.id}",
+      state: 'unknown',
+      state_display: 'Unknown',
+      delivery_type: 'doorstep',
+      delivery_type_display: 'Standard Delivery',
+      package_size: nil,
+      cost: 0,
+      created_at: package.created_at,
+      updated_at: package.updated_at,
+      sender: { name: 'Unknown', phone: 'N/A' },
+      receiver: { name: 'Unknown', phone: 'N/A' },
+      route: { origin: 'Unknown', destination: 'Unknown', description: 'Unknown' },
+      requires_special_handling: false,
+      priority_level: 'standard',
+      can_be_rejected: false
     }
   end
 
   def format_package_summary(package)
+    return nil unless package
+    
+    destination = if package.location_based_delivery?
+                   package.delivery_location.presence || 'Location-based Delivery'
+                 else
+                   package.destination_area&.name || 'Unknown Destination'
+                 end
+    
     {
       id: package.id,
-      code: package.code,
-      state: package.state,
-      receiver_name: package.receiver_name,
-      destination: package.location_based_delivery? ? package.delivery_location : package.destination_area&.name
+      code: package.code || "PKG-#{package.id}",
+      state: package.state || 'unknown',
+      receiver_name: package.receiver_name || 'Unknown',
+      destination: destination
+    }
+  rescue => e
+    Rails.logger.error "Error formatting package summary for package #{package.id}: #{e.message}"
+    {
+      id: package.id,
+      code: "PKG-#{package.id}",
+      state: 'unknown',
+      receiver_name: 'Unknown',
+      destination: 'Unknown'
     }
   end
 
   def format_package_details(package)
-    format_package_for_staff(package).merge(
+    return nil unless package
+    
+    base_details = format_package_for_staff(package)
+    return nil unless base_details
+    
+    base_details.merge(
       tracking_summary: {
-        total_events: package.tracking_events.count,
-        last_scan: package.tracking_events.order(created_at: :desc).first&.created_at,
-        print_count: package.print_logs.count
+        total_events: package.tracking_events&.count || 0,
+        last_scan: package.tracking_events&.order(created_at: :desc)&.first&.created_at,
+        print_count: package.print_logs&.count || 0
       },
       payment_info: package.requires_collection? ? {
-        payment_type: package.payment_type,
-        payment_status: package.payment_status,
-        collection_amount: package.collection_amount,
+        payment_type: package.payment_type || 'prepaid',
+        payment_status: package.payment_status || 'unpaid',
+        collection_amount: package.collection_amount || 0,
         requires_collection: true
       } : nil,
       special_instructions: package.special_instructions,
-      handling_instructions: package.handling_instructions,
-      metadata: package.metadata
+      handling_instructions: begin
+        package.handling_instructions
+      rescue => e
+        Rails.logger.error "Error getting handling instructions: #{e.message}"
+        'Standard handling'
+      end,
+      metadata: package.metadata || {}
     )
+  rescue => e
+    Rails.logger.error "Error formatting package details: #{e.message}"
+    format_package_for_staff(package)
   end
 
   def format_tracking_event(event)
