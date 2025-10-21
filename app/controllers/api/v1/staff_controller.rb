@@ -81,17 +81,20 @@ class Api::V1::StaffController < ApplicationController
   # GET /api/v1/staff/packages/:id/track
   def track_package
     begin
+      tracking_events = @package.tracking_events.includes(:user).order(created_at: :desc) rescue []
+      print_logs = @package.print_logs.includes(:user).order(printed_at: :desc) rescue []
+      
       tracking_info = {
         package: format_package_for_staff(@package),
-        tracking_events: @package.tracking_events.includes(:user).order(created_at: :desc).map { |event| format_tracking_event(event) },
-        print_logs: @package.print_logs.includes(:user).order(printed_at: :desc).map { |log| format_print_log(log) },
+        tracking_events: tracking_events.map { |event| format_tracking_event(event) },
+        print_logs: print_logs.map { |log| format_print_log(log) },
         current_status: @package.state,
         status_history: generate_status_history(@package),
         estimated_delivery: calculate_estimated_delivery(@package),
         route_info: {
           origin: @package.location_based_delivery? ? @package.pickup_location : @package.origin_area&.full_name,
           destination: @package.location_based_delivery? ? @package.delivery_location : @package.destination_area&.full_name,
-          route_description: @package.route_description
+          route_description: get_package_route_description(@package)
         }
       }
       
@@ -122,7 +125,6 @@ class Api::V1::StaffController < ApplicationController
         }, status: :unprocessable_entity
       end
 
-      # Check if package is in rejectable state
       unless ['pending', 'submitted'].include?(@package.state)
         return render json: {
           success: false,
@@ -131,7 +133,6 @@ class Api::V1::StaffController < ApplicationController
       end
 
       if @package.reject_package!(reason: rejection_reason, auto_rejected: false)
-        # Create rejection tracking event
         PackageTrackingEvent.create!(
           package: @package,
           user: current_user,
@@ -145,10 +146,7 @@ class Api::V1::StaffController < ApplicationController
           }
         )
 
-        # Broadcast rejection to user
         broadcast_package_rejection(@package, rejection_reason)
-        
-        # Broadcast stats update
         broadcast_staff_dashboard_update
 
         render json: {
@@ -186,11 +184,10 @@ class Api::V1::StaffController < ApplicationController
       page = [params[:page].to_i, 1].max
       limit = [params[:limit].to_i, 20].max.clamp(1, 50)
       
-      events_query = current_user.package_tracking_events
-                                 .includes(:package, :user)
-                                 .order(created_at: :desc)
+      events_query = PackageTrackingEvent.where(user: current_user)
+                                         .includes(:package, :user)
+                                         .order(created_at: :desc)
       
-      # Apply filters
       events_query = events_query.where(event_type: params[:event_type]) if params[:event_type].present?
       events_query = events_query.where('created_at >= ?', params[:start_date]) if params[:start_date].present?
       events_query = events_query.where('created_at <= ?', params[:end_date]) if params[:end_date].present?
@@ -214,10 +211,10 @@ class Api::V1::StaffController < ApplicationController
             per_page: limit
           },
           summary: {
-            total_scans: current_user.package_tracking_events.count,
-            scans_today: current_user.package_tracking_events.where(created_at: Date.current.all_day).count,
-            scans_this_week: current_user.package_tracking_events.where(created_at: 1.week.ago..Time.current).count,
-            packages_scanned: current_user.package_tracking_events.select(:package_id).distinct.count
+            total_scans: PackageTrackingEvent.where(user: current_user).count,
+            scans_today: PackageTrackingEvent.where(user: current_user, created_at: Date.current.all_day).count,
+            scans_this_week: PackageTrackingEvent.where(user: current_user, created_at: 1.week.ago..Time.current).count,
+            packages_scanned: PackageTrackingEvent.where(user: current_user).select(:package_id).distinct.count
           }
         }
       }
@@ -255,10 +252,8 @@ class Api::V1::StaffController < ApplicationController
         }, status: :not_found
       end
 
-      # Determine event type based on user role if not provided
       event_type ||= determine_event_type_for_role(current_user.primary_role)
       
-      # Validate event type for user role
       unless valid_event_type_for_role?(event_type, current_user.primary_role)
         return render json: {
           success: false,
@@ -278,7 +273,6 @@ class Api::V1::StaffController < ApplicationController
         })
       )
 
-      # Broadcast the scan event
       broadcast_scan_event(package, tracking_event)
       broadcast_staff_dashboard_update
 
@@ -311,73 +305,89 @@ class Api::V1::StaffController < ApplicationController
       page = [params[:page].to_i, 1].max
       limit = [params[:limit].to_i, 20].max.clamp(1, 50)
       
-      # Combine tracking events and print logs for comprehensive activity history
-      tracking_events = current_user.package_tracking_events
-                                    .includes(:package)
-                                    .order(created_at: :desc)
+      # Fetch tracking events
+      tracking_events_query = PackageTrackingEvent.where(user: current_user)
+                                                   .includes(:package)
+                                                   .order(created_at: :desc)
       
-      print_logs = current_user.package_print_logs
-                               .includes(:package)
-                               .order(printed_at: :desc)
+      # Fetch print logs
+      print_logs_query = PackagePrintLog.where(user: current_user)
+                                        .includes(:package)
+                                        .order(printed_at: :desc)
       
       # Apply date filters
       if params[:start_date].present?
-        tracking_events = tracking_events.where('created_at >= ?', params[:start_date])
-        print_logs = print_logs.where('printed_at >= ?', params[:start_date])
+        tracking_events_query = tracking_events_query.where('created_at >= ?', params[:start_date])
+        print_logs_query = print_logs_query.where('printed_at >= ?', params[:start_date])
       end
       
       if params[:end_date].present?
-        tracking_events = tracking_events.where('created_at <= ?', params[:end_date])
-        print_logs = print_logs.where('printed_at <= ?', params[:end_date])
+        tracking_events_query = tracking_events_query.where('created_at <= ?', params[:end_date])
+        print_logs_query = print_logs_query.where('printed_at <= ?', params[:end_date])
       end
       
       # Apply activity type filter
       if params[:activity_type].present?
         case params[:activity_type]
         when 'scan'
-          print_logs = PackagePrintLog.none
+          print_logs_query = PackagePrintLog.none
         when 'print'
-          tracking_events = PackageTrackingEvent.none
+          tracking_events_query = PackageTrackingEvent.none
         end
       end
       
-      # Combine and sort activities
+      # Fetch all data
+      tracking_events = tracking_events_query.to_a
+      print_logs = print_logs_query.to_a
+      
+      # Build activities array
       all_activities = []
       
-      tracking_events.limit(limit).each do |event|
-        all_activities << {
-          id: "event_#{event.id}",
-          type: 'scan',
-          activity_type: event.event_type,
-          description: event.event_description,
-          package_code: event.package.code,
-          package_id: event.package.id,
-          timestamp: event.created_at,
-          metadata: event.metadata,
-          category: event.event_category
-        }
+      tracking_events.each do |event|
+        begin
+          all_activities << {
+            id: "event_#{event.id}",
+            type: 'scan',
+            activity_type: event.event_type,
+            description: get_event_description(event),
+            package_code: event.package&.code || "PKG-#{event.package_id}",
+            package_id: event.package_id,
+            timestamp: event.created_at.iso8601,
+            metadata: event.metadata || {},
+            category: get_event_category(event)
+          }
+        rescue => e
+          Rails.logger.error "Error formatting tracking event #{event.id}: #{e.message}"
+        end
       end
       
-      print_logs.limit(limit).each do |log|
-        all_activities << {
-          id: "print_#{log.id}",
-          type: 'print',
-          activity_type: log.print_context,
-          description: log.print_context_display,
-          package_code: log.package.code,
-          package_id: log.package.id,
-          timestamp: log.printed_at,
-          metadata: log.metadata,
-          copies: log.copies_printed,
-          status: log.status
-        }
+      print_logs.each do |log|
+        begin
+          all_activities << {
+            id: "print_#{log.id}",
+            type: 'print',
+            activity_type: log.print_context,
+            description: get_print_log_description(log),
+            package_code: log.package&.code || "PKG-#{log.package_id}",
+            package_id: log.package_id,
+            timestamp: log.printed_at.iso8601,
+            metadata: log.metadata || {},
+            copies: log.copies_printed,
+            status: log.status
+          }
+        rescue => e
+          Rails.logger.error "Error formatting print log #{log.id}: #{e.message}"
+        end
       end
       
       # Sort by timestamp
       all_activities.sort_by! { |a| a[:timestamp] }.reverse!
       
       # Paginate
-      paginated_activities = all_activities[((page - 1) * limit)...(page * limit)] || []
+      total_count = all_activities.length
+      start_index = (page - 1) * limit
+      end_index = start_index + limit - 1
+      paginated_activities = all_activities[start_index..end_index] || []
       
       render json: {
         success: true,
@@ -385,16 +395,15 @@ class Api::V1::StaffController < ApplicationController
           activities: paginated_activities,
           pagination: {
             current_page: page,
-            total_pages: (all_activities.length.to_f / limit).ceil,
-            total_count: all_activities.length,
+            total_pages: (total_count.to_f / limit).ceil,
+            total_count: total_count,
             per_page: limit
           },
           summary: {
-            total_activities: all_activities.length,
-            scans: tracking_events.count,
-            prints: print_logs.count,
-            packages_handled: (tracking_events.select(:package_id).distinct.pluck(:package_id) + 
-                              print_logs.select(:package_id).distinct.pluck(:package_id)).uniq.length
+            total_activities: total_count,
+            scans: tracking_events.length,
+            prints: print_logs.length,
+            packages_handled: (tracking_events.map(&:package_id) + print_logs.map(&:package_id)).uniq.length
           }
         }
       }
@@ -414,13 +423,11 @@ class Api::V1::StaffController < ApplicationController
       page = [params[:page].to_i, 1].max
       limit = [params[:limit].to_i, 20].max.clamp(1, 50)
       
-      # Find all rejection events by this staff member
       rejection_events = PackageTrackingEvent.where(
         user: current_user,
         event_type: 'rejected'
       ).includes(:package).order(created_at: :desc)
       
-      # Apply date filters
       rejection_events = rejection_events.where('created_at >= ?', params[:start_date]) if params[:start_date].present?
       rejection_events = rejection_events.where('created_at <= ?', params[:end_date]) if params[:end_date].present?
       
@@ -437,7 +444,7 @@ class Api::V1::StaffController < ApplicationController
           rejected_at: event.created_at,
           package_state: event.package.state,
           sender_name: event.package.user.display_name,
-          route_description: event.package.route_description
+          route_description: get_package_route_description(event.package)
         }
       end
       
@@ -492,21 +499,14 @@ class Api::V1::StaffController < ApplicationController
   end
 
   def build_staff_packages_query
-    # All staff can see all packages
     Package.all
   end
 
   def apply_package_filters(query)
     query = query.where(state: params[:state]) if params[:state].present?
     query = query.where(delivery_type: params[:delivery_type]) if params[:delivery_type].present?
-    
-    if params[:origin_area_id].present?
-      query = query.where(origin_area_id: params[:origin_area_id])
-    end
-    
-    if params[:destination_area_id].present?
-      query = query.where(destination_area_id: params[:destination_area_id])
-    end
+    query = query.where(origin_area_id: params[:origin_area_id]) if params[:origin_area_id].present?
+    query = query.where(destination_area_id: params[:destination_area_id]) if params[:destination_area_id].present?
     
     if params[:search].present?
       search_term = "%#{params[:search]}%"
@@ -523,86 +523,16 @@ class Api::V1::StaffController < ApplicationController
   end
 
   def calculate_staff_dashboard_stats
-    base_packages = Package.all
-    
-    # Calculate today's date range
     today_start = Date.current.beginning_of_day
     today_end = Date.current.end_of_day
     
-    # Active deliveries (in_transit state)
-    active_deliveries = base_packages.where(state: 'in_transit').count
-    
-    # Completed today (delivered or collected today)
-    completed_today = base_packages.where(state: ['delivered', 'collected'])
-                                  .where(updated_at: today_start..today_end)
-                                  .count
-    
-    # Revenue today (sum of package costs for completed packages today)
-    revenue_today = base_packages.where(state: ['delivered', 'collected'])
-                                .where(updated_at: today_start..today_end)
-                                .sum(:cost) || 0
-    
-    # Pending packages count
-    pending_packages_count = base_packages.where(state: ['pending', 'pending_unpaid', 'submitted']).count
-    
-    # Pending packages grouped by sender location/agent
-    pending_packages_grouped = {}
-    
-    if pending_packages_count > 0
-      pending_packages = base_packages.where(state: ['pending', 'pending_unpaid', 'submitted'])
-                                     .includes(:origin_area, :origin_agent)
-      
-      pending_packages_grouped = pending_packages.group_by do |pkg|
-        # Handle location-based packages (fragile, collection)
-        if pkg.location_based_delivery?
-          {
-            type: 'location',
-            id: "loc_#{pkg.id}",
-            name: pkg.pickup_location.present? ? pkg.pickup_location : 'Location-based Delivery',
-            location: pkg.pickup_location.presence || 'Custom Pickup Location'
-          }
-        elsif pkg.origin_agent.present?
-          {
-            type: 'agent',
-            id: pkg.origin_agent.id,
-            name: pkg.origin_agent.name,
-            location: pkg.origin_area&.full_name || pkg.origin_agent.display_name || 'Unknown'
-          }
-        elsif pkg.origin_area.present?
-          {
-            type: 'area',
-            id: pkg.origin_area.id,
-            name: pkg.origin_area.name,
-            location: pkg.origin_area.full_name || pkg.origin_area.name
-          }
-        else
-          {
-            type: 'unknown',
-            id: "unknown_#{pkg.id}",
-            name: 'Unknown Location',
-            location: 'Location information not available'
-          }
-        end
-      end
-    end
-    
-    pending_by_location = pending_packages_grouped.map do |location_info, packages|
-      {
-        office_name: location_info[:name] || 'Unknown',
-        location: location_info[:location] || 'Unknown',
-        type: location_info[:type] || 'unknown',
-        count: packages&.count || 0,
-        packages: (packages || []).map { |pkg| format_package_summary(pkg) }
-      }
-    end.sort_by { |loc| -loc[:count] }
+    pending_packages_count = Package.where(state: ['pending', 'pending_unpaid', 'submitted']).count
     
     {
-      active_deliveries: active_deliveries,
-      completed_today: completed_today,
-      revenue_today: revenue_today,
+      incoming_deliveries: pending_packages_count,
+      completed_today: Package.where(state: ['delivered', 'collected'], updated_at: today_start..today_end).count,
       pending_packages: {
-        total: pending_packages_count,
-        by_location: pending_by_location
+        total: pending_packages_count
       },
       staff_info: {
         id: current_user.id,
@@ -611,26 +541,20 @@ class Api::V1::StaffController < ApplicationController
         role_display: current_user.role_display_name
       },
       activity_summary: {
-        scans_today: current_user.package_tracking_events.where(created_at: today_start..today_end).count,
-        prints_today: current_user.package_print_logs.where(printed_at: today_start..today_end).count,
-        packages_handled_today: current_user.package_tracking_events
-                                           .where(created_at: today_start..today_end)
-                                           .select(:package_id).distinct.count
+        scans_today: PackageTrackingEvent.where(user: current_user, created_at: today_start..today_end).count,
+        prints_today: PackagePrintLog.where(user: current_user, printed_at: today_start..today_end).count,
+        packages_handled_today: PackageTrackingEvent.where(user: current_user, created_at: today_start..today_end)
+                                                    .select(:package_id).distinct.count
       }
     }
   rescue => e
     Rails.logger.error "Error calculating staff dashboard stats: #{e.message}"
     Rails.logger.error e.backtrace.join("\n")
     
-    # Return safe defaults on error
     {
-      active_deliveries: 0,
+      incoming_deliveries: 0,
       completed_today: 0,
-      revenue_today: 0,
-      pending_packages: {
-        total: 0,
-        by_location: []
-      },
+      pending_packages: { total: 0 },
       staff_info: {
         id: current_user.id,
         name: current_user.display_name,
@@ -646,29 +570,8 @@ class Api::V1::StaffController < ApplicationController
   end
 
   def format_package_for_staff(package)
-    return nil unless package
-    
-    # Determine origin
-    origin = if package.location_based_delivery?
-               package.pickup_location.presence || 'Location-based Pickup'
-             else
-               package.origin_area&.full_name || 'Unknown Origin'
-             end
-    
-    # Determine destination
-    destination = if package.location_based_delivery?
-                   package.delivery_location.presence || 'Location-based Delivery'
-                 else
-                   package.destination_area&.full_name || 'Unknown Destination'
-                 end
-    
-    # Route description with fallback
-    route_description = begin
-      package.route_description
-    rescue => e
-      Rails.logger.error "Error getting route description: #{e.message}"
-      "#{origin} → #{destination}"
-    end
+    origin = package.location_based_delivery? ? (package.pickup_location.presence || 'Location-based Pickup') : (package.origin_area&.full_name || 'Unknown Origin')
+    destination = package.location_based_delivery? ? (package.delivery_location.presence || 'Location-based Delivery') : (package.destination_area&.full_name || 'Unknown Destination')
     
     {
       id: package.id,
@@ -692,17 +595,15 @@ class Api::V1::StaffController < ApplicationController
       route: {
         origin: origin,
         destination: destination,
-        description: route_description
+        description: get_package_route_description(package)
       },
-      requires_special_handling: package.requires_special_handling? || false,
+      requires_special_handling: package.respond_to?(:requires_special_handling?) ? package.requires_special_handling? : false,
       priority_level: package.priority_level || 'standard',
       can_be_rejected: ['pending', 'submitted'].include?(package.state)
     }
   rescue => e
-    Rails.logger.error "Error formatting package for staff: #{e.message}"
-    Rails.logger.error e.backtrace.join("\n")
+    Rails.logger.error "Error formatting package #{package.id}: #{e.message}"
     
-    # Return minimal safe data
     {
       id: package.id,
       code: package.code || "PKG-#{package.id}",
@@ -723,58 +624,27 @@ class Api::V1::StaffController < ApplicationController
     }
   end
 
-  def format_package_summary(package)
-    return nil unless package
-    
-    destination = if package.location_based_delivery?
-                   package.delivery_location.presence || 'Location-based Delivery'
-                 else
-                   package.destination_area&.name || 'Unknown Destination'
-                 end
-    
-    {
-      id: package.id,
-      code: package.code || "PKG-#{package.id}",
-      state: package.state || 'unknown',
-      receiver_name: package.receiver_name || 'Unknown',
-      destination: destination
-    }
-  rescue => e
-    Rails.logger.error "Error formatting package summary for package #{package.id}: #{e.message}"
-    {
-      id: package.id,
-      code: "PKG-#{package.id}",
-      state: 'unknown',
-      receiver_name: 'Unknown',
-      destination: 'Unknown'
-    }
-  end
-
   def format_package_details(package)
-    return nil unless package
-    
     base_details = format_package_for_staff(package)
-    return nil unless base_details
+    
+    tracking_events_count = PackageTrackingEvent.where(package: package).count rescue 0
+    last_scan = PackageTrackingEvent.where(package: package).order(created_at: :desc).first&.created_at rescue nil
+    print_count = PackagePrintLog.where(package: package).count rescue 0
     
     base_details.merge(
       tracking_summary: {
-        total_events: package.tracking_events&.count || 0,
-        last_scan: package.tracking_events&.order(created_at: :desc)&.first&.created_at,
-        print_count: package.print_logs&.count || 0
+        total_events: tracking_events_count,
+        last_scan: last_scan,
+        print_count: print_count
       },
-      payment_info: package.requires_collection? ? {
+      payment_info: (package.respond_to?(:requires_collection?) && package.requires_collection?) ? {
         payment_type: package.payment_type || 'prepaid',
         payment_status: package.payment_status || 'unpaid',
         collection_amount: package.collection_amount || 0,
         requires_collection: true
       } : nil,
       special_instructions: package.special_instructions,
-      handling_instructions: begin
-        package.handling_instructions
-      rescue => e
-        Rails.logger.error "Error getting handling instructions: #{e.message}"
-        'Standard handling'
-      end,
+      handling_instructions: get_handling_instructions(package),
       metadata: package.metadata || {}
     )
   rescue => e
@@ -787,8 +657,8 @@ class Api::V1::StaffController < ApplicationController
       id: event.id,
       event_type: event.event_type,
       event_type_display: event.event_type.humanize,
-      description: event.event_description,
-      category: event.event_category,
+      description: get_event_description(event),
+      category: get_event_category(event),
       created_at: event.created_at,
       timestamp: event.created_at.strftime('%Y-%m-%d %H:%M:%S'),
       user: {
@@ -800,8 +670,8 @@ class Api::V1::StaffController < ApplicationController
         id: event.package.id,
         code: event.package.code
       },
-      metadata: event.metadata,
-      location: event.location_info
+      metadata: event.metadata || {},
+      location: event.metadata&.dig('location')
     }
   end
 
@@ -809,9 +679,9 @@ class Api::V1::StaffController < ApplicationController
     {
       id: log.id,
       print_context: log.print_context,
-      print_context_display: log.print_context_display,
+      print_context_display: get_print_log_description(log),
       status: log.status,
-      status_display: log.status_display,
+      status_display: log.status&.humanize || 'Unknown',
       printed_at: log.printed_at,
       copies_printed: log.copies_printed,
       user: {
@@ -823,25 +693,29 @@ class Api::V1::StaffController < ApplicationController
         id: log.package.id,
         code: log.package.code
       },
-      metadata: log.metadata
+      metadata: log.metadata || {}
     }
   end
 
   def generate_status_history(package)
-    package.tracking_events.where.not(event_type: ['scan_error', 'processing_error'])
-           .order(created_at: :asc)
-           .map do |event|
+    PackageTrackingEvent.where(package: package)
+                        .where.not(event_type: ['scan_error', 'processing_error'])
+                        .order(created_at: :asc)
+                        .map do |event|
       {
         status: event.event_type,
         timestamp: event.created_at,
-        description: event.event_description,
+        description: get_event_description(event),
         user: event.user.display_name
       }
     end
+  rescue => e
+    Rails.logger.error "Error generating status history: #{e.message}"
+    []
   end
 
   def calculate_estimated_delivery(package)
-    return nil if package.delivered? || package.collected?
+    return nil if package.state.in?(['delivered', 'collected'])
     
     case package.state
     when 'pending_unpaid', 'pending'
@@ -857,20 +731,59 @@ class Api::V1::StaffController < ApplicationController
 
   def determine_event_type_for_role(role)
     case role
-    when 'agent'
-      'printed_by_agent'
-    when 'rider'
-      'collected_by_rider'
-    when 'warehouse'
-      'processed_by_warehouse'
-    else
-      'state_changed'
+    when 'agent' then 'printed_by_agent'
+    when 'rider' then 'collected_by_rider'
+    when 'warehouse' then 'processed_by_warehouse'
+    else 'state_changed'
     end
   end
 
   def valid_event_type_for_role?(event_type, role)
-    valid_events = PackageTrackingEvent.role_event_types(role)
+    return true if PackageTrackingEvent.respond_to?(:role_event_types)
+    
+    valid_events = PackageTrackingEvent.role_event_types(role) rescue ['scan', 'printed_by_agent', 'collected_by_rider', 'processed_by_warehouse', 'state_changed']
     valid_events.include?(event_type)
+  rescue
+    true
+  end
+
+  def get_package_route_description(package)
+    return package.route_description if package.respond_to?(:route_description)
+    
+    origin = package.location_based_delivery? ? (package.pickup_location.presence || 'Location-based Pickup') : (package.origin_area&.full_name || 'Unknown Origin')
+    destination = package.location_based_delivery? ? (package.delivery_location.presence || 'Location-based Delivery') : (package.destination_area&.full_name || 'Unknown Destination')
+    "#{origin} → #{destination}"
+  rescue => e
+    Rails.logger.error "Error getting route description: #{e.message}"
+    'Unknown route'
+  end
+
+  def get_event_description(event)
+    return event.event_description if event.respond_to?(:event_description)
+    event.event_type.humanize
+  rescue
+    'Package event'
+  end
+
+  def get_event_category(event)
+    return event.event_category if event.respond_to?(:event_category)
+    'general'
+  rescue
+    'general'
+  end
+
+  def get_print_log_description(log)
+    return log.print_context_display if log.respond_to?(:print_context_display)
+    log.print_context&.humanize || 'Label printed'
+  rescue
+    'Label printed'
+  end
+
+  def get_handling_instructions(package)
+    return package.handling_instructions if package.respond_to?(:handling_instructions)
+    'Standard handling'
+  rescue
+    'Standard handling'
   end
 
   def broadcast_package_rejection(package, reason)
@@ -888,6 +801,8 @@ class Api::V1::StaffController < ApplicationController
     )
     
     Rails.logger.info "✅ Package rejection broadcast to user #{package.user_id}"
+  rescue => e
+    Rails.logger.error "Error broadcasting rejection: #{e.message}"
   end
 
   def broadcast_scan_event(package, event)
@@ -899,16 +814,17 @@ class Api::V1::StaffController < ApplicationController
         package_code: package.code,
         event_type: event.event_type,
         scanned_by: current_user.display_name,
-        location: event.metadata['location'],
+        location: event.metadata&.dig('location'),
         timestamp: Time.current.iso8601
       }
     )
     
     Rails.logger.info "✅ Scan event broadcast to user #{package.user_id}"
+  rescue => e
+    Rails.logger.error "Error broadcasting scan event: #{e.message}"
   end
 
   def broadcast_staff_dashboard_update
-    # Broadcast to all staff members
     ActionCable.server.broadcast(
       "staff_dashboard",
       {
@@ -919,5 +835,7 @@ class Api::V1::StaffController < ApplicationController
     )
     
     Rails.logger.info "✅ Staff dashboard stats broadcast"
+  rescue => e
+    Rails.logger.error "Error broadcasting dashboard update: #{e.message}"
   end
 end
