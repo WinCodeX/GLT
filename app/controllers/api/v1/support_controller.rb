@@ -82,16 +82,54 @@ class Api::V1::SupportController < ApplicationController
   def my_tickets
     begin
       Rails.logger.info "📋 Loading my tickets for agent: #{current_user.id}"
+      Rails.logger.info "Filter params: status=#{params[:status]}, include_closed=#{params[:include_closed]}"
       
-      # Get tickets where current user is assigned as agent
-      my_tickets = Conversation.where(conversation_type: 'support_ticket')
-                              .joins(:conversation_participants)
-                              .where(conversation_participants: { role: 'agent', user_id: current_user.id })
-                              .includes(:users, :messages)
-                              .order(updated_at: :desc)
-                              .limit(50)
+      # Start with tickets assigned to current user
+      my_tickets_query = Conversation.where(conversation_type: 'support_ticket')
+                                    .joins(:conversation_participants)
+                                    .where(conversation_participants: { role: 'agent', user_id: current_user.id })
+                                    .includes(:users, :messages)
+      
+      # Apply status filter
+      if params[:status].present?
+        case params[:status]
+        when 'active'
+          # Active means in_progress or assigned
+          my_tickets_query = my_tickets_query.where("conversations.metadata->>'status' IN (?, ?)", 'in_progress', 'assigned')
+        when 'pending'
+          # Pending tickets only
+          my_tickets_query = my_tickets_query.where("conversations.metadata->>'status' = ?", 'pending')
+        when 'resolved'
+          # Resolved includes both resolved and closed if include_closed is true
+          if params[:include_closed] == 'true'
+            my_tickets_query = my_tickets_query.where("conversations.metadata->>'status' IN (?, ?)", 'resolved', 'closed')
+          else
+            my_tickets_query = my_tickets_query.where("conversations.metadata->>'status' = ?", 'resolved')
+          end
+        else
+          # Specific status
+          my_tickets_query = my_tickets_query.where("conversations.metadata->>'status' = ?", params[:status])
+        end
+      end
+      
+      # Apply search filter if present
+      if params[:search].present?
+        search_term = "%#{params[:search]}%"
+        my_tickets_query = my_tickets_query.left_joins(:users)
+                                          .where(
+                                            "conversations.title ILIKE ? OR 
+                                             users.first_name ILIKE ? OR 
+                                             users.last_name ILIKE ? OR 
+                                             users.email ILIKE ? OR
+                                             conversations.metadata->>'ticket_id' ILIKE ?",
+                                            search_term, search_term, search_term, search_term, search_term
+                                          )
+                                          .distinct
+      end
+      
+      my_tickets = my_tickets_query.order(updated_at: :desc).limit(50)
 
-      Rails.logger.info "Found #{my_tickets.count} assigned tickets"
+      Rails.logger.info "Found #{my_tickets.count} tickets matching filters"
 
       render json: {
         success: true,
@@ -457,9 +495,23 @@ class Api::V1::SupportController < ApplicationController
   end
 
   def apply_ticket_filters(query)
-    # Status filter
+    # Status filter - FIXED to handle composite statuses properly
     if params[:status].present?
-      query = query.where("conversations.metadata->>'status' = ?", params[:status])
+      case params[:status]
+      when 'active'
+        # Active means in_progress OR assigned
+        query = query.where("conversations.metadata->>'status' IN (?, ?)", 'in_progress', 'assigned')
+      when 'resolved'
+        # Resolved can include closed if specified
+        if params[:include_closed] == 'true'
+          query = query.where("conversations.metadata->>'status' IN (?, ?)", 'resolved', 'closed')
+        else
+          query = query.where("conversations.metadata->>'status' = ?", 'resolved')
+        end
+      else
+        # Direct status match
+        query = query.where("conversations.metadata->>'status' = ?", params[:status])
+      end
     end
     
     # Priority filter
