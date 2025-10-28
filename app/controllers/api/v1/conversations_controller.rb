@@ -1,4 +1,4 @@
-# app/controllers/api/v1/conversations_controller.rb - FIXED: Load-balanced assignment & conversation reuse
+# app/controllers/api/v1/conversations_controller.rb - FIXED: Support agent access & performance
 class Api::V1::ConversationsController < ApplicationController
   include AvatarHelper
   
@@ -10,21 +10,24 @@ class Api::V1::ConversationsController < ApplicationController
 
   # GET /api/v1/conversations
   def index
-    Rails.logger.info "Loading conversations for user #{current_user.id}"
+    Rails.logger.info "📋 Loading conversations for user #{current_user.id}"
     
     begin
-      @conversations = current_user.conversations
+      # FIXED: Include conversations where user is a participant
+      @conversations = Conversation.joins(:conversation_participants)
+                                  .where(conversation_participants: { user_id: current_user.id })
                                   .includes(:conversation_participants, 
                                            last_message: :user,
                                            users: [])
+                                  .distinct
                                   .recent
 
       if params[:type].present?
         case params[:type]
         when 'support'
-          @conversations = @conversations.support_tickets
+          @conversations = @conversations.where(conversation_type: 'support_ticket')
         when 'direct'
-          @conversations = @conversations.direct_messages
+          @conversations = @conversations.where(conversation_type: 'direct_message')
         end
       end
 
@@ -40,26 +43,42 @@ class Api::V1::ConversationsController < ApplicationController
         conversations: conversation_data
       }
     rescue => e
-      Rails.logger.error "Error in conversations#index: #{e.message}"
+      Rails.logger.error "❌ Error in conversations#index: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: { success: false, message: 'Failed to load conversations' }, status: :internal_server_error
     end
   end
 
-  # GET /api/v1/conversations/:id
+  # GET /api/v1/conversations/:id - FIXED: Faster loading, better error handling
   def show
-    Rails.logger.info "Loading conversation #{params[:id]} for user #{current_user.id}"
+    Rails.logger.info "🔍 Loading conversation #{params[:id]} for user #{current_user.id}"
     
     begin
       unless @conversation
-        return render json: { success: false, message: 'Conversation not found' }, status: :not_found
+        Rails.logger.warn "⚠️ Conversation #{params[:id]} not found or user #{current_user.id} has no access"
+        return render json: { 
+          success: false, 
+          message: 'Conversation not found or you do not have access' 
+        }, status: :not_found
+      end
+
+      # Verify access
+      unless can_access_conversation?(@conversation, current_user)
+        Rails.logger.warn "⚠️ Access denied to conversation #{params[:id]} for user #{current_user.id}"
+        return render json: {
+          success: false,
+          message: 'You do not have permission to access this conversation'
+        }, status: :forbidden
       end
 
       limit = parse_message_limit
       older_than = params[:older_than]
 
+      # FIXED: Optimized message loading with proper includes
       @messages = load_paginated_messages(@conversation, limit, older_than)
       has_more = check_has_more_messages(@conversation, @messages, older_than)
 
+      # Mark as read only if loading latest messages
       if older_than.blank?
         safely_mark_conversation_read(@conversation, current_user)
         safely_broadcast_conversation_read_status(@conversation, current_user)
@@ -67,6 +86,8 @@ class Api::V1::ConversationsController < ApplicationController
 
       conversation_data = efficiently_format_conversation_detail(@conversation)
       messages_data = efficiently_format_messages(@messages)
+
+      Rails.logger.info "✅ Successfully loaded conversation #{params[:id]} with #{@messages.size} messages"
 
       render json: {
         success: true,
@@ -79,7 +100,8 @@ class Api::V1::ConversationsController < ApplicationController
         }
       }
     rescue => e
-      Rails.logger.error "Error in conversations#show: #{e.message}"
+      Rails.logger.error "❌ Error in conversations#show: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: { 
         success: false, 
         message: 'Failed to load conversation',
@@ -90,7 +112,7 @@ class Api::V1::ConversationsController < ApplicationController
 
   # POST /api/v1/conversations/support_ticket - FIXED: Load-balanced assignment & conversation reuse
   def create_support_ticket
-    Rails.logger.info "Creating support ticket for user #{current_user.id}"
+    Rails.logger.info "🎫 Creating support ticket for user #{current_user.id}"
     
     begin
       package = safely_find_package_for_ticket
@@ -102,7 +124,7 @@ class Api::V1::ConversationsController < ApplicationController
       if existing_conversation
         # Check if there's an active ticket
         if existing_conversation.current_ticket_id.present?
-          Rails.logger.info "User has active ticket: #{existing_conversation.current_ticket_id}"
+          Rails.logger.info "✅ User has active ticket: #{existing_conversation.current_ticket_id}"
           return render json: {
             success: true,
             conversation: efficiently_format_conversation_detail(existing_conversation),
@@ -113,7 +135,7 @@ class Api::V1::ConversationsController < ApplicationController
         end
         
         # FIXED: Create new ticket in existing conversation after previous was closed
-        Rails.logger.info "Creating new ticket in existing conversation #{existing_conversation.id}"
+        Rails.logger.info "🔄 Creating new ticket in existing conversation #{existing_conversation.id}"
         existing_conversation.reopen_or_create_ticket(
           category: category,
           package: package
@@ -141,7 +163,7 @@ class Api::V1::ConversationsController < ApplicationController
       )
 
       if @conversation&.persisted?
-        Rails.logger.info "Created first support conversation: #{@conversation.id}"
+        Rails.logger.info "✅ Created first support conversation: #{@conversation.id}"
         
         # FIXED: Assign agent with load balancing for first ticket
         assign_agent_to_ticket(@conversation)
@@ -157,11 +179,13 @@ class Api::V1::ConversationsController < ApplicationController
         }, status: :created
       else
         error_messages = @conversation&.errors&.full_messages || ['Failed to create conversation']
+        Rails.logger.error "❌ Failed to create conversation: #{error_messages.join(', ')}"
         render json: { success: false, errors: error_messages }, status: :unprocessable_entity
       end
       
     rescue => e
-      Rails.logger.error "Error creating support ticket: #{e.message}"
+      Rails.logger.error "❌ Error creating support ticket: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: { 
         success: false, 
         message: 'Failed to create support ticket',
@@ -172,11 +196,19 @@ class Api::V1::ConversationsController < ApplicationController
 
   # POST /api/v1/conversations/:id/send_message
   def send_message
-    Rails.logger.info "Sending message to conversation #{params[:id]}"
+    Rails.logger.info "📨 Sending message to conversation #{params[:id]}"
 
     begin
       unless @conversation
         return render json: { success: false, message: 'Conversation not found' }, status: :not_found
+      end
+
+      # Verify user can send messages
+      unless can_send_message?(@conversation, current_user)
+        return render json: {
+          success: false,
+          message: 'You do not have permission to send messages in this conversation'
+        }, status: :forbidden
       end
 
       @message = @conversation.messages.build(
@@ -187,7 +219,7 @@ class Api::V1::ConversationsController < ApplicationController
       )
 
       if @message.save
-        Rails.logger.info "Message saved: #{@message.id} - broadcasting handled by model callback"
+        Rails.logger.info "✅ Message saved: #{@message.id} - broadcasting handled by model callback"
 
         @conversation.touch(:last_activity_at)
         update_support_ticket_status_if_needed
@@ -207,11 +239,13 @@ class Api::V1::ConversationsController < ApplicationController
           }
         }
       else
+        Rails.logger.error "❌ Failed to save message: #{@message.errors.full_messages.join(', ')}"
         render json: { success: false, errors: @message.errors.full_messages }, status: :unprocessable_entity
       end
 
     rescue => e
-      Rails.logger.error "Error sending message: #{e.message}"
+      Rails.logger.error "❌ Error sending message: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
       render json: { 
         success: false, 
         message: 'Failed to send message',
@@ -223,9 +257,12 @@ class Api::V1::ConversationsController < ApplicationController
   # GET /api/v1/conversations/active_support
   def active_support
     begin
-      @conversation = current_user.conversations
-                                 .support_tickets
-                                 .find_by(customer_id: current_user.id)
+      # FIXED: Find conversation where user is customer or agent participant
+      @conversation = Conversation.support_tickets
+                                 .joins(:conversation_participants)
+                                 .where(conversation_participants: { user_id: current_user.id })
+                                 .where(customer_id: current_user.id)
+                                 .first
 
       if @conversation
         render json: {
@@ -244,7 +281,7 @@ class Api::V1::ConversationsController < ApplicationController
         }
       end
     rescue => e
-      Rails.logger.error "Error getting active support: #{e.message}"
+      Rails.logger.error "❌ Error getting active support: #{e.message}"
       render json: { success: false, message: 'Failed to get active support conversation' }, status: :internal_server_error
     end
   end
@@ -283,7 +320,7 @@ class Api::V1::ConversationsController < ApplicationController
 
       render json: { success: true, message: 'Support ticket accepted successfully' }
     rescue => e
-      Rails.logger.error "Error accepting ticket: #{e.message}"
+      Rails.logger.error "❌ Error accepting ticket: #{e.message}"
       render json: { success: false, message: 'Failed to accept ticket' }, status: :internal_server_error
     end
   end
@@ -316,7 +353,7 @@ class Api::V1::ConversationsController < ApplicationController
         conversation_remains_open: true
       }
     rescue => e
-      Rails.logger.error "Error closing ticket: #{e.message}"
+      Rails.logger.error "❌ Error closing ticket: #{e.message}"
       render json: { success: false, message: 'Failed to close ticket' }, status: :internal_server_error
     end
   end
@@ -356,17 +393,82 @@ class Api::V1::ConversationsController < ApplicationController
         ticket_id: @conversation.current_ticket_id
       }
     rescue => e
-      Rails.logger.error "Error reopening ticket: #{e.message}"
+      Rails.logger.error "❌ Error reopening ticket: #{e.message}"
       render json: { success: false, message: 'Failed to reopen ticket' }, status: :internal_server_error
     end
   end
 
   private
 
+  # FIXED: Support agents can access conversations where they're participants
   def set_conversation
-    @conversation = current_user.conversations.find(params[:id])
-  rescue ActiveRecord::RecordNotFound
-    @conversation = nil
+    Rails.logger.info "🔍 Finding conversation #{params[:id]} for user #{current_user.id}"
+    
+    begin
+      # Try to find conversation where user is a participant (includes agents)
+      @conversation = Conversation.joins(:conversation_participants)
+                                 .where(conversation_participants: { user_id: current_user.id })
+                                 .find_by(id: params[:id])
+      
+      # If not found as participant, check if user is customer (for their own tickets)
+      if @conversation.nil?
+        @conversation = Conversation.where(customer_id: current_user.id)
+                                   .find_by(id: params[:id])
+      end
+      
+      # If still not found and user is support/admin, allow access to any support ticket
+      if @conversation.nil? && (current_user.has_role?(:support) || current_user.has_role?(:admin))
+        @conversation = Conversation.where(conversation_type: 'support_ticket')
+                                   .find_by(id: params[:id])
+        
+        Rails.logger.info "🔓 Support staff accessing ticket #{params[:id]}" if @conversation
+      end
+      
+      if @conversation
+        Rails.logger.info "✅ Found conversation #{@conversation.id} (type: #{@conversation.conversation_type})"
+      else
+        Rails.logger.warn "⚠️ Conversation #{params[:id]} not found for user #{current_user.id}"
+      end
+      
+    rescue ActiveRecord::RecordNotFound => e
+      Rails.logger.warn "⚠️ Conversation #{params[:id]} not found: #{e.message}"
+      @conversation = nil
+    rescue => e
+      Rails.logger.error "❌ Error finding conversation: #{e.message}"
+      @conversation = nil
+    end
+  end
+
+  # FIXED: Check if user can access conversation
+  def can_access_conversation?(conversation, user)
+    return false unless conversation && user
+    
+    # User is a participant
+    return true if conversation.conversation_participants.exists?(user_id: user.id)
+    
+    # User is the customer
+    return true if conversation.customer_id == user.id
+    
+    # Support staff can access all support tickets
+    return true if conversation.support_ticket? && (user.has_role?(:support) || user.has_role?(:admin))
+    
+    false
+  end
+
+  # FIXED: Check if user can send messages
+  def can_send_message?(conversation, user)
+    return false unless conversation && user
+    
+    # Participants can send messages
+    return true if conversation.conversation_participants.exists?(user_id: user.id)
+    
+    # Customer can send messages in their own tickets
+    return true if conversation.customer_id == user.id
+    
+    # Support staff can send messages in any support ticket
+    return true if conversation.support_ticket? && (user.has_role?(:support) || user.has_role?(:admin))
+    
+    false
   end
 
   # FIXED: Load-balanced agent assignment
@@ -375,11 +477,12 @@ class Api::V1::ConversationsController < ApplicationController
     
     begin
       # Find all available support agents
-      available_agents = User.where("email LIKE ? OR email LIKE ?", '%@glt.co.ke', '%support@%')
+      available_agents = User.joins(:roles)
+                            .where(roles: { name: 'support' })
                             .where.not(id: conversation.customer_id)
       
       if available_agents.empty?
-        Rails.logger.warn "No support agents available for assignment"
+        Rails.logger.warn "⚠️ No support agents available for assignment"
         return
       end
       
@@ -388,7 +491,7 @@ class Api::V1::ConversationsController < ApplicationController
         active_ticket_count = Conversation.support_tickets
                                          .joins(:conversation_participants)
                                          .where(conversation_participants: { user_id: agent.id, role: 'agent' })
-                                         .where(status: ['pending', 'in_progress'])
+                                         .where("conversations.metadata->>'status' IN (?)", ['pending', 'in_progress', 'assigned'])
                                          .distinct
                                          .count
         
@@ -400,10 +503,10 @@ class Api::V1::ConversationsController < ApplicationController
       selected_agent = selected_agent_data[:agent]
       
       # Check if agent is already assigned
-      existing_participant = conversation.conversation_participants.find_by(user: selected_agent)
+      existing_participant = conversation.conversation_participants.find_by(user: selected_agent, role: 'agent')
       
       if existing_participant
-        Rails.logger.info "Agent #{selected_agent.id} already assigned to conversation #{conversation.id}"
+        Rails.logger.info "✅ Agent #{selected_agent.id} already assigned to conversation #{conversation.id}"
       else
         # Assign agent to conversation
         conversation.conversation_participants.create!(
@@ -430,6 +533,7 @@ class Api::V1::ConversationsController < ApplicationController
       
     rescue => e
       Rails.logger.error "❌ Error assigning agent: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
     end
   end
 
@@ -444,6 +548,7 @@ class Api::V1::ConversationsController < ApplicationController
     end
   end
 
+  # FIXED: Optimized message loading with single query
   def load_paginated_messages(conversation, limit, older_than)
     messages_query = conversation.messages
                                 .includes(:user)
@@ -576,11 +681,12 @@ class Api::V1::ConversationsController < ApplicationController
     return nil unless conversation
     
     last_message = conversation.last_message
-    all_tickets = conversation.all_tickets
+    all_tickets = conversation.all_tickets rescue []
     has_active_ticket = conversation.current_ticket_id.present?
     
     {
       id: conversation.id,
+      conversation_id: conversation.id, # FIXED: Added explicit conversation_id
       conversation_type: conversation.conversation_type,
       title: conversation.title,
       last_activity_at: conversation.last_activity_at,
@@ -606,10 +712,11 @@ class Api::V1::ConversationsController < ApplicationController
   def efficiently_format_conversation_detail(conversation)
     return nil unless conversation
     
-    all_tickets = conversation.all_tickets
+    all_tickets = conversation.all_tickets rescue []
     
     {
       id: conversation.id,
+      conversation_id: conversation.id, # FIXED: Added explicit conversation_id
       conversation_type: conversation.conversation_type,
       title: conversation.title,
       ticket_id: conversation.current_ticket_id || conversation.ticket_id,
@@ -689,7 +796,7 @@ class Api::V1::ConversationsController < ApplicationController
   end
 
   def determine_user_role(user)
-    return 'support' if user.email&.include?('@glt.co.ke')
+    return 'support' if user.has_role?(:support) || user.has_role?(:admin)
     'customer'
   end
 
